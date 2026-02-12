@@ -1,0 +1,54 @@
+# softKMS Docker Compose Configuration
+# For development and testing
+
+version: '3.8'
+
+services:
+  softkms:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: softkms
+    restart: unless-stopped
+    
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN  # Needed for data directory
+    
+    # Read-only root filesystem
+    read_only: true
+    
+    # User
+    user: "1000:1000"
+    
+    # Volumes
+    volumes:
+      - softkms-data:/var/lib/softkms
+      - ./config.toml:/etc/softkms/config.toml:ro
+      - /tmp:/tmp  # Temporary files
+    
+    # Network
+    ports:
+      - "127.0.0.1:50051:50051"  # gRPC
+      - "127.0.0.1:8080:8080"    # REST API
+    
+    # Environment
+    environment:
+      - SOFTKMS_LOG_LEVEL=info
+      - SOFTKMS_CONFIG=/etc/softkms/config.toml
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "softkms-daemon", "--health-check"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  softkms-data:
+    driver: local

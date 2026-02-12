@@ -1,0 +1,176 @@
+//! softKMS - Modern Software Key Management System
+//!
+//! This is the core library for softKMS, providing:
+//! - Pluggable cryptographic engines
+//! - HD wallet support
+//! - Multiple storage backends
+//! - gRPC and REST APIs
+//! - PKCS#11 compatibility
+
+#![deny(unsafe_code)]
+#![warn(missing_docs)]
+
+pub mod api;
+pub mod crypto;
+pub mod daemon;
+pub mod hd_wallet;
+pub mod ipc;
+pub mod storage;
+
+use thiserror::Error;
+
+/// softKMS result type
+pub type Result<T> = std::result::Result<T, Error>;
+
+/// softKMS error types
+#[derive(Error, Debug)]
+pub enum Error {
+    /// Cryptographic error
+    #[error("Crypto error: {0}")]
+    Crypto(String),
+    
+    /// Storage error
+    #[error("Storage error: {0}")]
+    Storage(String),
+    
+    /// Invalid key
+    #[error("Invalid key: {0}")]
+    InvalidKey(String),
+    
+    /// Invalid parameters
+    #[error("Invalid parameters: {0}")]
+    InvalidParams(String),
+    
+    /// Key not found
+    #[error("Key not found: {0}")]
+    KeyNotFound(String),
+    
+    /// Access denied
+    #[error("Access denied")]
+    AccessDenied,
+    
+    /// Internal error
+    #[error("Internal error: {0}")]
+    Internal(String),
+}
+
+/// Unique identifier for keys
+pub type KeyId = uuid::Uuid;
+
+/// Key metadata
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct KeyMetadata {
+    /// Key ID
+    pub id: KeyId,
+    /// Human-readable label
+    pub label: Option<String>,
+    /// Algorithm (ed25519, ecdsa, etc.)
+    pub algorithm: String,
+    /// Key type (seed, derived, imported)
+    pub key_type: KeyType,
+    /// Creation timestamp
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    /// Custom attributes
+    pub attributes: std::collections::HashMap<String, String>,
+}
+
+/// Key types
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum KeyType {
+    /// HD wallet seed
+    Seed,
+    /// Derived key from seed
+    Derived,
+    /// Imported key
+    Imported,
+}
+
+/// Key handle (opaque to clients)
+pub struct KeyHandle {
+    id: KeyId,
+    metadata: KeyMetadata,
+}
+
+/// Signature result
+#[derive(Debug, Clone)]
+pub struct Signature {
+    /// Signature bytes
+    pub bytes: Vec<u8>,
+    /// Algorithm used
+    pub algorithm: String,
+}
+
+/// Configuration for softKMS
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Config {
+    /// Storage backend configuration
+    pub storage: StorageConfig,
+    /// API server configuration
+    pub api: ApiConfig,
+    /// Logging configuration
+    pub logging: LoggingConfig,
+}
+
+/// Storage configuration
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StorageConfig {
+    /// Storage type (file, tpm, vault)
+    pub backend: String,
+    /// Path to storage directory
+    pub path: std::path::PathBuf,
+    /// Encryption settings
+    pub encryption: EncryptionConfig,
+}
+
+/// Encryption configuration
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EncryptionConfig {
+    /// Master PIN or password file
+    pub pin: Option<String>,
+    /// Key derivation iterations
+    pub pbkdf2_iterations: u32,
+}
+
+/// API configuration
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ApiConfig {
+    /// gRPC server address
+    pub grpc_addr: String,
+    /// REST server address
+    pub rest_addr: Option<String>,
+    /// Enable PKCS#11 interface
+    pub enable_pkcs11: bool,
+}
+
+/// Logging configuration
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LoggingConfig {
+    /// Log level
+    pub level: String,
+    /// Log file path (None for stdout)
+    pub file: Option<std::path::PathBuf>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            storage: StorageConfig {
+                backend: "file".to_string(),
+                path: std::path::PathBuf::from("/var/lib/softkms"),
+                encryption: EncryptionConfig {
+                    pin: None,
+                    pbkdf2_iterations: 210_000,
+                },
+            },
+            api: ApiConfig {
+                grpc_addr: "127.0.0.1:50051".to_string(),
+                rest_addr: Some("127.0.0.1:8080".to_string()),
+                enable_pkcs11: true,
+            },
+            logging: LoggingConfig {
+                level: "info".to_string(),
+                file: None,
+            },
+        }
+    }
+}

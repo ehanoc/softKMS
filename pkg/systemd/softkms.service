@@ -1,0 +1,46 @@
+[Unit]
+Description=SoftKMS - Modern Software Key Management System
+Documentation=https://github.com/yourusername/softKMS
+After=network.target
+Wants=network.target
+
+[Service]
+Type=notify
+NotifyAccess=all
+ExecStart=/usr/bin/softkms-daemon --config /etc/softkms/config.toml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/softkms /var/log/softkms
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+PrivateTmp=true
+PrivateDevices=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+
+# User and group
+User=softkms
+Group=softkms
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Environment
+Environment="RUST_LOG=info"
+Environment="SOFTKMS_CONFIG=/etc/softkms/config.toml"
+
+[Install]
+WantedBy=multi-user.target
