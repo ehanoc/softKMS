@@ -37,44 +37,39 @@ softKMS is a software-based Key Management System (KMS) that provides:
 
 ```mermaid
 flowchart TB
-    subgraph "🌐 Client Zone"
-        CLI["🖥️ CLI Client"]
-        APP["📱 Applications"]
-        WEB["🌐 Web Services"]
+    subgraph "Client Zone"
+        CLI["CLI Client"]
+        APP["Applications"]
+        WEB["Web Services"]
     end
 
-    subgraph "🚪 Gateway Layer"
+    subgraph "Gateway Layer"
         direction LR
-        GRPC["⚡ gRPC:50051"]
-        REST["🌐 REST:8080"]
-        PKCS["🔐 PKCS#11"]
+        GRPC["gRPC:50051"]
+        REST["REST:8080"]
+        PKCS["PKCS#11"]
     end
 
-    subgraph "🔒 Security Fortress"
+    subgraph "Security Core"
         direction TB
         
-        subgraph "🛡️ Core Citadel"
-            KEY["🔑 Key Service"]
-            CRYPTO["⚔️ Crypto Engines"]
-            HD["🌳 HD Wallet\nBIP32/44"]
+        subgraph "Key Services"
+            KEY["Key Service"]
+            CRYPTO["Crypto Engines"]
+            HD["HD Wallet"]
         end
         
-        subgraph "🧠 Brain Center"
-            SEC["🔐 Security Manager"]
-            MEM["🧹 Memory Guard"]
-            AUDIT["📋 Audit Logger"]
+        subgraph "Protection Layer"
+            SEC["Security Manager"]
+            MEM["Memory Guard"]
         end
     end
 
-    subgraph "💾 Storage Vaults"
+    subgraph "Storage Layer"
         direction LR
-        FILE["📁 Encrypted\nFiles"]
-        TPM["🔒 TPM2\nHardware"]
-        VAULT["☁️ HashiCorp\nVault"]
-    end
-
-    subgraph "🎯 Optional Modules"
-        WEBAUTHN["🎭 WebAuthn\nFIDO2"]
+        FILE["Encrypted Files"]
+        TPM["TPM2 Hardware"]
+        VAULT["HashiCorp Vault"]
     end
 
     CLI --> GRPC
@@ -96,31 +91,27 @@ flowchart TB
     KEY --> TPM
     KEY --> VAULT
     
-    CRYPTO -.-> WEBAUTHN
-    
-    style CLI fill:#e1f5ff,stroke:#01579b,stroke-width:3px
-    style APP fill:#e1f5ff,stroke:#01579b,stroke-width:3px
-    style WEB fill:#e1f5ff,stroke:#01579b,stroke-width:3px
-    style GRPC fill:#fff3e0,stroke:#e65100,stroke-width:3px
-    style REST fill:#fff3e0,stroke:#e65100,stroke-width:3px
-    style PKCS fill:#fff3e0,stroke:#e65100,stroke-width:3px
-    style KEY fill:#f3e5f5,stroke:#6a1b9a,stroke-width:4px
-    style CRYPTO fill:#e8f5e9,stroke:#2e7d32,stroke-width:3px
-    style HD fill:#e8f5e9,stroke:#2e7d32,stroke-width:3px
-    style SEC fill:#ffebee,stroke:#c62828,stroke-width:4px
-    style MEM fill:#fff9c4,stroke:#f57f17,stroke-width:3px
-    style FILE fill:#e0f2f1,stroke:#00695c,stroke-width:3px
-    style TPM fill:#e0f2f1,stroke:#00695c,stroke-width:3px
-    style VAULT fill:#e0f2f1,stroke:#00695c,stroke-width:3px
-    style WEBAUTHN fill:#fce4ec,stroke:#ad1457,stroke-width:2px,stroke-dasharray: 5 5
+    style CLI fill:#f5f5f5,stroke:#666,stroke-width:2px
+    style APP fill:#f5f5f5,stroke:#666,stroke-width:2px
+    style WEB fill:#f5f5f5,stroke:#666,stroke-width:2px
+    style GRPC fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style REST fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style PKCS fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style KEY fill:#d0d0d0,stroke:#444,stroke-width:3px
+    style CRYPTO fill:#d8d8d8,stroke:#555,stroke-width:2px
+    style HD fill:#d8d8d8,stroke:#555,stroke-width:2px
+    style SEC fill:#c0c0c0,stroke:#333,stroke-width:3px
+    style MEM fill:#d0d0d0,stroke:#555,stroke-width:2px
+    style FILE fill:#e0e0e0,stroke:#666,stroke-width:2px
+    style TPM fill:#e0e0e0,stroke:#666,stroke-width:2px
+    style VAULT fill:#e0e0e0,stroke:#666,stroke-width:2px
 ```
 
-**Legend:**
-- 🌐 **Client Zone** - Where users and applications live
-- 🚪 **Gateway Layer** - Entry points (gRPC, REST, PKCS#11)
-- 🔒 **Security Fortress** - Core protection with Security Manager & Memory Guard
-- 💾 **Storage Vaults** - Where encrypted keys sleep safely
-- 🎯 **Optional** - WebAuthn for FIDO2/Passkey support
+**Architecture Overview:**
+1. **Client Zone** - Users and applications connect via CLI, HTTP, or PKCS#11
+2. **Gateway Layer** - Three API entry points handle incoming requests
+3. **Security Core** - Central services for key operations and protection
+4. **Storage Layer** - Encrypted data persisted to files, TPM, or cloud vaults
 
 ## Core Principles
 
