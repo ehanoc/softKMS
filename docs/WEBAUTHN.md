@@ -20,9 +20,9 @@ softKMS can optionally act as a software-based FIDO2 authenticator for WebAuthn/
 ### Security Model
 
 **Important**: This is a *software* authenticator, not hardware. Consider:
-- ✅ **Benefits**: Seed backup, cross-device sync, no vendor lock-in
-- ⚠️ **Risks**: Software is more vulnerable than hardware keys
-- 💡 **Recommendation**: Use for backup/recovery, not primary authentication
+- **Benefits**: Seed backup, cross-device sync, no vendor lock-in
+- **Risks**: Software is more vulnerable than hardware keys
+- **Recommendation**: Use for backup/recovery, not primary authentication
 
 ## Architecture
 

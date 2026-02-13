@@ -62,21 +62,21 @@ All keys (including seeds, derived keys, and imported keys) are encrypted before
 
 ```mermaid
 flowchart TB
-    subgraph Rest["🔒 At Rest"]
+    subgraph Rest["At Rest"]
         R1["Encrypted Key File\nAES-256-GCM"]
     end
     
-    subgraph Memory["⚡ In Memory"]
+    subgraph Memory["In Memory"]
         M1["Wrapped Key"]
         M2["Master Key"]
         M3["Plaintext Key"]
     end
     
-    subgraph Operation["🔑 Operation"]
+    subgraph Operation["Operation"]
         O1["Sign / Derive"]
     end
     
-    subgraph Clear["🗑️ Clear"]
+    subgraph Clear["Clear"]
         C1["Zeroize\nMemory"]
     end
     
@@ -87,10 +87,12 @@ flowchart TB
     O1 -->|"5. Immediately"| C1
     C1 -->|"6. Return to"| Rest
     
-    style Rest fill:#ffcccc
-    style Memory fill:#ffffcc
-    style Operation fill:#ccffcc
-    style Clear fill:#ff9999
+    style R1 fill:#e0e0e0,stroke:#666,stroke-width:2px
+    style M1 fill:#f5f5f5,stroke:#666,stroke-width:2px
+    style M2 fill:#c0c0c0,stroke:#333,stroke-width:3px
+    style M3 fill:#c0c0c0,stroke:#333,stroke-width:3px
+    style O1 fill:#d0d0d0,stroke:#444,stroke-width:3px
+    style C1 fill:#e8e8e8,stroke:#555,stroke-width:2px
 ```
 
 **Timeline:**
@@ -278,10 +280,10 @@ flowchart LR
     MK --> Wrap
     MK --> Unwrap
     
-    style P fill:#ffffcc
-    style MK fill:#ffcccc
-    style Wrap fill:#ccffcc
-    style Unwrap fill:#ccffcc
+    style P fill:#f5f5f5,stroke:#666,stroke-width:2px
+    style MK fill:#c0c0c0,stroke:#333,stroke-width:3px
+    style Wrap fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style Unwrap fill:#e8e8e8,stroke:#555,stroke-width:2px
 ```
 
 ### Additional Authenticated Data (AAD)
@@ -342,6 +344,18 @@ flowchart TB
     
     G4 --> M2
     S4 --> M2
+    
+    style G1 fill:#f5f5f5,stroke:#666,stroke-width:2px
+    style G2 fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style G3 fill:#e0e0e0,stroke:#666,stroke-width:2px
+    style G4 fill:#d0d0d0,stroke:#444,stroke-width:3px
+    style S1 fill:#e0e0e0,stroke:#666,stroke-width:2px
+    style S2 fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style S3 fill:#d0d0d0,stroke:#444,stroke-width:3px
+    style S4 fill:#c0c0c0,stroke:#333,stroke-width:3px
+    style S5 fill:#f5f5f5,stroke:#666,stroke-width:2px
+    style M1 fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style M2 fill:#c0c0c0,stroke:#333,stroke-width:3px
 ```
 
 ### Memory Locking (Optional)
@@ -365,13 +379,13 @@ This prevents sensitive key material from being swapped to disk.
 
 ```mermaid
 flowchart TB
-    subgraph Trusted["✅ Trusted"]
+    subgraph Trusted["Trusted"]
         T1[softKMS Daemon]
         T2[User Passphrase]
         T3[Rust Memory Safety]
     end
     
-    subgraph Untrusted["❌ Untrusted"]
+    subgraph Untrusted["Untrusted"]
         U1[CLI Client]
         U2[Storage Medium]
         U3[Network]
@@ -379,6 +393,14 @@ flowchart TB
     end
     
     T1 -->|"Protects against"| Untrusted
+    
+    style T1 fill:#c0c0c0,stroke:#333,stroke-width:3px
+    style T2 fill:#c0c0c0,stroke:#333,stroke-width:3px
+    style T3 fill:#d0d0d0,stroke:#444,stroke-width:2px
+    style U1 fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style U2 fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style U3 fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style U4 fill:#e8e8e8,stroke:#555,stroke-width:2px
 ```
 
 - The softKMS daemon process
@@ -422,6 +444,15 @@ flowchart LR
     A2 -->|"Slowed by"| M2
     A3 -->|"Protected by"| M3
     A4 -->|"Hardened by"| M4
+    
+    style A1 fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style A2 fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style A3 fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style A4 fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style M1 fill:#c0c0c0,stroke:#333,stroke-width:3px
+    style M2 fill:#d0d0d0,stroke:#444,stroke-width:3px
+    style M3 fill:#d0d0d0,stroke:#444,stroke-width:3px
+    style M4 fill:#d0d0d0,stroke:#444,stroke-width:3px
 ```
 
 1. **Memory dumps**: If an attacker can read daemon memory while keys are unwrapped, keys are exposed

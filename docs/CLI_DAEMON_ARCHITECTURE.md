@@ -194,6 +194,18 @@ flowchart TB
     
     G1 --> G2 --> G3 --> G4 --> G5 --> R1
     R1 --> U1 --> U2 --> U3 --> U4
+
+    style G1 fill:#f5f5f5,stroke:#666,stroke-width:2px
+    style G2 fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style G3 fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style G4 fill:#e0e0e0,stroke:#666,stroke-width:2px
+    style G5 fill:#c0c0c0,stroke:#333,stroke-width:3px
+    style R1 fill:#e0e0e0,stroke:#666,stroke-width:2px
+    style R2 fill:#e0e0e0,stroke:#666,stroke-width:2px
+    style U1 fill:#e0e0e0,stroke:#666,stroke-width:2px
+    style U2 fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style U3 fill:#d0d0d0,stroke:#444,stroke-width:3px
+    style U4 fill:#c0c0c0,stroke:#333,stroke-width:3px
 ```
 
 ## Passphrase Flow
@@ -229,6 +241,16 @@ flowchart LR
     PBKDF2 -->|Master key| Cache
     Cache -->|Cached key| Wrap
     Cache -->|Cached key| Unwrap
+
+    style U fill:#f5f5f5,stroke:#666,stroke-width:2px
+    style P fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style CLI fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style D fill:#d0d0d0,stroke:#444,stroke-width:3px
+    style SM fill:#c0c0c0,stroke:#333,stroke-width:3px
+    style PBKDF2 fill:#d0d0d0,stroke:#444,stroke-width:2px
+    style Cache fill:#c0c0c0,stroke:#333,stroke-width:3px
+    style Wrap fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style Unwrap fill:#e8e8e8,stroke:#555,stroke-width:2px
 ```
 
 ## Security Benefits

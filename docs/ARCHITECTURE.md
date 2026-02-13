@@ -286,6 +286,10 @@ flowchart TB
     Runtime --> APIs
     Runtime --> Core
     APIs --> Engine
+
+    style Runtime fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style API fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style Engine fill:#d0d0d0,stroke:#444,stroke-width:3px
 ```
 
 **Advantages**:
@@ -363,9 +367,23 @@ flowchart TB
         S2["Storage backends"]
     end
 
-    Untrusted --"API calls / Native Messaging"--> Validation
+    Untrusted -->|"API calls / Native Messaging"| Validation
     Validation --> Trusted
     Trusted --> Storage
+
+    style U1 fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style U2 fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style U3 fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style U4 fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style V1 fill:#d0d0d0,stroke:#444,stroke-width:2px
+    style V2 fill:#d0d0d0,stroke:#444,stroke-width:2px
+    style V3 fill:#d0d0d0,stroke:#444,stroke-width:2px
+    style T1 fill:#c0c0c0,stroke:#333,stroke-width:3px
+    style T2 fill:#c0c0c0,stroke:#333,stroke-width:3px
+    style T3 fill:#c0c0c0,stroke:#333,stroke-width:3px
+    style T4 fill:#d0d0d0,stroke:#444,stroke-width:2px
+    style S1 fill:#e0e0e0,stroke:#666,stroke-width:2px
+    style S2 fill:#e0e0e0,stroke:#666,stroke-width:2px
 ```
 
 ## Deployment Patterns
