@@ -17,7 +17,7 @@ Expected output:
 - ✅ Rust toolchain OK
 - ✅ Docker OK (optional)
 - ✅ Build completes with warnings (9 expected)
-- ✅ Binaries: `softkms-daemon` (1.2M), `softkms-cli` (873K)
+- ✅ Binaries: `softkms-daemon` (1.2M), `softkms` (873K)
 
 ### 2. Key Files to Understand
 
@@ -98,7 +98,7 @@ cargo check
 cargo run --bin softkms-daemon
 
 # Run CLI
-cargo run --bin softkms-cli -- --help
+cargo run --bin softkms -- --help
 ```
 
 ### 10. Documentation Structure

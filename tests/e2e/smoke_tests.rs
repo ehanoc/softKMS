@@ -10,7 +10,7 @@ use std::time::Duration;
 #[test]
 fn test_cli_help() {
     let output = Command::new("cargo")
-        .args(["run", "--bin", "softkms-cli", "--", "--help"])
+        .args(["run", "--bin", "softkms", "--", "--help"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .expect("Failed to run CLI --help");
@@ -21,7 +21,7 @@ fn test_cli_help() {
     // CLI should show usage info
     let combined = format!("{} {}", stdout, stderr);
     assert!(
-        combined.contains("softkms-cli")
+        combined.contains("softkms")
             || combined.contains("USAGE")
             || combined.contains("Commands"),
         "Expected CLI to show help. Got stdout: {}, stderr: {}",

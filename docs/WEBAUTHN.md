@@ -197,7 +197,7 @@ allow_self_attestation = true
 ### Install Browser Extension
 
 1. Install softKMS browser extension (Chrome Web Store / Firefox Add-ons)
-2. Run: `softkms-cli webauthn install-manifest`
+2. Run: `softkms webauthn install-manifest`
 3. Restart browser
 4. Verify: softKMS appears as "Security Key" in WebAuthn dialogs
 
@@ -207,43 +207,43 @@ allow_self_attestation = true
 
 ```bash
 # Import seed (encrypted, recovery use only)
-softkms-cli seed import --mnemonic "twelve words ..."
+softkms seed import --mnemonic "twelve words ..."
 
 # Or import from file
-softkms-cli seed import --file ~/my-seed.txt
+softkms seed import --file ~/my-seed.txt
 ```
 
 ### List Credentials
 
 ```bash
 # List all WebAuthn credentials
-softkms-cli webauthn list
+softkms webauthn list
 
 # List by relying party
-softkms-cli webauthn list --rp-id "github.com"
+softkms webauthn list --rp-id "github.com"
 
 # List resident (passkey) credentials only
-softkms-cli webauthn list --resident-only
+softkms webauthn list --resident-only
 ```
 
 ### Recover Credentials
 
 ```bash
 # Recover all credentials from seed (re-derive)
-softkms-cli webauthn recover --seed <seed-id>
+softkms webauthn recover --seed <seed-id>
 
 # Export for backup
-softkms-cli webauthn export --seed <seed-id> --output backup.json
+softkms webauthn export --seed <seed-id> --output backup.json
 ```
 
 ### Remove Credential
 
 ```bash
 # Remove specific credential
-softkms-cli webauthn remove --credential-id <id>
+softkms webauthn remove --credential-id <id>
 
 # Remove all credentials for a site
-softkms-cli webauthn remove --rp-id "github.com"
+softkms webauthn remove --rp-id "github.com"
 ```
 
 ## Configuration
@@ -352,19 +352,19 @@ Implemented CTAP2 commands:
 
 3. Check extension can communicate:
    ```bash
-   softkms-cli webauthn ping
+   softkms webauthn ping
    ```
 
 ### Credentials not recovering
 
 1. Verify seed imported:
    ```bash
-   softkms-cli seed list
+   softkms seed list
    ```
 
 2. Check derivation path matches:
    ```bash
-   softkms-cli webauthn show --credential-id <id>
+   softkms webauthn show --credential-id <id>
    ```
 
 3. Ensure same seed phrase used
@@ -373,7 +373,7 @@ Implemented CTAP2 commands:
 
 1. Reset PIN:
    ```bash
-   softkms-cli webauthn reset-pin
+   softkms webauthn reset-pin
    ```
 
 2. Note: This doesn't affect stored credentials

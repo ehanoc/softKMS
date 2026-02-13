@@ -19,7 +19,7 @@ name = "softkms-daemon"
 path = "src/main.rs"
 
 [[bin]]
-name = "softkms-cli"
+name = "softkms"
 path = "cli/src/main.rs"
 
 [[test]]

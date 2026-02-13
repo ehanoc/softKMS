@@ -97,7 +97,7 @@ src/
 - **Compiles**: Yes ✅
 - **Tests**: 8 unit tests passing
 - **Warnings**: ~70 warnings (mostly unused code in skeletons)
-- **Binaries**: softkms-daemon (~1.5MB), softkms-cli (~900KB)
+- **Binaries**: softkms-daemon (~1.5MB), softkms (~900KB)
 
 ## Key Design Decisions Made
 
@@ -134,7 +134,7 @@ src/
 ## File Sizes
 ```
 target/release/softkms-daemon: ~1.5MB
-target/release/softkms-cli:    ~900KB
+target/release/softkms:    ~900KB
 ```
 
 ## Build Command

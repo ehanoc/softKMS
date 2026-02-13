@@ -110,7 +110,7 @@ sequenceDiagram
     participant SM as SecurityManager
     participant S as Storage
 
-    U->>CLI: softkms-cli generate --algorithm ed25519 --label "My Key"
+    U->>CLI: softkms generate --algorithm ed25519 --label "My Key"
     CLI->>U: Enter passphrase: ***
     CLI->>D: gRPC CreateKeyRequest
     Note over CLI,D: {algorithm, label, passphrase}
@@ -144,7 +144,7 @@ sequenceDiagram
     participant SM as SecurityManager
     participant S as Storage
 
-    U->>CLI: softkms-cli sign --key <uuid> --data "Hello"
+    U->>CLI: softkms sign --key <uuid> --data "Hello"
     CLI->>U: Enter passphrase: ***
     CLI->>D: gRPC SignRequest
     Note over CLI,D: {key_id, data, passphrase}
@@ -283,27 +283,27 @@ rpc Health(HealthRequest) returns (HealthResponse);
 
 ```bash
 # Initialize
-softkms-cli init
+softkms init
 
 # Generate key
-softkms-cli generate --algorithm ed25519 --label "My Key"
+softkms generate --algorithm ed25519 --label "My Key"
 
 # Sign data
-softkms-cli sign --key <uuid> --data "Hello"
+softkms sign --key <uuid> --data "Hello"
 # or by label:
-softkms-cli sign --label "My Key" --data "Hello"
+softkms sign --label "My Key" --data "Hello"
 
 # Import seed
-softkms-cli import-seed --mnemonic "abandon abandon ... about"
+softkms import-seed --mnemonic "abandon abandon ... about"
 
 # List keys
-softkms-cli list
+softkms list
 
 # Get key info
-softkms-cli info --key <uuid>
+softkms info --key <uuid>
 
 # Delete key
-softkms-cli delete --key <uuid> --force
+softkms delete --key <uuid> --force
 ```
 
 ## Security Considerations

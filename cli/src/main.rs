@@ -22,7 +22,7 @@ use softkms::api::softkms::{
 };
 
 #[derive(Parser)]
-#[command(name = "softkms-cli")]
+#[command(name = "softkms")]
 #[command(about = "SoftKMS - Modern Software Key Management System")]
 #[command(version = "0.1.0")]
 struct Cli {

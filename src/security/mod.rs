@@ -185,7 +185,7 @@ impl SecurityManager {
             Ok(MasterKey::from_secret(key))
         } else {
             Err(SecurityError::InvalidPassphrase(
-                "Keystore not initialized. Run 'softkms-cli init' first.".to_string(),
+                "Keystore not initialized. Run 'softkms init' first.".to_string(),
             ))
         }
     }

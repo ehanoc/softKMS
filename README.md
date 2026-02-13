@@ -240,7 +240,7 @@ cargo test --test integration
 ### Creating a Key
 ```bash
 # Using CLI
-softkms-cli key generate --algorithm ed25519 --label "My Key"
+softkms key generate --algorithm ed25519 --label "My Key"
 
 # Using gRPC (from your application)
 ```
@@ -259,10 +259,10 @@ openssl req -new -x509 -keyform engine \
 ### HD Wallet
 ```bash
 # Import seed
-softkms-cli seed import --mnemonic "twelve words ..."
+softkms seed import --mnemonic "twelve words ..."
 
 # Derive child key
-softkms-cli key derive \
+softkms key derive \
   --seed <seed-id> \
   --path "m/44'/283'/0'/0/0" \
   --label "Address 1"
@@ -282,19 +282,19 @@ softKMS can optionally act as a software-based FIDO2 authenticator, enabling:
 
 ```bash
 # Import seed for WebAuthn
-softkms-cli seed import --mnemonic "twelve words ..."
+softkms seed import --mnemonic "twelve words ..."
 
 # Install browser extension manifest
-softkms-cli webauthn install-manifest
+softkms webauthn install-manifest
 
 # List WebAuthn credentials
-softkms-cli webauthn list
+softkms webauthn list
 ```
 
 ### WebAuthn Browser Setup
 
 1. **Install Browser Extension**: Add softKMS extension to Chrome/Firefox
-2. **Install Native Host**: Run `softkms-cli webauthn install-manifest`
+2. **Install Native Host**: Run `softkms webauthn install-manifest`
 3. **Import Seed**: Use your seed phrase to enable backup/recovery
 4. **Create Passkeys**: softKMS appears as "Security Key" in WebAuthn dialogs
 5. **Recovery**: On new device, import same seed → all Passkeys restored

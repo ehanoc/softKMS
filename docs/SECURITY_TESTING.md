@@ -233,7 +233,7 @@ cat /proc/$(pgrep softkms-daemon)/status | grep -i vmrss
 
 ## Next Steps
 
-1. **CLI Commands**: Implement `softkms-cli key create` and `key list`
+1. **CLI Commands**: Implement `softkms key create` and `key list`
 2. **Passphrase Change**: Implement `change_passphrase` CLI command
 3. **Benchmarks**: Add PBKDF2 iteration benchmarks
 4. **Documentation**: Add man pages
