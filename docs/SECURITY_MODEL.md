@@ -23,7 +23,6 @@ C4Context
   Rel(cli, daemon, "gRPC API", "Passphrase + operations")
   Rel(daemon, storage, "Reads/Writes", "AES-256-GCM encrypted")
 
-  UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
 ```
 
 ## Security Boundaries
@@ -34,11 +33,11 @@ C4Context
 
   Person(user, "User")
   
-  Boundary(untrusted, "Untrusted Zone") {
+  Enterprise_Boundary(untrusted, "Untrusted Zone") {
     System(cli, "CLI Client")
   }
   
-  Boundary(trusted, "Trusted Zone") {
+  Enterprise_Boundary(trusted, "Trusted Zone") {
     System(daemon, "softKMS Daemon")
     SystemDb(storage, "Encrypted Storage")
   }
@@ -47,7 +46,6 @@ C4Context
   Rel(cli, daemon, "gRPC", "TLS (production)")
   Rel(daemon, storage, "Encrypt/Decrypt")
 
-  UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="2")
 ```
 
 ## Core Security Principles
@@ -130,7 +128,6 @@ C4Container
   Rel(security, memory, "Cache master key")
   Rel(key_service, storage, "Store/Retrieve")
 
-  UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="2")
 ```
 
 - **Daemon** holds all key material - runs as isolated process
