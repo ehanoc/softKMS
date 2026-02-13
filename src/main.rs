@@ -5,7 +5,18 @@
 use clap::Parser;
 use softkms::{Config, Result};
 use std::path::PathBuf;
-use tracing::{error, info};
+use tracing::info;
+
+/// Get default PID file path
+/// Uses ~/.softKMS/run/softkms.pid for user-local installation
+fn get_default_pid_file() -> PathBuf {
+    std::env::var("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/tmp"))
+        .join(".softKMS")
+        .join("run")
+        .join("softkms.pid")
+}
 
 /// softKMS daemon CLI arguments
 #[derive(Parser, Debug)]
@@ -29,9 +40,9 @@ struct Args {
     #[arg(long, value_name = "ADDR")]
     rest_addr: Option<String>,
 
-    /// PID file path
-    #[arg(long, value_name = "FILE", default_value = "/var/run/softkms/softkms.pid")]
-    pid_file: PathBuf,
+    /// PID file path [default: ~/.softKMS/run/softkms.pid]
+    #[arg(long, value_name = "FILE")]
+    pid_file: Option<PathBuf>,
 
     /// Run in foreground (don't daemonize)
     #[arg(long)]
@@ -77,8 +88,11 @@ async fn main() -> Result<()> {
         info!("REST address override: {:?}", config.api.rest_addr);
     }
 
+    // Get PID file path (use default if not specified)
+    let pid_file = args.pid_file.unwrap_or_else(get_default_pid_file);
+    
     // Create PID directory if it doesn't exist
-    if let Some(parent) = args.pid_file.parent() {
+    if let Some(parent) = pid_file.parent() {
         if !parent.exists() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 softkms::Error::Internal(format!("Failed to create PID directory: {}", e))
@@ -89,7 +103,7 @@ async fn main() -> Result<()> {
     // Start daemon
     info!("Initializing daemon...");
     let daemon = softkms::daemon::Daemon::new(config).await?;
-    let daemon = daemon.with_pid_file(args.pid_file);
+    let daemon = daemon.with_pid_file(pid_file);
 
     // If not running in foreground, we would daemonize here
     // For now, just run directly

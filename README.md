@@ -147,6 +147,54 @@ docker run -d \
   ghcr.io/yourusername/softkms:latest
 ```
 
+## Quick Start
+
+### Running the Daemon
+
+```bash
+# Build first
+cargo build --release
+
+# Start the daemon (runs in background)
+./scripts/softkms-start.sh
+
+# Check if it's running
+./scripts/softkms-status.sh
+
+# Test the API
+curl http://127.0.0.1:8080/health
+
+# View logs
+./scripts/softkms-logs.sh -f
+
+# Stop the daemon
+./scripts/softkms-stop.sh
+```
+
+**Data and logs are stored in `~/.softKMS/`:**
+- Config: `~/.softKMS/config.toml`
+- Keys: `~/.softKMS/data/`
+- Logs: `~/.softKMS/logs/daemon.log`
+
+### Running Tests
+
+```bash
+# Run all tests
+cargo test
+
+# Run with output
+cargo test -- --nocapture
+
+# Run specific test
+cargo test test_daemon_creation
+
+# Run integration tests only
+cargo test --test integration
+
+# Use the test runner script
+./test_runner.sh
+```
+
 ## Usage
 
 ### Creating a Key
@@ -238,6 +286,54 @@ curl -X POST http://localhost:8080/v1/keys/{key-id}/sign \
   -d '{"data": "base64-encoded-data"}'
 ```
 
+## Quick Start
+
+### Running the Daemon
+
+```bash
+# Build first
+cargo build --release
+
+# Start the daemon (runs in background)
+./scripts/softkms-start.sh
+
+# Check if it's running
+./scripts/softkms-status.sh
+
+# Test the API
+curl http://127.0.0.1:8080/health
+
+# View logs
+./scripts/softkms-logs.sh -f
+
+# Stop the daemon
+./scripts/softkms-stop.sh
+```
+
+**Data and logs are stored in `~/.softKMS/`:**
+- Config: `~/.softKMS/config.toml`
+- Keys: `~/.softKMS/data/`
+- Logs: `~/.softKMS/logs/daemon.log`
+
+### Running Tests
+
+```bash
+# Run all tests
+cargo test
+
+# Run with output
+cargo test -- --nocapture
+
+# Run specific test
+cargo test test_daemon_creation
+
+# Run integration tests only
+cargo test --test integration
+
+# Use the test runner script
+./test_runner.sh
+```
+
 ## Development
 
 ### Building from Source
@@ -249,8 +345,8 @@ cd softKMS
 # Build
 cargo build --release
 
-# Run tests
-cargo test
+# Build and test
+./build.sh
 
 # Build Docker image
 docker build -t softkms .

@@ -165,10 +165,15 @@ pub struct LoggingConfig {
 
 impl Default for Config {
     fn default() -> Self {
+        // Use user-local directory for storage
+        let storage_path = std::env::var("HOME")
+            .map(|home| std::path::PathBuf::from(home).join(".softKMS").join("data"))
+            .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/softkms-data"));
+        
         Self {
             storage: StorageConfig {
                 backend: "file".to_string(),
-                path: std::path::PathBuf::from("/var/lib/softkms"),
+                path: storage_path,
                 encryption: EncryptionConfig {
                     pin: None,
                     pbkdf2_iterations: 210_000,
