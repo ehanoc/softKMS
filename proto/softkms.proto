@@ -1,0 +1,191 @@
+syntax = "proto3";
+
+package softkms;
+
+// Key service for managing cryptographic keys
+service KeyStore {
+  // Initialize the daemon with a passphrase
+  rpc Init(InitRequest) returns (InitResponse);
+
+  // Generate a new key
+  rpc CreateKey(CreateKeyRequest) returns (CreateKeyResponse);
+
+  // List all keys
+  rpc ListKeys(ListKeysRequest) returns (ListKeysResponse);
+
+  // Get key information
+  rpc GetKey(GetKeyRequest) returns (GetKeyResponse);
+
+  // Delete a key
+  rpc DeleteKey(DeleteKeyRequest) returns (DeleteKeyResponse);
+
+  // Sign data with a key
+  rpc Sign(SignRequest) returns (SignResponse);
+
+  // Import a seed for HD wallet
+  rpc ImportSeed(ImportSeedRequest) returns (ImportSeedResponse);
+
+  // Derive a key from seed
+  rpc DeriveKey(DeriveKeyRequest) returns (DeriveKeyResponse);
+
+  // Change keystore passphrase
+  rpc ChangePassphrase(ChangePassphraseRequest) returns (ChangePassphraseResponse);
+
+  // Health check
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// Key algorithm types
+enum Algorithm {
+  ALGORITHM_UNSPECIFIED = 0;
+  ALGORITHM_ED25519 = 1;
+  ALGORITHM_ECDSA_SECP256K1 = 2;
+  ALGORITHM_ECDSA_SECP256R1 = 3;
+  ALGORITHM_RSA = 4;
+}
+
+// Key types
+enum KeyType {
+  KEY_TYPE_UNSPECIFIED = 0;
+  KEY_TYPE_SEED = 1;
+  KEY_TYPE_DERIVED = 2;
+  KEY_TYPE_IMPORTED = 3;
+}
+
+// Create key request
+message CreateKeyRequest {
+  string algorithm = 1;
+  optional string label = 2;
+  map<string, string> attributes = 3;
+  string passphrase = 4;  // Keystore passphrase for wrapping
+}
+
+// Create key response
+message CreateKeyResponse {
+  string key_id = 1;
+  string algorithm = 2;
+  string public_key = 3;  // base64 encoded
+  string created_at = 4;
+  string label = 5;
+}
+
+// List keys request
+message ListKeysRequest {
+  bool include_public_keys = 1;
+}
+
+// Key info
+message KeyInfo {
+  string key_id = 1;
+  string algorithm = 2;
+  string key_type = 3;
+  string created_at = 4;
+  optional string label = 5;
+  map<string, string> attributes = 6;
+  optional string public_key = 7;  // base64 encoded
+}
+
+// List keys response
+message ListKeysResponse {
+  repeated KeyInfo keys = 1;
+}
+
+// Get key request
+message GetKeyRequest {
+  string key_id = 1;
+  bool include_public_key = 2;
+}
+
+// Get key response
+message GetKeyResponse {
+  KeyInfo key = 1;
+}
+
+// Delete key request
+message DeleteKeyRequest {
+  string key_id = 1;
+  bool force = 2;
+}
+
+// Delete key response
+message DeleteKeyResponse {
+  bool success = 1;
+}
+
+// Sign request
+message SignRequest {
+  string key_id = 1;
+  bytes data = 2;  // raw bytes to sign
+  string passphrase = 3;  // Keystore passphrase for unwrapping
+}
+
+// Sign response
+message SignResponse {
+  bytes signature = 1;
+  string algorithm = 2;
+}
+
+// Import seed request
+message ImportSeedRequest {
+  string mnemonic = 1;
+  optional string label = 2;
+  string passphrase = 3;  // Keystore passphrase for wrapping
+}
+
+// Import seed response
+message ImportSeedResponse {
+  string seed_id = 1;
+  string created_at = 2;
+}
+
+// Derive key request
+message DeriveKeyRequest {
+  string seed_id = 1;
+  string path = 2;  // e.g., "m/44'/283'/0'/0/0"
+  optional string label = 3;
+}
+
+// Derive key response
+message DeriveKeyResponse {
+  string key_id = 1;
+  string public_key = 2;  // base64 encoded
+  string derived_at = 3;
+}
+
+// Initialize request
+message InitRequest {
+  string passphrase = 1;  // Initial passphrase for keystore
+  bool confirm = 2;       // If true, requires passphrase confirmation
+}
+
+// Initialize response
+message InitResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// Change passphrase request
+message ChangePassphraseRequest {
+  string old_passphrase = 1;
+  string new_passphrase = 2;
+  bool confirm = 3;  // If true, requires new passphrase confirmation
+}
+
+// Change passphrase response
+message ChangePassphraseResponse {
+  bool success = 1;
+  int32 keys_updated = 2;  // Number of keys re-encrypted
+  string message = 3;
+}
+
+// Health request
+message HealthRequest {}
+
+// Health response
+message HealthResponse {
+  bool healthy = 1;
+  string version = 2;
+  bool storage_ready = 3;
+  bool api_ready = 4;
+  bool initialized = 5;  // True if passphrase has been set
+}

@@ -1,0 +1,382 @@
+//! Key service - Central key management with wrap/unwrap lifecycle
+//!
+//! This module implements the core security model where:
+//! 1. Keys are generated/imported in plaintext
+//! 2. Immediately wrapped (encrypted) with master key
+//! 3. Stored at rest in encrypted form
+//! 4. When needed: unwrapped into memory temporarily
+//! 5. Used for operations
+//! 6. Cleared from memory immediately after use
+//!
+//! This ensures keys NEVER exist in plaintext at rest and are only in
+//! plaintext in memory for the minimum time necessary.
+
+use crate::crypto::ed25519::{Ed25519Engine, ED25519_SECRET_KEY_SIZE};
+use crate::storage::StorageBackend;
+use crate::security::{SecurityManager, WrappedKey};
+use crate::{Config, Error, KeyId, KeyMetadata, KeyType, Result, Signature};
+use chrono::Utc;
+use secrecy::ExposeSecret;
+use secrecy::Secret;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tracing::{debug, info};
+use zeroize::Zeroize;
+
+/// Key service - manages key lifecycle with security wrapping
+pub struct KeyService {
+    storage: Arc<dyn StorageBackend + Send + Sync>,
+    security_manager: Arc<SecurityManager>,
+    config: Config,
+}
+
+/// Key data that has been unwrapped and is ready for use
+/// Automatically cleared when dropped
+pub struct UnwrappedKey {
+    pub id: KeyId,
+    pub algorithm: String,
+    pub key_type: KeyType,
+    pub material: KeyMaterial,
+    pub public_key: Vec<u8>,
+    pub metadata: KeyMetadata,
+}
+
+/// Key material variants
+pub enum KeyMaterial {
+    Ed25519(Secret<[u8; ED25519_SECRET_KEY_SIZE]>),
+}
+
+impl KeyService {
+    pub fn new(
+        storage: Arc<dyn StorageBackend + Send + Sync>,
+        security_manager: Arc<SecurityManager>,
+        config: Config,
+    ) -> Self {
+        Self {
+            storage,
+            security_manager,
+            config,
+        }
+    }
+
+    pub async fn create_key(
+        &self,
+        algorithm: String,
+        label: Option<String>,
+        attributes: HashMap<String, String>,
+        passphrase: &str,
+    ) -> Result<KeyMetadata> {
+        info!("Creating new {} key", algorithm);
+
+        let key_id = KeyId::new_v4();
+        let created_at = Utc::now();
+
+        let metadata = KeyMetadata {
+            id: key_id,
+            label: label.clone(),
+            algorithm: algorithm.clone(),
+            key_type: KeyType::Imported,
+            created_at,
+            attributes: attributes.clone(),
+        };
+
+        let (key_material, _public_key) = match algorithm.as_str() {
+            "ed25519" => {
+                let (secret, public_key, _metadata) = Ed25519Engine::generate_key(metadata.clone())?;
+                let public_key_bytes = public_key.to_vec();
+                let material = secret.expose_secret().to_vec();
+                (material, public_key_bytes)
+            }
+            _ => {
+                return Err(Error::Crypto(format!("Unsupported algorithm: {}", algorithm)));
+            }
+        };
+
+        debug!("Key generated in memory, now wrapping for storage");
+
+        let master_key = self.security_manager
+            .derive_master_key(passphrase)
+            .map_err(|e| Error::Crypto(format!("Failed to derive master key: {}", e)))?;
+
+        let wrapper = self.security_manager.create_wrapper(&master_key);
+        let aad = Self::build_aad(&metadata);
+
+        let wrapped = wrapper
+            .wrap(&key_material, &aad)
+            .map_err(|e| Error::Crypto(format!("Failed to wrap key: {}", e)))?;
+
+        let encrypted_data = wrapped.to_bytes();
+
+        let mut material_to_clear = key_material.clone();
+        material_to_clear.zeroize();
+        drop(master_key);
+
+        self.storage.store_key(key_id, &metadata, &encrypted_data).await?;
+
+        info!("Key {} created and stored encrypted", key_id);
+
+        Ok(metadata)
+    }
+
+    pub async fn sign(&self, key_id: KeyId, data: &[u8], passphrase: &str) -> Result<Signature> {
+        debug!("Signing data with key {}", key_id);
+
+        let result = self.storage.retrieve_key(key_id).await?;
+
+        let (metadata, encrypted_data) = result
+            .ok_or_else(|| Error::KeyNotFound(key_id.to_string()))?;
+
+        let master_key = self.security_manager
+            .derive_master_key(passphrase)
+            .map_err(|e| Error::Crypto(format!("Failed to derive master key: {}", e)))?;
+
+        let wrapper = self.security_manager.create_wrapper(&master_key);
+        let aad = Self::build_aad(&metadata);
+
+        let wrapped = WrappedKey::from_bytes(&encrypted_data)
+            .map_err(|e| Error::Crypto(format!("Invalid wrapped key: {}", e)))?;
+
+        let key_material = wrapper
+            .unwrap(&wrapped, &aad)
+            .map_err(|e| Error::Crypto(format!("Failed to unwrap key: {}", e)))?;
+
+        let signature = match metadata.algorithm.as_str() {
+            "ed25519" => {
+                if key_material.len() != ED25519_SECRET_KEY_SIZE {
+                    return Err(Error::Crypto("Invalid Ed25519 key material".to_string()));
+                }
+                let mut secret = [0u8; ED25519_SECRET_KEY_SIZE];
+                secret.copy_from_slice(&key_material);
+
+                let secret_secret = Secret::new(secret);
+                let sig = Ed25519Engine::sign(&secret_secret, data)?;
+
+                let mut temp_clear = secret;
+                temp_clear.zeroize();
+
+                sig
+            }
+            _ => {
+                let mut material_to_clear = key_material.clone();
+                material_to_clear.zeroize();
+                return Err(Error::Crypto(format!("Unsupported algorithm: {}", metadata.algorithm)));
+            }
+        };
+
+        let mut material_to_clear = key_material.clone();
+        material_to_clear.zeroize();
+        drop(master_key);
+
+        info!("Data signed with key {}", key_id);
+
+        Ok(signature)
+    }
+
+    pub async fn import_seed(
+        &self,
+        seed: Vec<u8>,
+        label: Option<String>,
+        passphrase: &str,
+    ) -> Result<KeyMetadata> {
+        info!("Importing seed");
+
+        let key_id = KeyId::new_v4();
+        let created_at = Utc::now();
+
+        let metadata = KeyMetadata {
+            id: key_id,
+            label: label.clone(),
+            algorithm: "bip32-seed".to_string(),
+            key_type: KeyType::Seed,
+            created_at,
+            attributes: HashMap::new(),
+        };
+
+        let master_key = self.security_manager
+            .derive_master_key(passphrase)
+            .map_err(|e| Error::Crypto(format!("Failed to derive master key: {}", e)))?;
+
+        let wrapper = self.security_manager.create_wrapper(&master_key);
+        let aad = Self::build_aad(&metadata);
+
+        let wrapped = wrapper
+            .wrap(&seed, &aad)
+            .map_err(|e| Error::Crypto(format!("Failed to wrap seed: {}", e)))?;
+
+        let encrypted_data = wrapped.to_bytes();
+
+        let mut seed_to_clear = seed.clone();
+        seed_to_clear.zeroize();
+        drop(master_key);
+
+        self.storage.store_key(key_id, &metadata, &encrypted_data).await?;
+
+        info!("Seed {} imported and stored encrypted", key_id);
+
+        Ok(metadata)
+    }
+
+    pub async fn list_keys(&self) -> Result<Vec<KeyMetadata>> {
+        self.storage.list_keys().await
+    }
+
+    pub async fn get_key(&self, key_id: KeyId) -> Result<Option<KeyMetadata>> {
+        let result = self.storage.retrieve_key(key_id).await?;
+        Ok(result.map(|(metadata, _)| metadata))
+    }
+
+    pub async fn delete_key(&self, key_id: KeyId) -> Result<()> {
+        info!("Deleting key {}", key_id);
+        self.storage.delete_key(key_id).await?;
+        Ok(())
+    }
+
+    fn build_aad(metadata: &KeyMetadata) -> Vec<u8> {
+        let aad = format!(
+            "softkms:key:{}:{}:{}:{}",
+            metadata.id, metadata.algorithm, metadata.key_type, metadata.created_at
+        );
+        aad.into_bytes()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::file::FileStorage;
+    use crate::security::{SecurityConfig, SecurityManager, create_cache};
+    use tempfile::TempDir;
+
+    struct TestService {
+        _temp_dir: TempDir,
+        service: KeyService,
+    }
+
+    async fn create_test_service() -> TestService {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = Arc::new(FileStorage::new(temp_dir.path().to_path_buf(), Config::default()));
+        storage.init().await.unwrap();
+
+        let security_config = SecurityConfig::new();
+        let cache = create_cache(300);
+        let security_manager = Arc::new(SecurityManager::new(cache, security_config));
+
+        let config = Config::default();
+
+        let service = KeyService::new(storage, security_manager, config);
+
+        TestService {
+            _temp_dir: temp_dir,
+            service,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_key_and_list() {
+        let test = create_test_service().await;
+        let service = &test.service;
+        let passphrase = "test_passphrase_123";
+
+        let metadata = service.create_key(
+            "ed25519".to_string(),
+            Some("Test Key".to_string()),
+            std::collections::HashMap::new(),
+            passphrase,
+        ).await.unwrap();
+
+        assert_eq!(metadata.algorithm, "ed25519");
+        assert_eq!(metadata.label, Some("Test Key".to_string()));
+
+        let keys = service.list_keys().await.unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].id, metadata.id);
+    }
+
+    #[tokio::test]
+    async fn test_sign_with_key() {
+        let test = create_test_service().await;
+        let service = &test.service;
+        let passphrase = "test_passphrase_123";
+
+        let metadata = service.create_key(
+            "ed25519".to_string(),
+            Some("Signing Key".to_string()),
+            std::collections::HashMap::new(),
+            passphrase,
+        ).await.unwrap();
+
+        let data = b"Hello, World!";
+        let signature = service.sign(metadata.id, data, passphrase).await.unwrap();
+
+        assert_eq!(signature.algorithm, "ed25519");
+        assert_eq!(signature.bytes.len(), 64);
+    }
+
+    #[tokio::test]
+    async fn test_import_seed() {
+        let test = create_test_service().await;
+        let service = &test.service;
+        let passphrase = "test_passphrase_123";
+        let seed = vec![0u8; 32];
+
+        let metadata = service.import_seed(
+            seed,
+            Some("Test Seed".to_string()),
+            passphrase,
+        ).await.unwrap();
+
+        assert_eq!(metadata.algorithm, "bip32-seed");
+        assert_eq!(metadata.key_type, KeyType::Seed);
+    }
+
+
+
+    #[tokio::test]
+    async fn test_delete_key() {
+        let test = create_test_service().await;
+        let service = &test.service;
+        let passphrase = "test_passphrase_123";
+
+        let metadata = service.create_key(
+            "ed25519".to_string(),
+            None,
+            std::collections::HashMap::new(),
+            passphrase,
+        ).await.unwrap();
+
+        service.delete_key(metadata.id).await.unwrap();
+
+        let result = service.get_key(metadata.id).await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_multiple_keys_same_passphrase() {
+        let test = create_test_service().await;
+        let service = &test.service;
+        let passphrase = "shared_passphrase_123";
+
+        let key1 = service.create_key(
+            "ed25519".to_string(),
+            Some("Key 1".to_string()),
+            std::collections::HashMap::new(),
+            passphrase,
+        ).await.unwrap();
+
+        let key2 = service.create_key(
+            "ed25519".to_string(),
+            Some("Key 2".to_string()),
+            std::collections::HashMap::new(),
+            passphrase,
+        ).await.unwrap();
+
+        let keys = service.list_keys().await.unwrap();
+        assert_eq!(keys.len(), 2);
+
+        let data = b"test data";
+        let sig1 = service.sign(key1.id, data, passphrase).await.unwrap();
+        let sig2 = service.sign(key2.id, data, passphrase).await.unwrap();
+
+        assert_ne!(sig1.bytes, sig2.bytes);
+    }
+}

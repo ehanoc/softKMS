@@ -7,8 +7,9 @@
 //! 4. Manage PID file
 //! 5. Health checks
 
+use crate::key_service::KeyService;
 use crate::security::{SecurityConfig, SecurityManager, create_cache};
-use crate::storage::encrypted::{EncryptedFileStorage, create_encrypted_storage};
+use crate::storage::file::FileStorage;
 use crate::storage::StorageBackend;
 use crate::{Config, Result};
 use std::path::PathBuf;
@@ -21,6 +22,7 @@ pub struct Daemon {
     config: Config,
     storage: Arc<dyn StorageBackend>,
     security_manager: Arc<SecurityManager>,
+    key_service: Arc<KeyService>,
     pid_file: Option<PathBuf>,
 }
 
@@ -32,18 +34,13 @@ impl Daemon {
         let cache = create_cache(300); // 5 minute cache
         let security_manager = Arc::new(SecurityManager::new(cache, security_config));
         
-        // Initialize encrypted storage backend
-        let storage: Arc<dyn StorageBackend> = match config.storage.backend.as_str() {
+        // Initialize storage backend (KeyService handles encryption)
+        let storage: Arc<dyn StorageBackend + Send + Sync> = match config.storage.backend.as_str() {
             "file" => {
-                let encrypted_storage =
-                    create_encrypted_storage(
-                        config.storage.path.clone(),
-                        config.clone(),
-                        300, // 5 minute cache
-                    )?;
-                encrypted_storage.init().await?;
-                info!("Initialized encrypted file storage at {:?}", config.storage.path);
-                Arc::new(encrypted_storage)
+                let file_storage = FileStorage::new(config.storage.path.clone(), config.clone());
+                file_storage.init().await?;
+                info!("Initialized file storage at {:?}", config.storage.path);
+                Arc::new(file_storage)
             }
             _ => {
                 return Err(crate::Error::Storage(format!(
@@ -53,10 +50,18 @@ impl Daemon {
             }
         };
 
+        // Create key service
+        let key_service = Arc::new(KeyService::new(
+            storage.clone(),
+            security_manager.clone(),
+            config.clone(),
+        ));
+
         Ok(Self {
             config,
             storage,
             security_manager,
+            key_service,
             pid_file: None,
         })
     }
@@ -159,10 +164,12 @@ impl Daemon {
     async fn start_api_servers(&self,
     ) -> Result<tokio::task::JoinHandle<()>> {
         let config = self.config.clone();
+        let key_service = self.key_service.clone();
+        let security_manager = self.security_manager.clone();
 
         let handle = tokio::spawn(async move {
             // Start gRPC server
-            if let Err(e) = crate::api::grpc::start(&config).await {
+            if let Err(e) = crate::api::grpc::start(&config, key_service, security_manager).await {
                 error!("gRPC server error: {}", e);
             }
         });

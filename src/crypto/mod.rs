@@ -1,15 +1,17 @@
 //! Cryptographic engine implementations
 
+pub mod ed25519;
+
 use secrecy::Secret;
 
 /// Trait for cryptographic engines
 trait CryptoEngine {
     /// Generate a new key
     fn generate_key(&self, params: KeyParams) -> crate::Result<Key>;
-    
+
     /// Sign data
     fn sign(&self, key: &Key, data: &[u8]) -> crate::Result<Signature>;
-    
+
     /// Verify signature
     fn verify(&self, key: &Key, data: &[u8], sig: &Signature) -> crate::Result<bool>;
 }

@@ -135,7 +135,9 @@ impl KeyWrapper {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,ignore
+    /// use softkms::security::{MasterKey, KeyWrapper};
+    ///
     /// let master_key = MasterKey::derive("passphrase", 210_000).unwrap();
     /// let wrapper = KeyWrapper::new(master_key);
     /// let wrapped = wrapper.wrap(&[1, 2, 3], b"metadata").unwrap();

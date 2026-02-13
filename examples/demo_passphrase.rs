@@ -4,6 +4,7 @@
 //! actually try to store or retrieve encrypted data.
 
 use softkms::storage::encrypted::create_encrypted_storage;
+use softkms::storage::StorageBackend;
 use softkms::{Config, KeyId, KeyMetadata, KeyType};
 use std::path::PathBuf;
 

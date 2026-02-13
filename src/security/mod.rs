@@ -146,9 +146,48 @@ impl SecurityManager {
         Ok(master_key)
     }
 
+    /// Derive master key from provided passphrase (non-interactive)
+    ///
+    /// Used when passphrase is provided via API (e.g., from CLI)
+    pub fn derive_master_key(&self, passphrase: &str) -> Result<MasterKey> {
+        // Check cache first
+        {
+            let cache = self.cache.lock().map_err(|_| SecurityError::LockPoisoned)?;
+            if let Some(key) = cache.get() {
+                return Ok(MasterKey::from_secret(key));
+            }
+        }
+
+        // Derive from provided passphrase
+        let master_key = MasterKey::derive(passphrase, self.config.pbkdf2_iterations)?;
+
+        // Cache the key
+        {
+            let mut cache = self.cache.lock().map_err(|_| SecurityError::LockPoisoned)?;
+            cache.store(master_key.to_secret());
+        }
+
+        Ok(master_key)
+    }
+
     /// Create a key wrapper for encryption/decryption
     pub fn create_wrapper(&self, master_key: &MasterKey) -> KeyWrapper {
         KeyWrapper::new(master_key.clone())
+    }
+
+    /// Get the cached master key
+    ///
+    /// Returns the cached master key if available, or error if not initialized.
+    /// This should be used by KeyService operations after daemon is initialized.
+    pub fn get_cached_master_key(&self) -> Result<MasterKey> {
+        let cache = self.cache.lock().map_err(|_| SecurityError::LockPoisoned)?;
+        if let Some(key) = cache.get() {
+            Ok(MasterKey::from_secret(key))
+        } else {
+            Err(SecurityError::InvalidPassphrase(
+                "Keystore not initialized. Run 'softkms-cli init' first.".to_string(),
+            ))
+        }
     }
 
     /// Change passphrase

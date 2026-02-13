@@ -15,6 +15,7 @@ pub mod crypto;
 pub mod daemon;
 pub mod hd_wallet;
 pub mod ipc;
+pub mod key_service;
 pub mod security;
 pub mod storage;
 pub mod webauthn;
@@ -95,6 +96,16 @@ pub enum KeyType {
     Derived,
     /// Imported key
     Imported,
+}
+
+impl std::fmt::Display for KeyType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            KeyType::Seed => write!(f, "seed"),
+            KeyType::Derived => write!(f, "derived"),
+            KeyType::Imported => write!(f, "imported"),
+        }
+    }
 }
 
 /// Key handle (opaque to clients)
