@@ -4,6 +4,52 @@
 
 softKMS implements a secure key management system where cryptographic keys are **NEVER stored in plaintext**. This document describes the security model, key lifecycle, and guarantees provided by the system.
 
+## System Context
+
+```mermaid
+C4Context
+  title softKMS System Context - Security Model
+
+  Person(user, "User", "Person or application")
+  
+  System_Boundary(softKMS, "softKMS") {
+    System(cli, "CLI Client", "Command line interface")
+    System(daemon, "softKMS Daemon", "Key management service")
+  }
+  
+  System_Ext(storage, "Encrypted Storage", "~/.softKMS/data/")
+  
+  Rel(user, cli, "Uses", "CLI commands")
+  Rel(cli, daemon, "gRPC API", "Passphrase + operations")
+  Rel(daemon, storage, "Reads/Writes", "AES-256-GCM encrypted")
+
+  UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
+```
+
+## Security Boundaries
+
+```mermaid
+C4Context
+  title softKMS Security Boundaries
+
+  Person(user, "User")
+  
+  Boundary(untrusted, "Untrusted Zone") {
+    System(cli, "CLI Client")
+  }
+  
+  Boundary(trusted, "Trusted Zone") {
+    System(daemon, "softKMS Daemon")
+    SystemDb(storage, "Encrypted Storage")
+  }
+  
+  Rel(user, cli, "Interacts")
+  Rel(cli, daemon, "gRPC", "TLS (production)")
+  Rel(daemon, storage, "Encrypt/Decrypt")
+
+  UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="2")
+```
+
 ## Core Security Principles
 
 ### 1. Keys Never Exist in Plaintext at Rest
@@ -16,19 +62,37 @@ All keys (including seeds, derived keys, and imported keys) are encrypted before
 
 ### 2. Keys Only Unwrapped in Memory When Needed
 
-Key material follows a strict lifecycle:
-
-```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   Wrapped Key   │────▶│   Plaintext in  │────▶│   Wrapped Key   │
-│   (at rest)     │     │   Memory        │     │   (at rest)     │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
-                              │
-                              ▼
-                        ┌─────────────────┐
-                        │   Used for      │
-                        │   Operation     │
-                        └─────────────────┘
+```mermaid
+flowchart TB
+    subgraph Rest["🔒 At Rest"]
+        R1["Encrypted Key File\nAES-256-GCM"]
+    end
+    
+    subgraph Memory["⚡ In Memory"]
+        M1["Wrapped Key"]
+        M2["Master Key"]
+        M3["Plaintext Key"]
+    end
+    
+    subgraph Operation["🔑 Operation"]
+        O1["Sign / Derive"]
+    end
+    
+    subgraph Clear["🗑️ Clear"]
+        C1["Zeroize\nMemory"]
+    end
+    
+    R1 -->|"1. Load"| M1
+    M1 -->|"2. Unwrap\n(with Master Key)"| M2
+    M2 -->|"3. Decrypt"| M3
+    M3 -->|"4. Use"| O1
+    O1 -->|"5. Immediately"| C1
+    C1 -->|"6. Return to"| Rest
+    
+    style Rest fill:#ffcccc
+    style Memory fill:#ffffcc
+    style Operation fill:#ccffcc
+    style Clear fill:#ff9999
 ```
 
 **Timeline:**
@@ -40,6 +104,35 @@ Key material follows a strict lifecycle:
 
 ### 3. Client-Daemon Isolation
 
+```mermaid
+C4Container
+  title softKMS Security Architecture
+
+  Person(user, "User")
+  
+  Container_Boundary(cli_boundary, "CLI Process") {
+    Container(cli, "CLI Client", "Rust", "User interface")
+  }
+  
+  Container_Boundary(daemon_boundary, "Daemon Process") {
+    Container(api, "gRPC API", "tonic", "API endpoints")
+    Container(key_service, "Key Service", "Rust", "Business logic")
+    Container(security, "Security Manager", "Rust", "Encryption/decryption")
+    ContainerDb(memory, "Key Cache", "Memory", "Master key (5 min TTL)")
+  }
+  
+  ContainerDb(storage, "Encrypted Files", "File System", "~/.softKMS/data/")
+  
+  Rel(user, cli, "Commands")
+  Rel(cli, api, "gRPC", "Metadata only")
+  Rel(api, key_service, "Operations")
+  Rel(key_service, security, "Wrap/Unwrap")
+  Rel(security, memory, "Cache master key")
+  Rel(key_service, storage, "Store/Retrieve")
+
+  UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="2")
+```
+
 - **Daemon** holds all key material - runs as isolated process
 - **Client (CLI)** only sends requests and receives metadata/signatures
 - **Keys NEVER leave the daemon** - only signatures and public metadata
@@ -48,6 +141,32 @@ Key material follows a strict lifecycle:
 ## Key Lifecycle
 
 ### Generation Flow
+
+```mermaid
+sequenceDiagram
+    participant S as SecurityManager
+    participant K as KeyService
+    participant E as Ed25519Engine
+    participant St as Storage
+    
+    Note over K: create_key()
+    
+    K->>E: generate_key()
+    E-->>K: (secret, public_key)
+    
+    K->>S: derive_master_key(passphrase)
+    Note right of S: PBKDF2(210k rounds)
+    S-->>K: master_key
+    
+    K->>S: wrap(key_material, aad)
+    Note right of S: AES-256-GCM + salt
+    S-->>K: wrapped_key
+    
+    Note over K: zeroize(plaintext)
+    
+    K->>St: store_key(id, metadata, encrypted)
+    St-->>K: OK
+```
 
 ```rust
 // 1. Generate key in memory
@@ -70,6 +189,33 @@ storage.store_key(id, &metadata, &wrapped.to_bytes()).await?;
 ```
 
 ### Signing Flow
+
+```mermaid
+sequenceDiagram
+    participant S as SecurityManager
+    participant K as KeyService
+    participant E as Ed25519Engine
+    participant St as Storage
+    
+    Note over K: sign(key_id, data)
+    
+    K->>St: retrieve_key(key_id)
+    St-->>K: (metadata, encrypted_data)
+    
+    K->>S: derive_master_key(passphrase)
+    S-->>K: master_key
+    
+    K->>S: unwrap(encrypted_data, aad)
+    Note right of S: AES-256-GCM decrypt
+    S-->>K: key_material (plaintext)
+    
+    K->>E: sign(data, key_material)
+    E-->>K: signature
+    
+    Note over K: zeroize(key_material)
+    
+    K-->>K: return signature
+```
 
 ```rust
 // 1. Retrieve encrypted key from storage
@@ -109,14 +255,36 @@ Binary format: `[version:1][salt:32][nonce:12][tag:16][aad_hash:32][ciphertext:N
 
 ### Master Key Derivation
 
-```
-Passphrase + PBKDF2 (210k rounds) + Random Salt ──▶ Master Key (256 bits)
-                                                    │
-                                                    ▼
-                                           AES-256-GCM + Per-key Salt
-                                                    │
-                                                    ▼
-                                            Wrapped Key (at rest)
+```mermaid
+flowchart LR
+    subgraph Input["Input"]
+        P[User Passphrase]
+    end
+    
+    subgraph Derive["Derivation"]
+        PBKDF2["PBKDF2-HMAC-SHA256\n210,000 iterations"]
+        Salt["Random Salt\n32 bytes"]
+    end
+    
+    subgraph Output["Output"]
+        MK["Master Key\n256 bits"]
+    end
+    
+    subgraph Usage["Usage"]
+        Wrap["Wrap Keys\nAES-256-GCM"]
+        Unwrap["Unwrap Keys\nAES-256-GCM"]
+    end
+    
+    P -->|"+"| Salt
+    Salt --> PBKDF2
+    PBKDF2 --> MK
+    MK --> Wrap
+    MK --> Unwrap
+    
+    style P fill:#ffffcc
+    style MK fill:#ffcccc
+    style Wrap fill:#ccffcc
+    style Unwrap fill:#ccffcc
 ```
 
 ### Additional Authenticated Data (AAD)
@@ -124,11 +292,8 @@ Passphrase + PBKDF2 (210k rounds) + Random Salt ──▶ Master Key (256 bits)
 The AAD binds the encrypted key to its metadata:
 
 ```rust
-format!("softkms:key:{}:{}:{}:{}",
-    metadata.id,
-    metadata.algorithm,
-    metadata.key_type,
-    metadata.created_at
+format!("softkms:key:{}:{}:{:?}:{}",
+    metadata.id, metadata.algorithm, metadata.key_type, metadata.created_at
 )
 ```
 
@@ -156,6 +321,32 @@ pub struct Ed25519Key {
 }
 ```
 
+### Memory Flow
+
+```mermaid
+flowchart TB
+    subgraph Generation["Key Generation"]
+        G1[Generate Key] --> G2[Wrap Key]
+        G2 --> G3[Store Encrypted]
+        G2 --> G4[Zeroize Plaintext]
+    end
+    
+    subgraph Signing["Signing Operation"]
+        S1[Load Encrypted] --> S2[Unwrap]
+        S2 --> S3[Sign Data]
+        S3 --> S4[Zeroize]
+        S4 --> S5[Return Signature]
+    end
+    
+    subgraph Memory["Memory State"]
+        M1[Only briefly unwrapped]
+        M2[Always zeroized after use]
+    end
+    
+    G4 --> M2
+    S4 --> M2
+```
+
 ### Memory Locking (Optional)
 
 On Unix systems, the master key can be locked in RAM:
@@ -174,6 +365,24 @@ This prevents sensitive key material from being swapped to disk.
 ## Threat Model
 
 ### Trusted Components
+
+```mermaid
+flowchart TB
+    subgraph Trusted["✅ Trusted"]
+        T1[softKMS Daemon]
+        T2[User Passphrase]
+        T3[Rust Memory Safety]
+    end
+    
+    subgraph Untrusted["❌ Untrusted"]
+        U1[CLI Client]
+        U2[Storage Medium]
+        U3[Network]
+        U4[Other Processes]
+    end
+    
+    T1 -->|"Protects against"| Untrusted
+```
 
 - The softKMS daemon process
 - The user's passphrase (secret)
@@ -195,6 +404,28 @@ This prevents sensitive key material from being swapped to disk.
 5. **Memory safety**: Rust memory safety + automatic zeroization
 
 ### Limitations
+
+```mermaid
+flowchart LR
+    subgraph Attacks["Potential Attacks"]
+        A1[Memory Dump]
+        A2[Weak Passphrase]
+        A3[Side Channel]
+        A4[Root Access]
+    end
+    
+    subgraph Mitigations["Mitigations"]
+        M1[Zeroization\nMemory Locking]
+        M2[PBKDF2\n210k rounds]
+        M3[Rust Safety\nConstant Time]
+        M4[mlock\nPermissions]
+    end
+    
+    A1 -->|"Limited by"| M1
+    A2 -->|"Slowed by"| M2
+    A3 -->|"Protected by"| M3
+    A4 -->|"Hardened by"| M4
+```
 
 1. **Memory dumps**: If an attacker can read daemon memory while keys are unwrapped, keys are exposed
 2. **Passphrase attacks**: Weak passphrases can be brute-forced offline if storage is accessed

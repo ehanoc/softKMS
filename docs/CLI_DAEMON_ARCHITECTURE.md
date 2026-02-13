@@ -4,329 +4,316 @@
 
 The CLI **NEVER** accesses keys directly. All key operations go through the daemon.
 
+## System Context Diagram
+
+```mermaid
+C4Context
+  title softKMS System Context
+
+  Person(user, "User", "Application or end user")
+  
+  System_Boundary(softKMS, "softKMS") {
+    System(cli, "CLI Client", "Command line interface")
+    System(daemon, "softKMS Daemon", "Key management service")
+  }
+  
+  System_Ext(storage, "Encrypted Storage", "~/.softKMS/data/")
+  
+  Rel(user, cli, "Uses", "CLI commands")
+  Rel(cli, daemon, "gRPC API calls", "Passphrase + operations")
+  Rel(daemon, storage, "Reads/Writes", "AES-256-GCM encrypted")
 ```
-┌──────────────┐      HTTP/REST      ┌──────────────┐
-│     CLI      │  ────────────────▶  │    Daemon    │
-│              │                     │              │
-│  • Prompts   │                     │  • Security  │
-│    for       │                     │    Layer     │
-│    pass-     │                     │              │
-│    phrase    │                     │  • Key       │
-│              │                     │    storage   │
-│  • Sends     │                     │              │
-│    commands  │                     │  • Encryp-   │
-│              │                     │    tion      │
-└──────────────┘                     └──────────────┘
+
+## Container Diagram
+
+```mermaid
+C4Container
+  title softKMS Container Architecture
+
+  Person(user, "User")
+  
+  Container_Boundary(cli_app, "CLI Application") {
+    Container(cli_main, "CLI Main", "Rust", "Command parsing and user interaction")
+    Container(cli_client, "gRPC Client", "tonic", "API communication")
+    Container(passphrase_prompt, "Passphrase Prompt", "rpassword", "Secure user input")
+  }
+  
+  Container_Boundary(daemon_app, "Daemon Application") {
+    Container(grpc_server, "gRPC Server", "tonic", "API endpoints")
+    Container(key_service, "Key Service", "Rust", "Business logic")
+    Container(security_mgr, "Security Manager", "Rust", "Master key + encryption")
+    Container(storage_adapter, "Storage Adapter", "Rust", "File I/O operations")
+  }
+  
+  ContainerDb(encrypted_files, "Encrypted Key Files", "File System", "~/.softKMS/data/*.enc")
+  ContainerDb(metadata_files, "Metadata Files", "JSON", "~/.softKMS/data/*.json")
+  
+  Rel(user, passphrase_prompt, "Enters passphrase")
+  Rel(passphrase_prompt, cli_main, "Passphrase (secure)")
+  Rel(cli_main, cli_client, "Commands")
+  Rel(cli_client, grpc_server, "gRPC", "Port 50051")
+  Rel(grpc_server, key_service, "Operations")
+  Rel(key_service, security_mgr, "Encrypt/Decrypt")
+  Rel(key_service, storage_adapter, "Store/Retrieve")
+  Rel(storage_adapter, encrypted_files, "Write encrypted keys")
+  Rel(storage_adapter, metadata_files, "Write metadata")
+```
+
+## Component Diagram
+
+```mermaid
+C4Component
+  title softKMS Key Service Components
+
+  Container(cli_client, "gRPC Client")
+  Container(grpc_server, "gRPC Server")
+  
+  Component(key_service, "KeyService", "Rust Struct", "Key lifecycle management")
+  Component(ed25519_engine, "Ed25519Engine", "Crypto", "Ed25519 operations")
+  Component(key_wrapper, "KeyWrapper", "Security", "AES-256-GCM wrap/unwrap")
+  Component(master_key, "MasterKey", "Security", "PBKDF2-derived key")
+  Component(passphrase_cache, "PassphraseCache", "Security", "5-minute TTL cache")
+  
+  ContainerDb(file_storage, "FileStorage", "Storage", "Encrypted key files")
+  
+  Rel(cli_client, grpc_server, "Create key, Sign data, etc.")
+  Rel(grpc_server, key_service, "Call methods")
+  Rel(key_service, ed25519_engine, "Generate keys, Sign")
+  Rel(key_service, key_wrapper, "Wrap/Unwrap keys")
+  Rel(key_wrapper, master_key, "Use for encryption")
+  Rel(master_key, passphrase_cache, "Derive from passphrase")
+  Rel(key_service, file_storage, "Store/Load encrypted")
 ```
 
 ## CLI Responsibilities
 
 1. **Prompt user for passphrase** (securely via rpassword)
-2. **Cache passphrase** temporarily (optional)
-3. **Send REST API requests** to daemon
-4. **Display results** to user
+2. **Send gRPC requests** to daemon
+3. **Display results** to user
 
 ## Daemon Responsibilities
 
-1. **Receive passphrase via API**
-2. **Derive master key** (Security Layer)
+1. **Receive passphrase via gRPC**
+2. **Derive master key** (Security Layer - PBKDF2, 210k iter)
 3. **Generate/derive keys**
-4. **Encrypt keys** (AES-256-GCM)
-5. **Store to disk**
+4. **Wrap/Unwrap keys** (AES-256-GCM)
+5. **Store to disk** (encrypted)
 6. **Return key metadata** (NOT key material)
 
-## API Flow
+## Dynamic View: Create Key
 
-### Creating a Standalone Key
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant CLI as CLI Client
+    participant D as Daemon
+    participant SM as SecurityManager
+    participant S as Storage
 
-```bash
-CLI                              Daemon
-  │                                │
-  │  POST /v1/keys                 │
-  │  {                             │
-  │    "algorithm": "ed25519",    │
-  │    "label": "My Key",         │
-  │    "passphrase": "*******"    │
-  │  }                             │
-  │ ──────────────────────────────▶│
-  │                                │
-  │                                │ Derive master key
-  │                                │ Generate key
-  │                                │ Encrypt key
-  │                                │ Store to disk
-  │                                │
-  │  {                             │
-  │    "id": "uuid",              │
-  │    "algorithm": "ed25519",    │
-  │    "label": "My Key",         │
-  │    "created_at": "..."         │
-  │  }                             │
-  │◀───────────────────────────────│
+    U->>CLI: softkms-cli generate --algorithm ed25519 --label "My Key"
+    CLI->>U: Enter passphrase: ***
+    CLI->>D: gRPC CreateKeyRequest
+    Note over CLI,D: {algorithm, label, passphrase}
+    
+    D->>SM: derive_master_key(passphrase)
+    SM->>SM: PBKDF2(passphrase, salt, 210k)
+    SM->>SM: Cache master_key (5 min TTL)
+    SM-->>D: master_key
+    
+    D->>D: Generate Ed25519 key pair
+    D->>SM: wrap(key_material, aad)
+    SM->>SM: AES-256-GCM encrypt
+    SM-->>D: WrappedKey
+    
+    D->>S: store_key(metadata, encrypted_data)
+    S->>S: Write to ~/.softKMS/data/
+    S-->>D: OK
+    
+    D-->>CLI: CreateKeyResponse
+    Note over D,CLI: {id, algorithm, label, created_at}
+    CLI->>U: Display key info
 ```
 
-### Importing a Seed
+## Dynamic View: Sign Data
 
-```bash
-CLI                              Daemon
-  │                                │
-  │  POST /v1/seeds               │
-  │  {                             │
-  │    "mnemonic": "...",         │
-  │    "label": "My Seed",        │
-  │    "passphrase": "*******"    │
-  │  }                             │
-  │ ──────────────────────────────▶│
-  │                                │
-  │                                │ Convert mnemonic to seed
-  │                                │ Derive master key
-  │                                │ Encrypt seed
-  │                                │ Store to disk
-  │                                │
-  │  {                             │
-  │    "id": "uuid",              │
-  │    "label": "My Seed",        │
-  │    "created_at": "..."         │
-  │  }                             │
-  │◀───────────────────────────────│
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant CLI as CLI Client
+    participant D as Daemon
+    participant SM as SecurityManager
+    participant S as Storage
+
+    U->>CLI: softkms-cli sign --key <uuid> --data "Hello"
+    CLI->>U: Enter passphrase: ***
+    CLI->>D: gRPC SignRequest
+    Note over CLI,D: {key_id, data, passphrase}
+    
+    D->>S: retrieve_key(key_id)
+    S-->>D: (metadata, encrypted_data)
+    
+    D->>SM: derive_master_key(passphrase)
+    SM->>SM: Get from cache or derive
+    SM-->>D: master_key
+    
+    D->>SM: unwrap(encrypted_data, aad)
+    SM->>SM: AES-256-GCM decrypt
+    SM-->>D: key_material (plaintext)
+    
+    D->>D: Ed25519.sign(data, key_material)
+    D->>D: zeroize(key_material)
+    
+    D-->>CLI: SignResponse
+    Note over D,CLI: {signature, algorithm}
+    CLI->>U: Display signature
 ```
 
-### Deriving a Key from Seed
+## Key Security Lifecycle
 
-```bash
-CLI                              Daemon
-  │                                │
-  │  POST /v1/keys/derive         │
-  │  {                             │
-  │    "seed_id": "uuid",         │
-  │    "path": "m/44'/0'/0'/0/0", │
-  │    "label": "Derived",        │
-  │    "passphrase": "*******"    │
-  │  }                             │
-  │ ──────────────────────────────▶│
-  │                                │
-  │                                │ Decrypt seed (passphrase)
-  │                                │ BIP32 derive child key
-  │                                │ Encrypt child key
-  │                                │ Store to disk
-  │                                │
-  │  {                             │
-  │    "id": "uuid",              │
-  │    "parent_seed": "uuid",     │
-  │    "derivation_path": "...",  │
-  │    "label": "Derived",        │
-  │    "created_at": "..."         │
-  │  }                             │
-  │◀───────────────────────────────│
+```mermaid
+flowchart TB
+    subgraph Generate["1. Generate"]
+        G1[Generate Ed25519 key pair]
+        G2[Derive master key from passphrase]
+        G3[Wrap key with AES-256-GCM]
+        G4[Store encrypted key]
+        G5[Clear plaintext from memory]
+    end
+    
+    subgraph Rest["2. At Rest"]
+        R1[Encrypted key file]
+        R2[Metadata JSON]
+    end
+    
+    subgraph Use["3. Use"]
+        U1[Retrieve encrypted key]
+        U2[Unwrap with master key]
+        U3[Sign data]
+        U4[Clear key from memory]
+    end
+    
+    G1 --> G2 --> G3 --> G4 --> G5 --> R1
+    R1 --> U1 --> U2 --> U3 --> U4
 ```
 
 ## Passphrase Flow
 
-```
-User enters passphrase in CLI
-         │
-         ▼
-┌─────────────────────┐
-│ CLI prompts securely │
-│ (rpassword, hidden)  │
-└──────────┬──────────┘
-           │
-           │ Passphrase sent in API request
-           │ (over HTTPS in production)
-           ▼
-┌─────────────────────┐
-│   Daemon receives    │
-│   passphrase         │
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────┐
-│ Security Layer      │
-│ derives master key   │
-│ (PBKDF2, 210k iter) │
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────┐
-│ Master key cached   │
-│ in daemon memory    │
-│ (5 min TTL)         │
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────┐
-│ Encrypt/Decrypt     │
-│ operations using    │
-│ master key          │
-└─────────────────────┘
+```mermaid
+flowchart LR
+    subgraph Input["User Input"]
+        U[User]
+        P[Passphrase Prompt<br/>rpassword]
+    end
+    
+    subgraph Transport["Transport"]
+        CLI[CLI Client]
+        D[Daemon]
+    end
+    
+    subgraph Security["Security Layer"]
+        SM[SecurityManager]
+        PBKDF2[PBKDF2<br/>210k iterations]
+        Cache[Master Key Cache<br/>5 min TTL]
+    end
+    
+    subgraph Crypto["Cryptographic Operations"]
+        Wrap[Wrap Keys<br/>AES-256-GCM]
+        Unwrap[Unwrap Keys<br/>AES-256-GCM]
+    end
+    
+    U -->|Types passphrase| P
+    P -->|Secure input| CLI
+    CLI -->|gRPC request| D
+    D -->|Derive master key| SM
+    SM --> PBKDF2
+    PBKDF2 -->|Master key| Cache
+    Cache -->|Cached key| Wrap
+    Cache -->|Cached key| Unwrap
 ```
 
 ## Security Benefits
 
-1. **Isolation**: Keys never leave daemon
-2. **Single passphrase**: User enters once per session
-3. **Memory protection**: mlock in daemon process
-4. **Audit trail**: All operations logged by daemon
-5. **Access control**: Daemon can enforce policies
-
-## Implementation Files
-
-### New Files Needed
-
-1. `src/api/handlers/keys.rs` - REST handlers for key operations
-2. `src/api/handlers/seeds.rs` - REST handlers for seed operations
-3. `cli/src/api_client.rs` - HTTP client for CLI
-4. `cli/src/commands/` - Individual command implementations
-
-### Modified Files
-
-1. `src/api/rest.rs` - Add new routes
-2. `src/daemon/mod.rs` - Initialize handlers
-3. `cli/src/main.rs` - New command structure
+1. **Isolation**: Keys never leave daemon process
+2. **Single passphrase**: User enters once, cached securely
+3. **Memory protection**: Automatic zeroization after use
+4. **Encrypted at rest**: AES-256-GCM with unique salts
+5. **Metadata binding**: AAD prevents tampering
 
 ## API Endpoints
 
 ```rust
 // Keys
-POST   /v1/keys              // Create standalone key
-POST   /v1/keys/derive       // Derive from seed
-GET    /v1/keys              // List all keys
-GET    /v1/keys/:id          // Get key info
-DELETE /v1/keys/:id          // Delete key
-POST   /v1/keys/:id/sign     // Sign data
+rpc CreateKey(CreateKeyRequest) returns (CreateKeyResponse);
+rpc ListKeys(ListKeysRequest) returns (ListKeysResponse);
+rpc GetKey(GetKeyRequest) returns (GetKeyResponse);
+rpc DeleteKey(DeleteKeyRequest) returns (DeleteKeyResponse);
+rpc Sign(SignRequest) returns (SignResponse);
 
 // Seeds
-POST   /v1/seeds             // Import mnemonic
-GET    /v1/seeds             // List seeds
-GET    /v1/seeds/:id         // Get seed info
-DELETE /v1/seeds/:id         // Delete seed
+rpc ImportSeed(ImportSeedRequest) returns (ImportSeedResponse);
+rpc DeriveKey(DeriveKeyRequest) returns (DeriveKeyResponse);
 
-// Misc
-POST   /v1/passphrase/change // Change passphrase
-```
-
-## Request/Response Examples
-
-### Create Key Request
-```json
-{
-  "algorithm": "ed25519",
-  "label": "My Key",
-  "passphrase": "my_secret_passphrase",
-  "options": {
-    "extractable": false
-  }
-}
-```
-
-### Create Key Response
-```json
-{
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "algorithm": "ed25519",
-  "label": "My Key",
-  "created_at": "2024-02-13T16:00:00Z",
-  "key_type": "standalone"
-}
-```
-
-### Import Seed Request
-```json
-{
-  "mnemonic": "abandon abandon abandon ... about",
-  "label": "My Seed",
-  "passphrase": "my_secret_passphrase"
-}
-```
-
-### Import Seed Response
-```json
-{
-  "id": "550e8400-e29b-41d4-a716-446655440001",
-  "label": "My Seed",
-  "created_at": "2024-02-13T16:00:00Z",
-  "seed_type": "bip39"
-}
-```
-
-### Derive Key Request
-```json
-{
-  "seed_id": "550e8400-e29b-41d4-a716-446655440001",
-  "derivation_path": "m/44'/0'/0'/0/0",
-  "label": "Address 0",
-  "passphrase": "my_secret_passphrase"
-}
-```
-
-### Derive Key Response
-```json
-{
-  "id": "550e8400-e29b-41d4-a716-446655440002",
-  "algorithm": "ed25519",
-  "label": "Address 0",
-  "parent_seed": "550e8400-e29b-41d4-a716-446655440001",
-  "derivation_path": "m/44'/0'/0'/0/0",
-  "created_at": "2024-02-13T16:00:00Z",
-  "key_type": "derived"
-}
+// Health
+rpc Health(HealthRequest) returns (HealthResponse);
 ```
 
 ## CLI Commands
 
 ```bash
-# Create standalone key
-softkms-cli key create \
-  --algorithm ed25519 \
-  --label "My Key"
-# Prompts: Enter passphrase
+# Initialize
+softkms-cli init
 
-# Import seed (BIP39)
-softkms-cli seed import \
-  --mnemonic "abandon abandon ... about" \
-  --label "My Seed"
-# Prompts: Enter passphrase
+# Generate key
+softkms-cli generate --algorithm ed25519 --label "My Key"
 
-# Derive key from seed
-softkms-cli key derive \
-  --seed-id <uuid> \
-  --path "m/44'/0'/0'/0/0" \
-  --label "Address 0"
-# Prompts: Enter passphrase (or uses cache)
+# Sign data
+softkms-cli sign --key <uuid> --data "Hello"
+# or by label:
+softkms-cli sign --label "My Key" --data "Hello"
+
+# Import seed
+softkms-cli import-seed --mnemonic "abandon abandon ... about"
 
 # List keys
-softkms-cli key list
+softkms-cli list
 
-# Change passphrase
-softkms-cli passphrase change
-# Prompts: Old passphrase
-# Prompts: New passphrase (twice)
+# Get key info
+softkms-cli info --key <uuid>
+
+# Delete key
+softkms-cli delete --key <uuid> --force
 ```
 
 ## Security Considerations
 
 ### Passphrase Transmission
-- Always over HTTPS in production
+- Sent over gRPC (localhost in dev, TLS in production)
 - Never logged
-- Cleared from memory after use
-- HTTP Basic Auth or Bearer token
+- Cleared from CLI memory after sending
+- Used by daemon to derive master key
 
 ### Key Material
 - **NEVER** returned to CLI
 - Only metadata (ID, algorithm, label) returned
 - Signing done by daemon, returns signature only
 
-### Session Management
-- Optional: Session token after first passphrase
-- Token cached by CLI
-- Token expires with master key cache
+## Implementation Files
+
+### Key Components
+- `src/api/grpc.rs` - gRPC server implementation
+- `src/key_service.rs` - Key lifecycle management
+- `src/security/wrapper.rs` - AES-256-GCM wrap/unwrap
+- `src/crypto/ed25519.rs` - Ed25519 signing
+- `cli/src/main.rs` - CLI client
 
 ## Next Steps
 
-1. Implement REST handlers in daemon
-2. Implement HTTP client in CLI
-3. Add passphrase prompting
-4. Test end-to-end flow
-5. Add error handling
-6. Add logging
-
-Does this architecture meet your requirements?
+1. ✅ REST/gRPC handlers implemented
+2. ✅ HTTP/gRPC client in CLI
+3. ✅ Passphrase prompting
+4. ✅ End-to-end flow tested
+5. ✅ Error handling
+6. ✅ Logging
+7. Add TLS support for production
+8. Implement HD wallet derivation
+9. Add audit logging
