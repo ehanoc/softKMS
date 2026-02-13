@@ -36,43 +36,91 @@ softKMS is a software-based Key Management System (KMS) that provides:
 ## Architecture
 
 ```mermaid
-C4Container
-    title softKMS Architecture
+flowchart TB
+    subgraph "🌐 Client Zone"
+        CLI["🖥️ CLI Client"]
+        APP["📱 Applications"]
+        WEB["🌐 Web Services"]
+    end
+
+    subgraph "🚪 Gateway Layer"
+        direction LR
+        GRPC["⚡ gRPC:50051"]
+        REST["🌐 REST:8080"]
+        PKCS["🔐 PKCS#11"]
+    end
+
+    subgraph "🔒 Security Fortress"
+        direction TB
+        
+        subgraph "🛡️ Core Citadel"
+            KEY["🔑 Key Service"]
+            CRYPTO["⚔️ Crypto Engines"]
+            HD["🌳 HD Wallet\nBIP32/44"]
+        end
+        
+        subgraph "🧠 Brain Center"
+            SEC["🔐 Security Manager"]
+            MEM["🧹 Memory Guard"]
+            AUDIT["📋 Audit Logger"]
+        end
+    end
+
+    subgraph "💾 Storage Vaults"
+        direction LR
+        FILE["📁 Encrypted\nFiles"]
+        TPM["🔒 TPM2\nHardware"]
+        VAULT["☁️ HashiCorp\nVault"]
+    end
+
+    subgraph "🎯 Optional Modules"
+        WEBAUTHN["🎭 WebAuthn\nFIDO2"]
+    end
+
+    CLI --> GRPC
+    APP --> REST
+    WEB --> PKCS
     
-    Person(client, "Clients", "Applications using softKMS")
+    GRPC --> KEY
+    REST --> KEY
+    PKCS --> KEY
     
-    Container_Boundary(api, "API Layer") {
-        Container(grpc, "gRPC API", "Port 50051", "High-performance binary API")
-        Container(rest, "REST API", "Port 8080", "HTTP/JSON API")
-        Container(pkcs11, "PKCS#11", "C Library", "Standard PKCS#11 interface")
-    }
+    KEY --> CRYPTO
+    KEY --> HD
+    KEY --> SEC
     
-    Container_Boundary(core, "softKMS Core (Rust)") {
-        Container(crypto, "Crypto Engines", "Pluggable", "Ed25519, ECDSA, RSA, Lattice")
-        Container(storage_mgr, "Storage Manager", "Pluggable", "Encrypted file, TPM2, Vault backends")
-        Container(hd_wallet, "HD Wallet", "BIP32/BIP44", "Hierarchical key derivation")
-        Container(webauthn, "WebAuthn", "Optional", "FIDO2 authenticator module")
-    }
+    CRYPTO --> MEM
+    SEC --> MEM
     
-    Container_Boundary(backends, "Storage Backends") {
-        Container(file, "Encrypted Files", "Local filesystem")
-        Container(tpm, "TPM2 HSM", "Hardware security")
-        Container(vault, "HashiCorp Vault", "Cloud KMS")
-    }
+    KEY --> FILE
+    KEY --> TPM
+    KEY --> VAULT
     
-    Rel(client, grpc, "Uses")
-    Rel(client, rest, "Uses")
-    Rel(client, pkcs11, "Uses")
-    Rel(grpc, crypto, "Calls")
-    Rel(rest, crypto, "Calls")
-    Rel(pkcs11, crypto, "Calls")
-    Rel(grpc, storage_mgr, "Calls")
-    Rel(rest, storage_mgr, "Calls")
-    Rel(pkcs11, storage_mgr, "Calls")
-    Rel(storage_mgr, file, "Stores")
-    Rel(storage_mgr, tpm, "Stores")
-    Rel(storage_mgr, vault, "Stores")
+    CRYPTO -.-> WEBAUTHN
+    
+    style CLI fill:#e1f5ff,stroke:#01579b,stroke-width:3px
+    style APP fill:#e1f5ff,stroke:#01579b,stroke-width:3px
+    style WEB fill:#e1f5ff,stroke:#01579b,stroke-width:3px
+    style GRPC fill:#fff3e0,stroke:#e65100,stroke-width:3px
+    style REST fill:#fff3e0,stroke:#e65100,stroke-width:3px
+    style PKCS fill:#fff3e0,stroke:#e65100,stroke-width:3px
+    style KEY fill:#f3e5f5,stroke:#6a1b9a,stroke-width:4px
+    style CRYPTO fill:#e8f5e9,stroke:#2e7d32,stroke-width:3px
+    style HD fill:#e8f5e9,stroke:#2e7d32,stroke-width:3px
+    style SEC fill:#ffebee,stroke:#c62828,stroke-width:4px
+    style MEM fill:#fff9c4,stroke:#f57f17,stroke-width:3px
+    style FILE fill:#e0f2f1,stroke:#00695c,stroke-width:3px
+    style TPM fill:#e0f2f1,stroke:#00695c,stroke-width:3px
+    style VAULT fill:#e0f2f1,stroke:#00695c,stroke-width:3px
+    style WEBAUTHN fill:#fce4ec,stroke:#ad1457,stroke-width:2px,stroke-dasharray: 5 5
 ```
+
+**Legend:**
+- 🌐 **Client Zone** - Where users and applications live
+- 🚪 **Gateway Layer** - Entry points (gRPC, REST, PKCS#11)
+- 🔒 **Security Fortress** - Core protection with Security Manager & Memory Guard
+- 💾 **Storage Vaults** - Where encrypted keys sleep safely
+- 🎯 **Optional** - WebAuthn for FIDO2/Passkey support
 
 ## Core Principles
 
