@@ -18,6 +18,9 @@ pub mod ipc;
 pub mod storage;
 pub mod webauthn;
 
+// Re-export daemon for main.rs
+pub use daemon::Daemon;
+
 use thiserror::Error;
 
 /// softKMS result type
@@ -55,6 +58,12 @@ pub enum Error {
     Internal(String),
 }
 
+impl From<std::io::Error> for Error {
+    fn from(error: std::io::Error) -> Self {
+        Error::Internal(error.to_string())
+    }
+}
+
 /// Unique identifier for keys
 pub type KeyId = uuid::Uuid;
 
@@ -88,8 +97,10 @@ pub enum KeyType {
 
 /// Key handle (opaque to clients)
 pub struct KeyHandle {
-    id: KeyId,
-    metadata: KeyMetadata,
+    /// Key ID
+    pub id: KeyId,
+    /// Key metadata
+    pub metadata: KeyMetadata,
 }
 
 /// Signature result

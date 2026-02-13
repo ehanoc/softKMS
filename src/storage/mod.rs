@@ -3,11 +3,18 @@
 pub mod file;
 
 use crate::{KeyId, KeyMetadata, Result};
+use std::future::Future;
+use std::pin::Pin;
+
+/// Boxed future type for dyn compatibility
+type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Storage backend trait
+/// 
+/// This trait uses boxed futures for object safety (dyn compatibility).
 pub trait StorageBackend: Send + Sync {
     /// Initialize storage
-    fn init(&self) -> impl std::future::Future<Output = Result<()>> + Send;
+    fn init(&self) -> BoxFuture<'_, Result<()>>;
     
     /// Store key
     fn store_key(
@@ -15,22 +22,22 @@ pub trait StorageBackend: Send + Sync {
         id: KeyId,
         metadata: &KeyMetadata,
         encrypted_data: &[u8],
-    ) -> impl std::future::Future<Output = Result<()>> + Send;
+    ) -> BoxFuture<'_, Result<()>>;
     
     /// Retrieve key
     fn retrieve_key(
         &self,
         id: KeyId,
-    ) -> impl std::future::Future<Output = Result<Option<(KeyMetadata, Vec<u8>)>>> + Send;
+    ) -> BoxFuture<'_, Result<Option<(KeyMetadata, Vec<u8>)>>>;
     
     /// Delete key
     fn delete_key(&self,
         id: KeyId,
-    ) -> impl std::future::Future<Output = Result<()>> + Send;
+    ) -> BoxFuture<'_, Result<()>>;
     
     /// List all keys
-    fn list_keys(&self) -> impl std::future::Future<Output = Result<Vec<KeyMetadata>>> + Send;
+    fn list_keys(&self) -> BoxFuture<'_, Result<Vec<KeyMetadata>>>;
     
     /// Check if key exists
-    fn exists(&self, id: KeyId) -> impl std::future::Future<Output = Result<bool>> + Send;
+    fn exists(&self, id: KeyId) -> BoxFuture<'_, Result<bool>>;
 }
