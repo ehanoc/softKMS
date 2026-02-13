@@ -13,7 +13,7 @@ use crate::{Config, Result};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::signal;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 /// Daemon state
 pub struct Daemon {
@@ -102,7 +102,7 @@ impl Daemon {
     }
 
     /// Start the daemon
-    pub async fn start(mut self) -> Result<()> {
+    pub async fn start(self) -> Result<()> {
         info!("Starting softKMS daemon v{}", env!("CARGO_PKG_VERSION"));
 
         // Check for existing instance

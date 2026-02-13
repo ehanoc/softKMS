@@ -36,7 +36,7 @@
 //! ```
 
 use crate::webauthn::WebAuthnConfig;
-use crate::webauthn::ctap2::{Ctap2Request, Ctap2Response};
+use crate::webauthn::ctap2::Ctap2Request;
 use crate::Result;
 
 /// Native messaging message
@@ -148,7 +148,7 @@ impl NativeMessagingHost {
             NativeMessage::Ping => Ok(NativeMessage::Pong),
             NativeMessage::Ctap2Request { id, data } => {
                 // Parse CTAP2 request from base64/CBOR
-                let ctap_request = self.parse_ctap2_request(&data)?;
+                let _ctap_request = self.parse_ctap2_request(&data)?;
                 
                 // TODO: Process CTAP2 request
                 let response = NativeMessage::Ctap2Response {

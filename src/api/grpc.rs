@@ -6,7 +6,7 @@ use crate::Config;
 use crate::Result;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
-use tracing::{error, info};
+use tracing::info;
 
 /// gRPC server handle
 pub struct GrpcServer;

@@ -4,7 +4,7 @@
 //! including creation, storage, retrieval, and deletion.
 
 use crate::webauthn::types::{WebAuthnCredential, CredentialFilter, CredentialAlgorithm};
-use crate::{KeyId, Result};
+use crate::Result;
 
 /// Credential store for managing WebAuthn credentials
 pub struct CredentialStore {
@@ -18,25 +18,25 @@ impl CredentialStore {
     }
     
     /// Store a new credential
-    pub async fn store(&mut self, credential: WebAuthnCredential) -> Result<()> {
+    pub async fn store(&mut self, _credential: WebAuthnCredential) -> Result<()> {
         // TODO: Implement credential storage
         Ok(())
     }
     
     /// Retrieve a credential by ID
-    pub async fn get(&self, credential_id: &[u8]) -> Result<Option<WebAuthnCredential>> {
+    pub async fn get(&self, _credential_id: &[u8]) -> Result<Option<WebAuthnCredential>> {
         // TODO: Implement credential retrieval
         Ok(None)
     }
     
     /// Find credentials matching filter
-    pub async fn find(&self, filter: CredentialFilter) -> Result<Vec<WebAuthnCredential>> {
+    pub async fn find(&self, _filter: CredentialFilter) -> Result<Vec<WebAuthnCredential>> {
         // TODO: Implement credential filtering
         Ok(Vec::new())
     }
     
     /// Delete a credential
-    pub async fn delete(&mut self, credential_id: &[u8]) -> Result<bool> {
+    pub async fn delete(&mut self, _credential_id: &[u8]) -> Result<bool> {
         // TODO: Implement credential deletion
         Ok(false)
     }
@@ -44,15 +44,15 @@ impl CredentialStore {
     /// Update signature counter
     pub async fn update_sign_count(
         &mut self,
-        credential_id: &[u8],
-        new_count: u32,
+        _credential_id: &[u8],
+        _new_count: u32,
     ) -> Result<()> {
         // TODO: Update sign count
         Ok(())
     }
     
     /// Check if credential exists
-    pub async fn exists(&self, credential_id: &[u8]) -> Result<bool> {
+    pub async fn exists(&self, _credential_id: &[u8]) -> Result<bool> {
         // TODO: Check existence
         Ok(false)
     }

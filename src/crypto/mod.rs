@@ -1,6 +1,6 @@
 //! Cryptographic engine implementations
 
-use secrecy::{Secret, ExposeSecret};
+use secrecy::Secret;
 
 /// Trait for cryptographic engines
 trait CryptoEngine {

@@ -47,7 +47,7 @@ pub mod ctap2;
 pub mod native_messaging;
 pub mod derivation;
 
-use crate::{Config, Result};
+use crate::Result;
 
 /// WebAuthn authenticator configuration
 #[derive(Debug, Clone)]

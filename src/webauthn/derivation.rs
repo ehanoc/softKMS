@@ -66,7 +66,7 @@ pub fn derive_credential_id(seed: &[u8], rp_id: &str, user_handle: &[u8]) -> Vec
 ///
 /// Returns a BIP32 path like "m/2017'/0'/0'/0/123"
 pub fn derive_credential_path(
-    seed: &[u8],
+    _seed: &[u8],
     rp_id: &str,
     user_handle: &[u8],
     is_resident: bool,
@@ -104,7 +104,7 @@ pub fn derive_credential(
     seed: &[u8],
     rp: &RelyingParty,
     user: &UserInfo,
-    algorithm: CredentialAlgorithm,
+    _algorithm: CredentialAlgorithm,
     is_resident: bool,
 ) -> Result<WebAuthnCredential> {
     // Derive credential ID

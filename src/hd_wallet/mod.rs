@@ -17,7 +17,7 @@ pub struct DerivationPath {
 }
 
 /// Derive a key from seed using path
-pub fn derive_key(seed: &Seed, path: &DerivationPath) -> crate::Result<Seed> {
+pub fn derive_key(_seed: &Seed, _path: &DerivationPath) -> crate::Result<Seed> {
     // TODO: Implement BIP32 derivation
     unimplemented!("BIP32 derivation")
 }
