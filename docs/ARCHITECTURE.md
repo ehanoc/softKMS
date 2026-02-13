@@ -6,66 +6,55 @@ softKMS is a modern, modular software key management system designed as a replac
 
 ## High-Level Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                          Clients                                │
-│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌──────────────────┐ │
-│  │   CLI   │  │  gRPC   │  │  REST   │  │   PKCS#11        │ │
-│  │  (Rust) │  │ Client  │  │ Client  │  │   (C/C++)        │ │
-│  └────┬────┘  └────┬────┘  └────┬────┘  └────────┬─────────┘ │
-└───────┼────────────┼────────────┼──────────────┼───────────┘
-        │            │            │              │
-        └────────────┴────────────┴──────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                       softKMS Daemon                            │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │                    API Layer                              │  │
-│  │  ┌──────────┐  ┌──────────┐  ┌─────────────────────┐    │  │
-│  │  │  gRPC    │  │  REST    │  │   PKCS#11 Bridge    │    │  │
-│  │  │  Server  │  │  Server  │  │   (C FFI)           │    │  │
-│  │  └────┬─────┘  └────┬─────┘  └──────────┬──────────┘    │  │
-│  │       └─────────────┴───────────────────┘               │  │
-│  │                     │                                    │  │
-│  └─────────────────────┼────────────────────────────────────┘  │
-│                        │                                        │
-│  ┌─────────────────────▼────────────────────────────────────┐  │
-│  │                   Core Engine                            │  │
-│  │  ┌────────────┐  ┌──────────┐  ┌──────────────────┐   │  │
-│  │  │   Crypto   │  │   HD     │  │   Key Manager    │   │  │
-│  │  │   Engine   │  │  Wallet  │  │                  │   │  │
-│  │  │ (Pluggable)│  │ (BIP32)  │  │  - Key lifecycle │   │  │
-│  │  └────┬───────┘  └────┬─────┘  │  - Access control│   │  │
-│  │       └────────┬──────┘        └──────────────────┘   │  │
-│  │                │                                       │  │
-│  │  ┌─────────────┴────────────────────────────────────┐  │  │
-│  │  │            Optional Modules                    │  │  │
-│  │  │  ┌─────────────────────────────────────────┐  │  │  │
-│  │  │  │  WebAuthn (FIDO2 Authenticator)         │  │  │  │
-│  │  │  │  - Native messaging                     │  │  │  │
-│  │  │  │  - CTAP2 protocol                       │  │  │  │
-│  │  │  └─────────────────────────────────────────┘  │  │  │
-│  │  └────────────────────────────────────────────────┘  │  │
-│  │                │                                       │  │
-│  │  ┌─────────────▼────────────────────────────────────┐  │  │
-│  │  │            Security Layer                      │  │  │
-│  │  │  ┌──────────┐  ┌──────────┐  ┌────────────┐ │  │  │
-│  │  │  │  Master │  │  Memory   │  │   Audit    │ │  │  │
-│  │  │  │   Key   │  │  Guard    │  │    Log     │ │  │  │
-│  │  │  │(PBKDF2) │  │(zeroize) │  │            │ │  │  │
-│  │  │  └──────────┘  └──────────┘  └────────────┘ │  │  │
-│  │  └──────────────────────────────────────────────┘  │  │
-│  └────────────────────────────────────────────────────┘  │
-│                        │                                 │
-│  ┌─────────────────────▼─────────────────────────────────┐│
-│  │                 Storage Layer                         ││
-│  │  ┌──────────┐  ┌──────────┐  ┌────────────────────┐  ││
-│  │  │  File    │  │   TPM2   │  │  HashiCorp Vault │  ││
-│  │  │(Encrypted│  │   HSM    │  │    (Cloud KMS)   │  ││
-│  │  └──────────┘  └──────────┘  └────────────────────┘  ││
-│  └──────────────────────────────────────────────────────┘│
-└──────────────────────────────────────────────────────────┘
+```mermaid
+C4Container
+    title softKMS High-Level Architecture
+    
+    Person(client, "Clients", "CLI, gRPC, REST, PKCS#11")
+    
+    Container_Boundary(daemon, "softKMS Daemon") {
+        Container_Boundary(api, "API Layer") {
+            Container(grpc, "gRPC Server", "Async", "High-performance API")
+            Container(rest, "REST Server", "HTTP", "JSON API")
+            Container(pkcs11, "PKCS#11 Bridge", "C FFI", "Standard interface")
+        }
+        
+        Container_Boundary(engine, "Core Engine") {
+            Container(crypto, "Crypto Engine", "Pluggable", "Ed25519, ECDSA, RSA")
+            Container(hd, "HD Wallet", "BIP32", "Key derivation")
+            Container(keymgr, "Key Manager", "Lifecycle", "Access control")
+        }
+        
+        Container_Boundary(optional, "Optional Modules") {
+            Container(webauthn, "WebAuthn", "FIDO2", "Authenticator")
+        }
+        
+        Container_Boundary(security, "Security Layer") {
+            Container(master, "Master Key", "PBKDF2", "Key derivation")
+            Container(mem, "Memory Guard", "Zeroize", "Memory protection")
+            Container(audit, "Audit Log", "Events", "Security logging")
+        }
+        
+        Container_Boundary(storage, "Storage Layer") {
+            Container(file, "File Storage", "Encrypted", "Local files")
+            Container(tpm2, "TPM2", "HSM", "Hardware-backed")
+            Container(vault, "HashiCorp Vault", "Cloud", "Cloud KMS")
+        }
+    }
+    
+    Rel(client, grpc, "Calls")
+    Rel(client, rest, "Calls")
+    Rel(client, pkcs11, "Calls")
+    Rel(grpc, crypto, "Uses")
+    Rel(grpc, hd, "Uses")
+    Rel(grpc, keymgr, "Uses")
+    Rel(crypto, master, "Protected by")
+    Rel(hd, master, "Protected by")
+    Rel(keymgr, master, "Protected by")
+    Rel(crypto, mem, "Uses")
+    Rel(webauthn, crypto, "Uses")
+    Rel(file, tpm2, "Alternative to")
+    Rel(file, vault, "Alternative to")
 ```
 
 ## Core Modules
@@ -282,21 +271,21 @@ pub enum Error {
 
 ### Single Process (Current)
 
-```
-┌─────────────────────────────┐
-│     softkms-daemon          │
-│  ┌───────────────────────┐  │
-│  │  tokio async runtime  │  │
-│  │  ┌─────────────────┐  │  │
-│  │  │  API servers    │  │  │
-│  │  │  (gRPC + REST)  │  │  │
-│  │  └─────────────────┘  │  │
-│  │  ┌─────────────────┐  │  │
-│  │  │  Core engine    │  │  │
-│  │  │  (async tasks)  │  │  │
-│  │  └─────────────────┘  │  │
-│  └───────────────────────┘  │
-└─────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Daemon["softkms-daemon"]
+        Runtime["tokio async runtime"]
+        subgraph APIs["API Layer"]
+            API["API servers\n(gRPC + REST)"]
+        end
+        subgraph Core["Core Layer"]
+            Engine["Core engine\n(async tasks)"]
+        end
+    end
+
+    Runtime --> APIs
+    Runtime --> Core
+    APIs --> Engine
 ```
 
 **Advantages**:
@@ -311,11 +300,14 @@ pub enum Error {
 
 ### Multi-Process (Future)
 
-```
-┌─────────────────┐         ┌─────────────────┐
-│   API Process   │ ─IPC──▶ │  Secure Process │
-│  (untrusted)    │         │  (trusted)      │
-└─────────────────┘         └─────────────────┘
+```mermaid
+C4Container
+    title Multi-Process Architecture (Future)
+    
+    Container(api_proc, "API Process", "Rust", "Untrusted - handles client requests")
+    Container(secure_proc, "Secure Process", "Rust", "Trusted - key operations")
+    
+    Rel(api_proc, secure_proc, "IPC", "Secure communication")
 ```
 
 **Advantages**:
@@ -344,38 +336,36 @@ pub enum Error {
 
 ## Security Boundaries
 
-```
-┌──────────────────────────────────────────────┐
-│           Untrusted Zone                     │
-│  - Client applications                       │
-│  - Network requests                          │
-│  - PKCS#11 callers                         │
-│  - Optional: Browser extensions            │
-└──────────────────┬───────────────────────────┘
-                   │ API calls / Native Messaging
-                   ▼
-┌──────────────────────────────────────────────┐
-│           Validation Zone                    │
-│  - Request parsing                           │
-│  - Input validation                          │
-│  - Authentication                            │
-└──────────────────┬───────────────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────────────┐
-│           Trusted Zone                       │
-│  - Key operations                            │
-│  - Cryptographic material                    │
-│  - Master key                                │
-│  - Optional: Credential signing             │
-└──────────────────┬───────────────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────────────┐
-│           Storage Zone                       │
-│  - Encrypted at rest                         │
-│  - Storage backends                          │
-└──────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Untrusted["Untrusted Zone"]
+        U1["Client applications"]
+        U2["Network requests"]
+        U3["PKCS#11 callers"]
+        U4["Browser extensions (optional)"]
+    end
+
+    subgraph Validation["Validation Zone"]
+        V1["Request parsing"]
+        V2["Input validation"]
+        V3["Authentication"]
+    end
+
+    subgraph Trusted["Trusted Zone"]
+        T1["Key operations"]
+        T2["Cryptographic material"]
+        T3["Master key"]
+        T4["Credential signing (optional)"]
+    end
+
+    subgraph Storage["Storage Zone"]
+        S1["Encrypted at rest"]
+        S2["Storage backends"]
+    end
+
+    Untrusted --"API calls / Native Messaging"--> Validation
+    Validation --> Trusted
+    Trusted --> Storage
 ```
 
 ## Deployment Patterns

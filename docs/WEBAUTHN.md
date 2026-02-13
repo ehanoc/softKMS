@@ -26,43 +26,38 @@ softKMS can optionally act as a software-based FIDO2 authenticator for WebAuthn/
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────┐
-│              Browser                        │
-│         (navigator.credentials)            │
-└───────────────┬─────────────────────────────┘
-                │ WebAuthn API
-                ▼
-┌─────────────────────────────────────────────┐
-│       Browser Extension                     │
-│    (Routes to softKMS via Native Messaging) │
-└───────────────┬─────────────────────────────┘
-                │ CTAP2 over Native Messaging
-                ▼
-┌─────────────────────────────────────────────┐
-│       softKMS Daemon                        │
-│  ┌─────────────────────────────────────┐   │
-│  │    CTAP2 Server                     │   │
-│  │  ┌──────────┐  ┌──────────────┐   │   │
-│  │  │ Protocol │  │ Credential   │   │   │
-│  │  │ Handler  │  │ Manager      │   │   │
-│  │  └──────────┘  └──────────────┘   │   │
-│  │         │           │              │   │
-│  │         ▼           ▼              │   │
-│  │  ┌──────────┐  ┌──────────────┐   │   │
-│  │  │ Crypto   │  │ HD Wallet    │   │   │
-│  │  │ (ES256)  │  │ Derivation   │   │   │
-│  │  └──────────┘  └──────────────┘   │   │
-│  └─────────────────────────────────────┘   │
-└───────────────┬─────────────────────────────┘
-                │
-                ▼
-┌─────────────────────────────────────────────┐
-│       Encrypted Storage                     │
-│  - Derived keys (encrypted individually)   │
-│  - Credentials metadata                    │
-│  - Seed (encrypted, recovery only)         │
-└─────────────────────────────────────────────┘
+```mermaid
+C4Container
+    title WebAuthn Architecture
+    
+    System_Boundary(browser, "Browser") {
+        Container(web_api, "navigator.credentials", "Web API", "WebAuthn API")
+        Container(extension, "Browser Extension", "Native Messaging", "Routes to softKMS")
+    }
+    
+    Container_Boundary(daemon, "softKMS Daemon") {
+        Container_Boundary(ctap2, "CTAP2 Server") {
+            Container(protocol, "Protocol Handler", "CTAP2", "Command processing")
+            Container(cred_mgr, "Credential Manager", "Lifecycle", "Credential operations")
+            Container(crypto, "Crypto", "ES256", "ECDSA P-256")
+            Container(hd_wallet, "HD Wallet", "Derivation", "BIP32 key derivation")
+        }
+    }
+    
+    System_Boundary(storage, "Encrypted Storage") {
+        Container(derived, "Derived Keys", "Individually encrypted")
+        Container(metadata, "Metadata", "Credential info")
+        Container(seed_store, "Seed", "Encrypted, recovery only")
+    }
+    
+    Rel(web_api, extension, "WebAuthn API calls")
+    Rel(extension, protocol, "CTAP2 over Native Messaging")
+    Rel(protocol, cred_mgr, "Manages")
+    Rel(protocol, crypto, "Uses")
+    Rel(cred_mgr, hd_wallet, "Derives from")
+    Rel(hd_wallet, seed_store, "Uses")
+    Rel(cred_mgr, derived, "Stores")
+    Rel(cred_mgr, metadata, "Stores")
 ```
 
 ## Design Decisions
