@@ -1,4 +1,4 @@
-//! HD Wallet support (BIP32, BIP44, ARC-0052)
+//! HD Wallet support (BIP32, BIP44)
 
 /// HD wallet seed
 pub struct Seed {

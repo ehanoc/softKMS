@@ -16,6 +16,7 @@ pub mod daemon;
 pub mod hd_wallet;
 pub mod ipc;
 pub mod storage;
+pub mod webauthn;
 
 use thiserror::Error;
 

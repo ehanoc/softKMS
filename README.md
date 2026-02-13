@@ -2,14 +2,21 @@
 
 A modern, modular, and secure alternative to SoftHSM designed for Linux systems with support for HD wallets, pluggable cryptographic schemes, and contemporary deployment patterns.
 
+**Use Cases:**
+- **Enterprise Key Management**: Secure key storage with PKCS#11, gRPC, and REST APIs
+- **HD Wallet Infrastructure**: BIP32/BIP44 key derivation for cryptocurrency operations
+- **Development & Testing**: Software HSM for development environments
+- **Passkey Backup**: WebAuthn/FIDO2 authenticator with seed-based recovery
+
 ## Overview
 
 softKMS is a software-based Key Management System (KMS) that provides:
 - **Modern Architecture**: Modular design with pluggable components
-- **HD Wallet Support**: Built-in hierarchical deterministic (HD) key derivation
+- **HD Wallet Support**: Built-in hierarchical deterministic (HD) key derivation (BIP32/44)
 - **Multiple APIs**: gRPC, REST, and PKCS#11 compatibility
 - **Container-Native**: First-class Docker and Kubernetes support
 - **Cross-Platform**: Native packages for Debian, Fedora, and other Linux distributions
+- **WebAuthn Support**: *Optional* FIDO2 authenticator for Passkey backup/recovery (see below)
 
 ## Why softKMS?
 
@@ -19,7 +26,7 @@ softKMS is a software-based Key Management System (KMS) that provides:
 |---------|---------|---------|
 | **Status** | Abandoned | Actively maintained |
 | **Architecture** | Monolithic C | Modular Rust with FFI |
-| **HD Wallets** | ❌ | ✅ BIP32/44/ARC-0052 |
+| **HD Wallets** | ❌ | ✅ BIP32/44 |
 | **Crypto Agility** | Fixed (RSA/ECC) | Pluggable (Lattice, etc.) |
 | **APIs** | PKCS#11 only | PKCS#11 + gRPC + REST |
 | **Deployment** | Manual | Docker + systemd + packages |
@@ -47,9 +54,9 @@ softKMS is a software-based Key Management System (KMS) that provides:
 │  │  (Pluggable)│ │(Pluggable)│  (BIP32 & BIP44) │  │
 │  └────────────┘ └──────────┘ └──────────────────┘  │
 │  ┌────────────┐ ┌──────────┐ ┌──────────────────┐  │
-│  │   Ed25519  │ │ Encrypted │ │   Audit Logging  │  │
-│  │   ECDSA    │ │   Files   │ │   & Metrics      │  │
-│  │   RSA      │ │   TPM2    │ │                  │  │
+│  │   Ed25519  │ │ Encrypted │ │   Optional       │  │
+│  │   ECDSA    │ │   Files   │ │   WebAuthn       │  │
+│  │   RSA      │ │   TPM2    │ │   Module         │  │
 │  │   Lattice  │ │   Vault   │ │                  │  │
 │  └────────────┘ └──────────┘ └──────────────────┘  │
 └─────────────────────────────────────────────────────┘
@@ -114,6 +121,7 @@ ENTRYPOINT ["/bin/softkms-daemon"]
 - [ ] SoftHSM database migration
 - [ ] Prometheus metrics
 - [ ] Web UI
+- [ ] WebAuthn/FIDO2 authenticator (optional module)
 
 ## Installation
 
@@ -172,6 +180,39 @@ softkms-cli key derive \
   --label "Address 1"
 ```
 
+## Optional: WebAuthn/Passkey Support
+
+*Note: WebAuthn support is an optional module that can be enabled separately.*
+
+softKMS can optionally act as a software-based FIDO2 authenticator, enabling:
+- **Backup & Recovery**: Derive Passkeys from HD wallet seeds
+- **Cross-Device Sync**: Same seed → same credentials on all devices
+- **No Hardware Required**: Use as a security key replacement
+- **Deterministic Credentials**: `derive(seed, rp_id, user_handle)` always gives same credential
+
+### WebAuthn Setup
+
+```bash
+# Import seed for WebAuthn
+softkms-cli seed import --mnemonic "twelve words ..."
+
+# Install browser extension manifest
+softkms-cli webauthn install-manifest
+
+# List WebAuthn credentials
+softkms-cli webauthn list
+```
+
+### WebAuthn Browser Setup
+
+1. **Install Browser Extension**: Add softKMS extension to Chrome/Firefox
+2. **Install Native Host**: Run `softkms-cli webauthn install-manifest`
+3. **Import Seed**: Use your seed phrase to enable backup/recovery
+4. **Create Passkeys**: softKMS appears as "Security Key" in WebAuthn dialogs
+5. **Recovery**: On new device, import same seed → all Passkeys restored
+
+See `docs/WEBAUTHN.md` for detailed WebAuthn documentation.
+
 ## API Reference
 
 ### gRPC
@@ -219,11 +260,16 @@ docker build -t softkms .
 ```
 softKMS/
 ├── src/                  # Core daemon (Rust)
-├── pkcs11-module/        # PKCS#11 C library
+│   ├── api/             # gRPC and REST APIs
+│   ├── crypto/          # Cryptographic engines
+│   ├── hd_wallet/       # HD wallet derivation
+│   ├── storage/         # Storage backends
+│   ├── webauthn/        # Optional: FIDO2/WebAuthn module
+│   └── ...
 ├── cli/                  # Command-line tool
+├── docs/                 # Documentation
 ├── docker/               # Docker configurations
-├── pkg/                  # Packaging (deb, rpm)
-└── docs/                 # Documentation
+└── pkg/                  # Packaging (deb, rpm)
 ```
 
 ## Security
@@ -235,8 +281,8 @@ softKMS/
 
 ### Security Features
 - ✅ Memory protection (mlock, guard pages)
-- ✅ Encrypted storage at rest
-- ✅ Secure key deletion
+- ✅ Encrypted storage at rest (AES-GCM)
+- ✅ Secure key deletion (zeroization)
 - ✅ Hardware-backed storage (TPM2)
 - ✅ Audit logging
 - ✅ Container isolation
@@ -255,7 +301,7 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for det
 
 - Inspired by SoftHSM and the need for a modern alternative
 - Built with Rust for memory safety and performance
-- Designed with lessons learned from the wallet-provider-extensions project
+- WebAuthn implementation based on FIDO2 specifications
 
 ## Support
 
