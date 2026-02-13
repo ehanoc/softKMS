@@ -98,6 +98,10 @@ enum Commands {
         /// Label for the seed
         #[arg(short, long)]
         label: Option<String>,
+
+        /// Passphrase for keystore
+        #[arg(long)]
+        passphrase: Option<String>,
     },
 
     /// Derive a key from seed (BIP32)
@@ -412,9 +416,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         
-        Commands::ImportSeed { mnemonic, label } => {
+        Commands::ImportSeed { mnemonic, label, passphrase } => {
             // Get passphrase from CLI or prompt interactively
-            let passphrase = match get_passphrase(cli.passphrase.clone()) {
+            let passphrase = match get_passphrase(passphrase) {
                 Ok(p) => p,
                 Err(e) => {
                     eprintln!("{}", e);

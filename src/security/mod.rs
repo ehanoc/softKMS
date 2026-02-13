@@ -273,6 +273,7 @@ impl SecurityManager {
     pub fn derive_master_key(&self, passphrase: &str) -> Result<MasterKey> {
         // Derive key from provided passphrase
         let master_key = MasterKey::derive(passphrase, self.config.pbkdf2_iterations)?;
+        let derived_hash = Self::compute_verification_hash(&master_key);
 
         // Check if we have an in-memory verification hash
         let has_in_memory_hash = {
@@ -292,7 +293,10 @@ impl SecurityManager {
                     .map_err(|_| SecurityError::LockPoisoned)?;
                 guard.unwrap() // Safe because we just checked it's Some
             };
-            let derived_hash = Self::compute_verification_hash(&master_key);
+
+            tracing::debug!("Verifying passphrase against in-memory hash");
+            tracing::debug!("Expected: {:?}", &expected_hash[..4]);
+            tracing::debug!("Derived:  {:?}", &derived_hash[..4]);
 
             if derived_hash != expected_hash {
                 return Err(SecurityError::InvalidPassphrase(
@@ -302,30 +306,47 @@ impl SecurityManager {
             }
         } else {
             // No in-memory hash - check if one exists on disk
+            tracing::debug!(
+                "No in-memory hash, checking disk at {:?}",
+                self.verification_hash_path
+            );
             if self.verification_hash_path.exists() {
+                tracing::debug!("Hash file exists on disk, loading...");
                 // Load and verify against disk hash
-                if !self.verify_master_key(&master_key)? {
+                let stored_hash = std::fs::read(&self.verification_hash_path).map_err(|e| {
+                    SecurityError::Storage(format!("Failed to read verification hash: {}", e))
+                })?;
+
+                if stored_hash.len() != 32 {
+                    return Err(SecurityError::Storage(
+                        "Invalid verification hash file".to_string(),
+                    ));
+                }
+
+                let mut expected_hash = [0u8; 32];
+                expected_hash.copy_from_slice(&stored_hash);
+
+                tracing::debug!("Expected hash from disk: {:?}", &expected_hash[..4]);
+                tracing::debug!("Derived hash:           {:?}", &derived_hash[..4]);
+
+                if derived_hash != expected_hash {
                     return Err(SecurityError::InvalidPassphrase(
                         "Invalid passphrase. Please use the correct passphrase for this keystore."
                             .to_string(),
                     ));
                 }
 
+                tracing::debug!("Passphrase verified successfully!");
+
                 // Also store in memory for future validations
-                let stored_hash = std::fs::read(&self.verification_hash_path).map_err(|e| {
-                    SecurityError::Storage(format!("Failed to read verification hash: {}", e))
-                })?;
-                if stored_hash.len() == 32 {
-                    let mut hash = [0u8; 32];
-                    hash.copy_from_slice(&stored_hash);
-                    let mut guard = self
-                        .verification_hash
-                        .lock()
-                        .map_err(|_| SecurityError::LockPoisoned)?;
-                    *guard = Some(hash);
-                }
+                let mut guard = self
+                    .verification_hash
+                    .lock()
+                    .map_err(|_| SecurityError::LockPoisoned)?;
+                *guard = Some(expected_hash);
+            } else {
+                tracing::debug!("No hash file on disk - allowing any passphrase (init phase)");
             }
-            // If no hash on disk either, this is init phase - allow any passphrase
         }
 
         // Verification passed (or init phase) - cache the key

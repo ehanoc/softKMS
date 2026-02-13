@@ -38,6 +38,23 @@ impl Daemon {
             config.storage.path.clone(),
         ));
         
+        // Check if verification hash exists from previous init
+        // If so, load it into memory so passphrase validation works
+        let verification_hash_path = config.storage.path.join(".verification_hash");
+        if verification_hash_path.exists() {
+            match std::fs::read(&verification_hash_path) {
+                Ok(stored_hash) if stored_hash.len() == 32 => {
+                    let mut hash = [0u8; 32];
+                    hash.copy_from_slice(&stored_hash);
+                    security_manager.set_verification_hash(hash);
+                    info!("Loaded existing verification hash from disk");
+                }
+                _ => {
+                    info!("No valid verification hash found - daemon requires init");
+                }
+            }
+        }
+        
         // Initialize storage backend (KeyService handles encryption)
         let storage: Arc<dyn StorageBackend + Send + Sync> = match config.storage.backend.as_str() {
             "file" => {
@@ -170,10 +187,14 @@ impl Daemon {
         let config = self.config.clone();
         let key_service = self.key_service.clone();
         let security_manager = self.security_manager.clone();
+        
+        // Check if verification hash exists to determine if daemon is pre-initialized
+        let verification_hash_path = config.storage.path.join(".verification_hash");
+        let pre_initialized = verification_hash_path.exists();
 
         let handle = tokio::spawn(async move {
             // Start gRPC server
-            if let Err(e) = crate::api::grpc::start(&config, key_service, security_manager).await {
+            if let Err(e) = crate::api::grpc::start(&config, key_service, security_manager, pre_initialized).await {
                 error!("gRPC server error: {}", e);
             }
         });

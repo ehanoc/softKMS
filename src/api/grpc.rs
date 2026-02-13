@@ -36,11 +36,12 @@ impl GrpcKeyStore {
     pub fn new(
         key_service: Arc<KeyService>,
         security_manager: Arc<SecurityManager>,
+        pre_initialized: bool,
     ) -> Self {
         Self {
             key_service,
             security_manager,
-            initialized: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            initialized: Arc::new(std::sync::atomic::AtomicBool::new(pre_initialized)),
         }
     }
 
@@ -393,6 +394,7 @@ pub async fn start(
     config: &Config,
     key_service: Arc<KeyService>,
     security_manager: Arc<SecurityManager>,
+    pre_initialized: bool,
 ) -> crate::Result<()> {
     let addr: SocketAddr = config
         .api
@@ -401,8 +403,11 @@ pub async fn start(
         .map_err(|e| Error::InvalidParams(format!("Invalid gRPC address: {}", e)))?;
 
     info!("Starting gRPC server on {}", addr);
+    if pre_initialized {
+        info!("gRPC service marked as pre-initialized (verification hash exists)");
+    }
 
-    let service = GrpcKeyStore::new(key_service, security_manager);
+    let service = GrpcKeyStore::new(key_service, security_manager, pre_initialized);
     let server = KeyStoreServer::new(service);
 
     Server::builder()
