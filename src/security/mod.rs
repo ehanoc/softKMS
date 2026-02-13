@@ -32,12 +32,12 @@ pub mod error;
 pub mod master_key;
 pub mod wrapper;
 
+use secrecy::Secret;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use secrecy::Secret;
 
 pub use config::SecurityConfig;
-pub use error::{SecurityError, Result};
+pub use error::{Result, SecurityError};
 pub use master_key::MasterKey;
 pub use wrapper::{KeyWrapper, WrappedKey};
 
@@ -60,7 +60,7 @@ impl MasterKeyCache {
             ttl,
         }
     }
-    
+
     /// Check if cached key exists and is not expired
     pub fn is_valid(&self) -> bool {
         if let (Some(ref _key), Some(derived_at)) = (&self.key, self.derived_at) {
@@ -69,7 +69,7 @@ impl MasterKeyCache {
             false
         }
     }
-    
+
     /// Get cached key if valid
     pub fn get(&self) -> Option<Arc<Secret<[u8; 32]>>> {
         if self.is_valid() {
@@ -78,13 +78,13 @@ impl MasterKeyCache {
             None
         }
     }
-    
+
     /// Store key in cache
     pub fn store(&mut self, key: Secret<[u8; 32]>) {
         self.key = Some(Arc::new(key));
         self.derived_at = Some(Instant::now());
     }
-    
+
     /// Clear cached key
     pub fn clear(&mut self) {
         self.key = None;
@@ -97,7 +97,9 @@ pub type SharedCache = Arc<Mutex<MasterKeyCache>>;
 
 /// Create a new shared cache
 pub fn create_cache(ttl_seconds: u64) -> SharedCache {
-    Arc::new(Mutex::new(MasterKeyCache::new(Duration::from_secs(ttl_seconds))))
+    Arc::new(Mutex::new(MasterKeyCache::new(Duration::from_secs(
+        ttl_seconds,
+    ))))
 }
 
 /// Security manager - main interface for security operations
@@ -111,7 +113,7 @@ impl SecurityManager {
     pub fn new(cache: SharedCache, config: SecurityConfig) -> Self {
         Self { cache, config }
     }
-    
+
     /// Get or derive master key
     ///
     /// If key exists in cache and is valid, returns cached key.
@@ -119,38 +121,36 @@ impl SecurityManager {
     pub fn get_master_key(&self, confirm: bool) -> Result<MasterKey> {
         // Check cache first
         {
-            let cache = self.cache.lock()
-                .map_err(|_| SecurityError::LockPoisoned)?;
-            
+            let cache = self.cache.lock().map_err(|_| SecurityError::LockPoisoned)?;
+
             if let Some(key) = cache.get() {
                 return Ok(MasterKey::from_secret(key));
             }
         }
-        
+
         // Cache miss or expired - derive new key
         let passphrase = if confirm {
             master_key::prompt_passphrase_with_confirmation()?
         } else {
             master_key::prompt_passphrase()?
         };
-        
+
         let master_key = MasterKey::derive(&passphrase, self.config.pbkdf2_iterations)?;
-        
+
         // Cache the key
         {
-            let mut cache = self.cache.lock()
-                .map_err(|_| SecurityError::LockPoisoned)?;
+            let mut cache = self.cache.lock().map_err(|_| SecurityError::LockPoisoned)?;
             cache.store(master_key.to_secret());
         }
-        
+
         Ok(master_key)
     }
-    
+
     /// Create a key wrapper for encryption/decryption
     pub fn create_wrapper(&self, master_key: &MasterKey) -> KeyWrapper {
         KeyWrapper::new(master_key.clone())
     }
-    
+
     /// Change passphrase
     ///
     /// Re-encrypts all keys with new passphrase. This operation:
@@ -159,47 +159,49 @@ impl SecurityManager {
     /// 3. Prompts for new passphrase (with confirmation)
     /// 4. Re-wraps all keys
     /// 5. Updates cache with new master key
-    pub fn change_passphrase<F>(&self, keys: &mut [WrappedKey], progress: F) -> Result<()>
+    pub fn change_passphrase<F>(
+        &self,
+        keys: &mut [(WrappedKey, Vec<u8>)], // (wrapped_key, aad)
+        progress: F,
+    ) -> Result<()>
     where
         F: Fn(usize, usize),
     {
         // Get old master key
         let old_key = self.get_master_key(false)?;
         let old_wrapper = self.create_wrapper(&old_key);
-        
+
         // Unwrap all keys
         let mut plaintexts = Vec::new();
-        for (i, wrapped) in keys.iter().enumerate() {
-            let plaintext = old_wrapper.unwrap(wrapped)?;
+        for (i, (wrapped, aad)) in keys.iter().enumerate() {
+            let plaintext = old_wrapper.unwrap(wrapped, aad)?;
             plaintexts.push(plaintext);
             progress(i + 1, keys.len());
         }
-        
+
         // Prompt for new passphrase
         let new_passphrase = master_key::prompt_passphrase_with_confirmation()?;
         let new_key = MasterKey::derive(&new_passphrase, self.config.pbkdf2_iterations)?;
         let new_wrapper = self.create_wrapper(&new_key);
-        
+
         // Re-wrap all keys
-        for (i, (plaintext, wrapped)) in plaintexts.iter().zip(keys.iter_mut()).enumerate() {
-            *wrapped = new_wrapper.wrap(plaintext)?;
+        for (i, (plaintext, (wrapped, aad))) in plaintexts.iter().zip(keys.iter_mut()).enumerate() {
+            *wrapped = new_wrapper.wrap(plaintext, aad)?;
             progress(i + 1, keys.len());
         }
-        
+
         // Update cache
         {
-            let mut cache = self.cache.lock()
-                .map_err(|_| SecurityError::LockPoisoned)?;
+            let mut cache = self.cache.lock().map_err(|_| SecurityError::LockPoisoned)?;
             cache.store(new_key.to_secret());
         }
-        
+
         Ok(())
     }
-    
+
     /// Clear cache (e.g., on logout)
     pub fn clear_cache(&self) -> Result<()> {
-        let mut cache = self.cache.lock()
-            .map_err(|_| SecurityError::LockPoisoned)?;
+        let mut cache = self.cache.lock().map_err(|_| SecurityError::LockPoisoned)?;
         cache.clear();
         Ok(())
     }
@@ -208,24 +210,24 @@ impl SecurityManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_cache_validity() {
         let mut cache = MasterKeyCache::new(Duration::from_secs(300));
         assert!(!cache.is_valid());
-        
+
         let key = Secret::new([0u8; 32]);
         cache.store(key);
         assert!(cache.is_valid());
     }
-    
+
     #[test]
     fn test_cache_expiration() {
         let mut cache = MasterKeyCache::new(Duration::from_millis(1));
         let key = Secret::new([0u8; 32]);
         cache.store(key);
         assert!(cache.is_valid());
-        
+
         std::thread::sleep(Duration::from_millis(10));
         assert!(!cache.is_valid());
     }

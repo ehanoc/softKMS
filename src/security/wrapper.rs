@@ -9,7 +9,6 @@ use aes_gcm::{
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
-use zeroize::Zeroize;
 
 use super::{MasterKey, Result, SecurityError};
 
@@ -156,7 +155,9 @@ impl KeyWrapper {
         );
 
         // Create cipher
-        let cipher = Aes256Gcm::new_from_slice(&derived_key).map_err(|e| SecurityError::EncryptionFailed(format!("Failed to create cipher: {:?}", e)))?;
+        let cipher = Aes256Gcm::new_from_slice(&derived_key).map_err(|e| {
+            SecurityError::EncryptionFailed(format!("Failed to create cipher: {:?}", e))
+        })?;
 
         // Build AAD with version info for future-proofing
         let aad_with_version =
@@ -256,7 +257,9 @@ impl KeyWrapper {
         );
 
         // Create cipher
-        let cipher = Aes256Gcm::new_from_slice(&derived_key).map_err(|e| SecurityError::EncryptionFailed(format!("Failed to create cipher: {:?}", e)))?;
+        let cipher = Aes256Gcm::new_from_slice(&derived_key).map_err(|e| {
+            SecurityError::EncryptionFailed(format!("Failed to create cipher: {:?}", e))
+        })?;
 
         // Reconstruct ciphertext with tag
         let mut full_ciphertext = wrapped.ciphertext.clone();
@@ -275,7 +278,7 @@ impl KeyWrapper {
 
         // Clear derived key and ciphertext from memory
         derived_key.zeroize();
-        full_ciphertext.zeroize();
+        drop(full_ciphertext);
 
         Ok(plaintext)
     }
@@ -294,8 +297,6 @@ impl KeyWrapper {
         nonce
     }
 }
-
-use zeroize::Zeroize;
 
 #[cfg(test)]
 mod tests {

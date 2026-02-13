@@ -1,5 +1,6 @@
 //! Storage backends
 
+pub mod encrypted;
 pub mod file;
 
 use crate::{KeyId, KeyMetadata, Result};

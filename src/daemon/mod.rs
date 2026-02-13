@@ -7,7 +7,8 @@
 //! 4. Manage PID file
 //! 5. Health checks
 
-use crate::storage::file::FileStorage;
+use crate::security::{SecurityConfig, SecurityManager, create_cache};
+use crate::storage::encrypted::{EncryptedFileStorage, create_encrypted_storage};
 use crate::storage::StorageBackend;
 use crate::{Config, Result};
 use std::path::PathBuf;
@@ -19,20 +20,30 @@ use tracing::{error, info};
 pub struct Daemon {
     config: Config,
     storage: Arc<dyn StorageBackend>,
+    security_manager: Arc<SecurityManager>,
     pid_file: Option<PathBuf>,
 }
 
 impl Daemon {
     /// Create a new daemon instance
     pub async fn new(config: Config) -> Result<Self> {
-        // Initialize storage backend
+        // Create security manager
+        let security_config = SecurityConfig::new();
+        let cache = create_cache(300); // 5 minute cache
+        let security_manager = Arc::new(SecurityManager::new(cache, security_config));
+        
+        // Initialize encrypted storage backend
         let storage: Arc<dyn StorageBackend> = match config.storage.backend.as_str() {
             "file" => {
-                let file_storage =
-                    FileStorage::new(config.storage.path.clone(), config.clone());
-                file_storage.init().await?;
-                info!("Initialized file storage at {:?}", config.storage.path);
-                Arc::new(file_storage)
+                let encrypted_storage =
+                    create_encrypted_storage(
+                        config.storage.path.clone(),
+                        config.clone(),
+                        300, // 5 minute cache
+                    )?;
+                encrypted_storage.init().await?;
+                info!("Initialized encrypted file storage at {:?}", config.storage.path);
+                Arc::new(encrypted_storage)
             }
             _ => {
                 return Err(crate::Error::Storage(format!(
@@ -45,6 +56,7 @@ impl Daemon {
         Ok(Self {
             config,
             storage,
+            security_manager,
             pid_file: None,
         })
     }
