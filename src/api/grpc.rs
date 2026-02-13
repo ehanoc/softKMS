@@ -289,7 +289,7 @@ impl KeyStore for GrpcKeyStore {
 
         // Get the public key for the response
         let result = self.key_service
-            .storage
+            .storage()
             .retrieve_key(metadata.id)
             .await
             .map_err(map_error)?;

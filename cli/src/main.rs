@@ -18,7 +18,7 @@ use softkms::api::softkms::key_store_client::KeyStoreClient;
 use softkms::api::softkms::{
     CreateKeyRequest, DeleteKeyRequest, GetKeyRequest,
     ImportSeedRequest, ListKeysRequest, SignRequest,
-    HealthRequest,
+    DeriveP256Request, HealthRequest,
 };
 
 #[derive(Parser)]
@@ -38,13 +38,29 @@ struct Cli {
 enum Commands {
     /// Generate a new key
     Generate {
-        /// Algorithm (ed25519, ecdsa, rsa)
+        /// Algorithm (ed25519, p256, ecdsa, rsa)
         #[arg(short, long)]
         algorithm: String,
         
         /// Key label
         #[arg(short, long)]
         label: Option<String>,
+        
+        /// Derive from seed (for deterministic keys)
+        #[arg(long, group = "derivation")]
+        from_seed: Option<String>,
+        
+        /// Origin/domain for derivation (e.g., "github.com")
+        #[arg(long, group = "derivation")]
+        origin: Option<String>,
+        
+        /// User handle for derivation
+        #[arg(long, group = "derivation")]
+        user_handle: Option<String>,
+        
+        /// Counter for multiple keys per origin
+        #[arg(long, default_value = "0")]
+        counter: u32,
     },
     
     /// List all keys
@@ -80,7 +96,7 @@ enum Commands {
         label: Option<String>,
     },
     
-    /// Derive a key from seed
+    /// Derive a key from seed (BIP32)
     Derive {
         /// Seed ID
         #[arg(short, long)]
@@ -94,6 +110,7 @@ enum Commands {
         #[arg(short, long)]
         label: Option<String>,
     },
+    
     
     /// Delete a key
     Delete {
@@ -164,35 +181,95 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut client = KeyStoreClient::connect(cli.server.clone()).await?;
     
     match cli.command {
-        Commands::Generate { algorithm, label } => {
-            // Prompt for passphrase
-            let passphrase = prompt_password("Enter passphrase: ")?;
-            if passphrase.is_empty() {
-                eprintln!("Passphrase cannot be empty");
-                std::process::exit(1);
-            }
-
-            let request = tonic::Request::new(CreateKeyRequest {
-                algorithm: algorithm.clone(),
-                label,
-                attributes: std::collections::HashMap::new(),
-                passphrase,
-            });
-
-            match client.create_key(request).await {
-                Ok(response) => {
-                    let key = response.into_inner();
-                    println!("Key generated successfully:");
-                    println!("  ID: {}", key.key_id);
-                    println!("  Algorithm: {}", key.algorithm);
-                    if !key.label.is_empty() {
-                        println!("  Label: {}", key.label);
-                    }
-                    println!("  Created: {}", key.created_at);
-                }
-                Err(e) => {
-                    eprintln!("Failed to generate key: {}", e);
+        Commands::Generate { algorithm, label, from_seed, origin, user_handle, counter } => {
+            // Check if this is a derivation request
+            if let Some(seed_id) = from_seed {
+                // Derive from seed (P-256 deterministic)
+                if algorithm != "p256" {
+                    eprintln!("--from-seed only supported with --algorithm p256");
                     std::process::exit(1);
+                }
+                
+                let origin = match origin {
+                    Some(o) => o,
+                    None => {
+                        eprintln!("--origin required when using --from-seed");
+                        std::process::exit(1);
+                    }
+                };
+                
+                let user_handle = match user_handle {
+                    Some(uh) => uh,
+                    None => {
+                        eprintln!("--user-handle required when using --from-seed");
+                        std::process::exit(1);
+                    }
+                };
+                
+                // Prompt for passphrase
+                let passphrase = prompt_password("Enter passphrase: ")?;
+                if passphrase.is_empty() {
+                    eprintln!("Passphrase cannot be empty");
+                    std::process::exit(1);
+                }
+                
+                let request = tonic::Request::new(DeriveP256Request {
+                    seed_id: seed_id.clone(),
+                    origin: origin.clone(),
+                    user_handle: user_handle.clone(),
+                    counter,
+                    label,
+                    passphrase,
+                });
+                
+                match client.derive_p256(request).await {
+                    Ok(response) => {
+                        let resp = response.into_inner();
+                        println!("P-256 key derived successfully:");
+                        println!("  Key ID: {}", resp.key_id);
+                        println!("  Algorithm: {}", resp.algorithm);
+                        println!("  Origin: {}", origin);
+                        println!("  User Handle: {}", user_handle);
+                        println!("  Counter: {}", counter);
+                        println!("  Public Key (base64): {}...", &resp.public_key[..50.min(resp.public_key.len())]);
+                        println!("  Created: {}", resp.created_at);
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to derive P-256 key: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                // Regular key generation
+                // Prompt for passphrase
+                let passphrase = prompt_password("Enter passphrase: ")?;
+                if passphrase.is_empty() {
+                    eprintln!("Passphrase cannot be empty");
+                    std::process::exit(1);
+                }
+
+                let request = tonic::Request::new(CreateKeyRequest {
+                    algorithm: algorithm.clone(),
+                    label,
+                    attributes: std::collections::HashMap::new(),
+                    passphrase,
+                });
+
+                match client.create_key(request).await {
+                    Ok(response) => {
+                        let key = response.into_inner();
+                        println!("Key generated successfully:");
+                        println!("  ID: {}", key.key_id);
+                        println!("  Algorithm: {}", key.algorithm);
+                        if !key.label.is_empty() {
+                            println!("  Label: {}", key.label);
+                        }
+                        println!("  Created: {}", key.created_at);
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to generate key: {}", e);
+                        std::process::exit(1);
+                    }
                 }
             }
         }
@@ -335,6 +412,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("HD wallet key derivation not yet implemented.");
             std::process::exit(1);
         }
+        
         
         Commands::Delete { key, label, force } => {
             // Determine key_id from key or label

@@ -60,6 +60,11 @@ impl KeyService {
         }
     }
 
+    /// Get storage reference
+    pub fn storage(&self) -> Arc<dyn StorageBackend + Send + Sync> {
+        self.storage.clone()
+    }
+
     pub async fn create_key(
         &self,
         algorithm: String,
