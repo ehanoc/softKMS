@@ -102,8 +102,8 @@ impl KeyStore for GrpcKeyStore {
         
         let req = request.into_inner();
         
-        // Derive master key from passphrase
-        match self.security_manager.derive_master_key(&req.passphrase) {
+        // Initialize with passphrase and store verification hash
+        match self.security_manager.init_with_passphrase(&req.passphrase) {
             Ok(_) => {
                 self.set_initialized();
                 info!("Daemon initialized with passphrase");

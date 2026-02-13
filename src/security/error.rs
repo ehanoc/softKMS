@@ -67,6 +67,10 @@ pub enum SecurityError {
     /// IO error
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
+
+    /// Storage error
+    #[error("Storage error: {0}")]
+    Storage(String),
 }
 
 impl From<aes_gcm::Error> for SecurityError {

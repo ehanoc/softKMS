@@ -23,7 +23,7 @@ async fn setup_test_env() -> (KeyService, tempfile::TempDir) {
 
     let security_config = SecurityConfig::new();
     let cache = create_cache(300);
-    let security_manager = Arc::new(SecurityManager::new(cache, security_config));
+    let security_manager = Arc::new(SecurityManager::new(cache, security_config, temp_dir.path().to_path_buf()));
     let config = Config::default();
 
     let service = KeyService::new(storage, security_manager, config);
@@ -275,7 +275,7 @@ async fn test_storage_persistence() {
 
         let security_config = SecurityConfig::new();
         let cache = create_cache(300);
-        let security_manager = Arc::new(SecurityManager::new(cache, security_config));
+        let security_manager = Arc::new(SecurityManager::new(cache, security_config, storage_path.clone()));
         let config = Config::default();
 
         let service = KeyService::new(storage, security_manager, config);

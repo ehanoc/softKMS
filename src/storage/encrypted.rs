@@ -145,7 +145,7 @@ pub fn create_encrypted_storage(
 ) -> Result<EncryptedFileStorage> {
     let security_config = crate::security::SecurityConfig::new();
     let cache = crate::security::create_cache(cache_ttl_seconds);
-    let security_manager = Arc::new(SecurityManager::new(cache, security_config));
+    let security_manager = Arc::new(SecurityManager::new(cache, security_config, base_path.clone()));
     
     Ok(EncryptedFileStorage::new(base_path, config, security_manager))
 }

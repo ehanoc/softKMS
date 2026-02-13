@@ -32,7 +32,9 @@ pub mod error;
 pub mod master_key;
 pub mod wrapper;
 
-use secrecy::Secret;
+use secrecy::{ExposeSecret, Secret};
+use sha2::{Digest, Sha256};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -106,12 +108,127 @@ pub fn create_cache(ttl_seconds: u64) -> SharedCache {
 pub struct SecurityManager {
     cache: SharedCache,
     config: SecurityConfig,
+    verification_hash_path: PathBuf,
+    /// In-memory verification hash for runtime passphrase validation
+    verification_hash: std::sync::Mutex<Option<[u8; 32]>>,
 }
 
 impl SecurityManager {
     /// Create new security manager
-    pub fn new(cache: SharedCache, config: SecurityConfig) -> Self {
-        Self { cache, config }
+    pub fn new(cache: SharedCache, config: SecurityConfig, storage_path: PathBuf) -> Self {
+        let verification_hash_path = storage_path.join(".verification_hash");
+        Self {
+            cache,
+            config,
+            verification_hash_path,
+            verification_hash: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// Set the verification hash for passphrase validation
+    ///
+    /// This should be called during initialization with the correct master key hash.
+    /// The hash is stored in memory to verify subsequent passphrase entries.
+    pub fn set_verification_hash(&self, hash: [u8; 32]) {
+        let mut guard = self.verification_hash.lock().unwrap();
+        *guard = Some(hash);
+    }
+
+    /// Verify a passphrase against the stored verification hash
+    ///
+    /// Derives the master key from the passphrase and checks if it matches
+    /// the stored verification hash. Returns true if the passphrase is correct.
+    pub fn verify_passphrase(&self, passphrase: &str) -> Result<bool> {
+        // Check if we have a verification hash stored
+        let expected_hash = {
+            let guard = self
+                .verification_hash
+                .lock()
+                .map_err(|_| SecurityError::LockPoisoned)?;
+            match *guard {
+                Some(hash) => hash,
+                None => {
+                    // No verification hash yet - check if one exists on disk
+                    if self.verification_hash_path.exists() {
+                        let stored_hash =
+                            std::fs::read(&self.verification_hash_path).map_err(|e| {
+                                SecurityError::Storage(format!(
+                                    "Failed to read verification hash: {}",
+                                    e
+                                ))
+                            })?;
+                        if stored_hash.len() == 32 {
+                            let mut hash = [0u8; 32];
+                            hash.copy_from_slice(&stored_hash);
+                            hash
+                        } else {
+                            return Err(SecurityError::Storage(
+                                "Invalid verification hash file".to_string(),
+                            ));
+                        }
+                    } else {
+                        return Err(SecurityError::InvalidPassphrase(
+                            "Keystore not initialized".to_string(),
+                        ));
+                    }
+                }
+            }
+        };
+
+        // Derive key from passphrase
+        let master_key = MasterKey::derive(passphrase, self.config.pbkdf2_iterations)?;
+        let derived_hash = Self::compute_verification_hash(&master_key);
+
+        // Compare with expected hash
+        Ok(derived_hash == expected_hash)
+    }
+
+    /// Compute verification hash for master key
+    ///
+    /// Returns SHA-256 hash of the master key for verification purposes
+    fn compute_verification_hash(master_key: &MasterKey) -> [u8; 32] {
+        let key_bytes = master_key.expose_secret();
+        let mut hasher = Sha256::new();
+        hasher.update(key_bytes);
+        hasher.finalize().into()
+    }
+
+    /// Store verification hash for master key
+    ///
+    /// This should be called during initialization with the CORRECT master key.
+    /// The hash is stored to disk and used to verify subsequent passphrase entries.
+    pub fn store_verification_hash(&self, master_key: &MasterKey) -> Result<()> {
+        let hash = Self::compute_verification_hash(master_key);
+        std::fs::write(&self.verification_hash_path, &hash).map_err(|e| {
+            SecurityError::Storage(format!("Failed to store verification hash: {}", e))
+        })?;
+        Ok(())
+    }
+
+    /// Verify master key against stored hash
+    ///
+    /// Returns true if the derived key matches the stored verification hash.
+    /// This detects wrong passphrases before they pollute the cache.
+    pub fn verify_master_key(&self, master_key: &MasterKey) -> Result<bool> {
+        if !self.verification_hash_path.exists() {
+            // No verification hash stored yet - cannot verify
+            return Err(SecurityError::InvalidPassphrase(
+                "Keystore not initialized. Run 'softkms init' first.".to_string(),
+            ));
+        }
+
+        let stored_hash = std::fs::read(&self.verification_hash_path).map_err(|e| {
+            SecurityError::Storage(format!("Failed to read verification hash: {}", e))
+        })?;
+
+        if stored_hash.len() != 32 {
+            return Err(SecurityError::Storage(
+                "Invalid verification hash file".to_string(),
+            ));
+        }
+
+        let expected_hash = Self::compute_verification_hash(master_key);
+        Ok(stored_hash.as_slice() == expected_hash.as_slice())
     }
 
     /// Get or derive master key
@@ -150,37 +267,93 @@ impl SecurityManager {
     ///
     /// Used when passphrase is provided via API (e.g., from CLI)
     ///
-    /// SECURITY: Always derives key from provided passphrase and validates
-    /// against cache if exists. Wrong passphrase will fail.
+    /// SECURITY: Always derives key from provided passphrase and verifies
+    /// against stored verification hash before caching. Wrong passphrase will fail.
+    /// If verification_hash is None (init phase), allows any passphrase.
     pub fn derive_master_key(&self, passphrase: &str) -> Result<MasterKey> {
         // Derive key from provided passphrase
         let master_key = MasterKey::derive(passphrase, self.config.pbkdf2_iterations)?;
-        let derived_secret = master_key.to_secret();
 
-        // Check cache - if exists, verify it matches
-        {
-            let cache = self.cache.lock().map_err(|_| SecurityError::LockPoisoned)?;
-            if let Some(cached_secret) = cache.get() {
-                // SECURITY: Verify passphrase is correct by comparing secrets
-                use secrecy::ExposeSecret;
-                let cached_bytes = cached_secret.expose_secret();
-                let derived_bytes = derived_secret.expose_secret();
+        // Check if we have an in-memory verification hash
+        let has_in_memory_hash = {
+            let guard = self
+                .verification_hash
+                .lock()
+                .map_err(|_| SecurityError::LockPoisoned)?;
+            guard.is_some()
+        };
 
-                if cached_bytes.as_ref() != derived_bytes.as_ref() {
+        if has_in_memory_hash {
+            // We have a stored hash - verify the passphrase first
+            let expected_hash = {
+                let guard = self
+                    .verification_hash
+                    .lock()
+                    .map_err(|_| SecurityError::LockPoisoned)?;
+                guard.unwrap() // Safe because we just checked it's Some
+            };
+            let derived_hash = Self::compute_verification_hash(&master_key);
+
+            if derived_hash != expected_hash {
+                return Err(SecurityError::InvalidPassphrase(
+                    "Invalid passphrase. Please use the correct passphrase for this keystore."
+                        .to_string(),
+                ));
+            }
+        } else {
+            // No in-memory hash - check if one exists on disk
+            if self.verification_hash_path.exists() {
+                // Load and verify against disk hash
+                if !self.verify_master_key(&master_key)? {
                     return Err(SecurityError::InvalidPassphrase(
                         "Invalid passphrase. Please use the correct passphrase for this keystore."
                             .to_string(),
                     ));
                 }
-                // Passphrase matches cached key - return cached
-                return Ok(MasterKey::from_secret(cached_secret));
+
+                // Also store in memory for future validations
+                let stored_hash = std::fs::read(&self.verification_hash_path).map_err(|e| {
+                    SecurityError::Storage(format!("Failed to read verification hash: {}", e))
+                })?;
+                if stored_hash.len() == 32 {
+                    let mut hash = [0u8; 32];
+                    hash.copy_from_slice(&stored_hash);
+                    let mut guard = self
+                        .verification_hash
+                        .lock()
+                        .map_err(|_| SecurityError::LockPoisoned)?;
+                    *guard = Some(hash);
+                }
             }
+            // If no hash on disk either, this is init phase - allow any passphrase
         }
 
-        // No cache yet - store derived key
+        // Verification passed (or init phase) - cache the key
         {
             let mut cache = self.cache.lock().map_err(|_| SecurityError::LockPoisoned)?;
-            cache.store(derived_secret);
+            cache.store(master_key.to_secret());
+        }
+
+        Ok(master_key)
+    }
+
+    /// Initialize with passphrase and store verification hash
+    ///
+    /// This is used during keystore initialization. It derives the master key
+    /// from the passphrase and stores a verification hash on disk and in memory.
+    pub fn init_with_passphrase(&self, passphrase: &str) -> Result<MasterKey> {
+        // Derive key from passphrase
+        let master_key = MasterKey::derive(passphrase, self.config.pbkdf2_iterations)?;
+
+        // Compute and store verification hash of the CORRECT key (both disk and memory)
+        let hash = Self::compute_verification_hash(&master_key);
+        self.store_verification_hash(&master_key)?;
+        self.set_verification_hash(hash);
+
+        // Cache the verified key
+        {
+            let mut cache = self.cache.lock().map_err(|_| SecurityError::LockPoisoned)?;
+            cache.store(master_key.to_secret());
         }
 
         Ok(master_key)

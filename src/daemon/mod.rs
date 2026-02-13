@@ -32,7 +32,11 @@ impl Daemon {
         // Create security manager
         let security_config = SecurityConfig::new();
         let cache = create_cache(300); // 5 minute cache
-        let security_manager = Arc::new(SecurityManager::new(cache, security_config));
+        let security_manager = Arc::new(SecurityManager::new(
+            cache,
+            security_config,
+            config.storage.path.clone(),
+        ));
         
         // Initialize storage backend (KeyService handles encryption)
         let storage: Arc<dyn StorageBackend + Send + Sync> = match config.storage.backend.as_str() {
