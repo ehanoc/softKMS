@@ -47,15 +47,15 @@ enum Commands {
         label: Option<String>,
         
         /// Derive from seed (for deterministic keys)
-        #[arg(long, group = "derivation")]
+        #[arg(long)]
         from_seed: Option<String>,
         
         /// Origin/domain for derivation (e.g., "github.com")
-        #[arg(long, group = "derivation")]
+        #[arg(long)]
         origin: Option<String>,
         
         /// User handle for derivation
-        #[arg(long, group = "derivation")]
+        #[arg(long)]
         user_handle: Option<String>,
         
         /// Counter for multiple keys per origin
