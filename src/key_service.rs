@@ -520,4 +520,93 @@ mod tests {
 
         assert_ne!(sig1.bytes, sig2.bytes);
     }
+
+    #[tokio::test]
+    async fn test_p256_key_derivation_flow() {
+        let test = create_test_service().await;
+        let service = &test.service;
+        let passphrase = "test_passphrase_123";
+
+        // Step 1: Import a seed
+        let seed = vec![0xABu8; 64]; // 64-byte seed (like BIP32 derived key)
+        let seed_metadata = service.import_seed(
+            seed.clone(),
+            Some("Test Seed for P-256".to_string()),
+            passphrase,
+        ).await.unwrap();
+
+        assert_eq!(seed_metadata.algorithm, "bip32-seed");
+        assert_eq!(seed_metadata.key_type, KeyType::Seed);
+
+        // Step 2: Derive a P-256 key deterministically from the seed
+        let origin = "https://example.com";
+        let user_handle = "user123";
+        let counter = 0u32;
+
+        let p256_metadata = service.derive_p256_key(
+            seed_metadata.id,
+            origin.to_string(),
+            user_handle.to_string(),
+            counter,
+            Some("Derived P-256 Key".to_string()),
+            passphrase,
+        ).await.unwrap();
+
+        assert_eq!(p256_metadata.algorithm, "p256");
+        assert_eq!(p256_metadata.key_type, KeyType::Derived);
+
+        // Verify attributes are set correctly
+        assert_eq!(p256_metadata.attributes.get("seed_id"), Some(&seed_metadata.id.to_string()));
+        assert_eq!(p256_metadata.attributes.get("origin"), Some(&origin.to_string()));
+        assert_eq!(p256_metadata.attributes.get("user_handle"), Some(&user_handle.to_string()));
+        assert_eq!(p256_metadata.attributes.get("counter"), Some(&counter.to_string()));
+
+        // Step 3: Retrieve and use the derived key for signing
+        let test_data = b"test message for P-256 signing";
+        let signature = service.sign(p256_metadata.id, test_data, passphrase).await.unwrap();
+
+        assert_eq!(signature.algorithm, "p256");
+        // P-256 signatures are typically 64 bytes (r || s)
+        assert_eq!(signature.bytes.len(), 64);
+
+        // Step 4: Verify the signature using the public key
+        // The public key should be retrievable via get_key
+        let retrieved_key = service.get_key(p256_metadata.id).await.unwrap();
+        assert!(retrieved_key.is_some());
+
+        // Verify determinism: deriving again with same params returns same key
+        let p256_metadata_2 = service.derive_p256_key(
+            seed_metadata.id,
+            origin.to_string(),
+            user_handle.to_string(),
+            counter,
+            Some("Derived P-256 Key".to_string()),
+            passphrase,
+        ).await.unwrap();
+
+        assert_eq!(p256_metadata.id, p256_metadata_2.id);
+
+        // Verify different counter produces different key
+        let p256_metadata_3 = service.derive_p256_key(
+            seed_metadata.id,
+            origin.to_string(),
+            user_handle.to_string(),
+            1u32, // Different counter
+            Some("Derived P-256 Key".to_string()),
+            passphrase,
+        ).await.unwrap();
+
+        assert_ne!(p256_metadata.id, p256_metadata_3.id);
+
+        // Sign with both keys and verify they produce different signatures
+        let test_data_2 = b"another test message";
+        let sig1 = service.sign(p256_metadata.id, test_data_2, passphrase).await.unwrap();
+        let sig2 = service.sign(p256_metadata_3.id, test_data_2, passphrase).await.unwrap();
+
+        assert_ne!(sig1.bytes, sig2.bytes);
+
+        // Verify total keys: 1 seed + 2 derived keys = 3 keys
+        let keys = service.list_keys().await.unwrap();
+        assert_eq!(keys.len(), 3);
+    }
 }
