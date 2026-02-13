@@ -149,22 +149,38 @@ impl SecurityManager {
     /// Derive master key from provided passphrase (non-interactive)
     ///
     /// Used when passphrase is provided via API (e.g., from CLI)
+    ///
+    /// SECURITY: Always derives key from provided passphrase and validates
+    /// against cache if exists. Wrong passphrase will fail.
     pub fn derive_master_key(&self, passphrase: &str) -> Result<MasterKey> {
-        // Check cache first
+        // Derive key from provided passphrase
+        let master_key = MasterKey::derive(passphrase, self.config.pbkdf2_iterations)?;
+        let derived_secret = master_key.to_secret();
+
+        // Check cache - if exists, verify it matches
         {
             let cache = self.cache.lock().map_err(|_| SecurityError::LockPoisoned)?;
-            if let Some(key) = cache.get() {
-                return Ok(MasterKey::from_secret(key));
+            if let Some(cached_secret) = cache.get() {
+                // SECURITY: Verify passphrase is correct by comparing secrets
+                use secrecy::ExposeSecret;
+                let cached_bytes = cached_secret.expose_secret();
+                let derived_bytes = derived_secret.expose_secret();
+
+                if cached_bytes.as_ref() != derived_bytes.as_ref() {
+                    return Err(SecurityError::InvalidPassphrase(
+                        "Invalid passphrase. Please use the correct passphrase for this keystore."
+                            .to_string(),
+                    ));
+                }
+                // Passphrase matches cached key - return cached
+                return Ok(MasterKey::from_secret(cached_secret));
             }
         }
 
-        // Derive from provided passphrase
-        let master_key = MasterKey::derive(passphrase, self.config.pbkdf2_iterations)?;
-
-        // Cache the key
+        // No cache yet - store derived key
         {
             let mut cache = self.cache.lock().map_err(|_| SecurityError::LockPoisoned)?;
-            cache.store(master_key.to_secret());
+            cache.store(derived_secret);
         }
 
         Ok(master_key)
