@@ -126,6 +126,12 @@ impl KeyStore for GrpcKeyStore {
     ) -> Result<Response<CreateKeyResponse>, Status> {
         debug!("Received CreateKey request");
         
+        if !self.is_initialized() {
+            return Err(Status::failed_precondition(
+                "Keystore not initialized. Run 'softkms init' first."
+            ));
+        }
+        
         let req = request.into_inner();
         
         let metadata = self.key_service
@@ -192,6 +198,12 @@ impl KeyStore for GrpcKeyStore {
     ) -> Result<Response<DeleteKeyResponse>, Status> {
         debug!("Received DeleteKey request");
         
+        if !self.is_initialized() {
+            return Err(Status::failed_precondition(
+                "Keystore not initialized. Run 'softkms init' first."
+            ));
+        }
+        
         let req = request.into_inner();
         let key_id = KeyId::parse_str(&req.key_id)
             .map_err(|_| Status::invalid_argument("Invalid key ID"))?;
@@ -211,6 +223,12 @@ impl KeyStore for GrpcKeyStore {
         request: Request<SignRequest>,
     ) -> Result<Response<SignResponse>, Status> {
         debug!("Received Sign request");
+        
+        if !self.is_initialized() {
+            return Err(Status::failed_precondition(
+                "Keystore not initialized. Run 'softkms init' first."
+            ));
+        }
         
         let req = request.into_inner();
         let key_id = KeyId::parse_str(&req.key_id)
@@ -236,6 +254,12 @@ impl KeyStore for GrpcKeyStore {
     ) -> Result<Response<ImportSeedResponse>, Status> {
         debug!("Received ImportSeed request");
         
+        if !self.is_initialized() {
+            return Err(Status::failed_precondition(
+                "Keystore not initialized. Run 'softkms init' first."
+            ));
+        }
+        
         let req = request.into_inner();
         
         // Parse mnemonic or use raw seed
@@ -260,6 +284,12 @@ impl KeyStore for GrpcKeyStore {
         &self,
         _request: Request<DeriveKeyRequest>,
     ) -> Result<Response<DeriveKeyResponse>, Status> {
+        if !self.is_initialized() {
+            return Err(Status::failed_precondition(
+                "Keystore not initialized. Run 'softkms init' first."
+            ));
+        }
+
         // TODO: Implement HD wallet derivation
         Err(Status::unimplemented("DeriveKey not yet implemented"))
     }
@@ -269,6 +299,12 @@ impl KeyStore for GrpcKeyStore {
         request: Request<DeriveP256Request>,
     ) -> Result<Response<DeriveP256Response>, Status> {
         debug!("Received DeriveP256 request");
+
+        if !self.is_initialized() {
+            return Err(Status::failed_precondition(
+                "Keystore not initialized. Run 'softkms init' first."
+            ));
+        }
 
         let req = request.into_inner();
 

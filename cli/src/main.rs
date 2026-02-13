@@ -146,8 +146,8 @@ enum Commands {
     
     /// Initialize the keystore with a passphrase
     Init {
-        /// Require passphrase confirmation
-        #[arg(long)]
+        /// Require passphrase confirmation (recommended)
+        #[arg(long, default_value = "true")]
         confirm: bool,
     },
 }
