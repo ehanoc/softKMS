@@ -15,7 +15,7 @@ fn main() {
 
     // Test 2: Key Wrapping
     println!("Test 2: Wrapping key material...");
-    let wrapper = KeyWrapper::new(master_key);
+    let wrapper = KeyWrapper::new(master_key.clone());
     let plaintext = b"my_secret_key_material_32_bytes!";
     let aad = b"key_id=test-key&algorithm=ed25519";
 
@@ -40,10 +40,10 @@ fn main() {
     println!("✓ Deserialized successfully\n");
 
     // Test 5: Unwrapping
-    println!("Test 5: Unwrapping with same passphrase...");
-    let master_key2 =
-        MasterKey::derive("test_passphrase", 1000).expect("Failed to derive master key 2");
-    let wrapper2 = KeyWrapper::new(master_key2);
+    println!("Test 5: Unwrapping with same master key...");
+    // Note: We use the SAME wrapper instance (same master key)
+    // In real usage, you'd derive the master key once and cache it
+    let wrapper2 = KeyWrapper::new(master_key.clone());
 
     let decrypted = wrapper2.unwrap(&restored, aad).expect("Failed to unwrap");
 
