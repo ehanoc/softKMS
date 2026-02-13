@@ -10,7 +10,11 @@ cargo --version
 echo ""
 
 echo "2. Checking protobuf..."
-protoc --version
+if command -v protoc &> /dev/null; then
+    protoc --version
+else
+    echo "protoc not found (optional - needed for gRPC protobuf generation)"
+fi
 echo ""
 
 echo "3. Checking Docker..."
