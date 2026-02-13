@@ -18,7 +18,7 @@ use softkms::api::softkms::key_store_client::KeyStoreClient;
 use softkms::api::softkms::{
     CreateKeyRequest, DeleteKeyRequest, GetKeyRequest,
     ImportSeedRequest, ListKeysRequest, SignRequest,
-    DeriveP256Request, HealthRequest,
+    DeriveP256Request, HealthRequest, InitRequest,
 };
 
 #[derive(Parser)]
@@ -32,6 +32,10 @@ struct Cli {
     /// Server address
     #[arg(short, long, default_value = "http://127.0.0.1:50051")]
     server: String,
+    
+    /// Passphrase for keystore (if not provided, will prompt interactively)
+    #[arg(short = 'p', long)]
+    passphrase: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -41,105 +45,111 @@ enum Commands {
         /// Algorithm (ed25519, p256, ecdsa, rsa)
         #[arg(short, long)]
         algorithm: String,
-        
+
         /// Key label
         #[arg(short, long)]
         label: Option<String>,
-        
+
         /// Derive from seed (for deterministic keys)
         #[arg(long)]
         from_seed: Option<String>,
-        
+
         /// Origin/domain for derivation (e.g., "github.com")
         #[arg(long)]
         origin: Option<String>,
-        
+
         /// User handle for derivation
         #[arg(long)]
         user_handle: Option<String>,
-        
+
         /// Counter for multiple keys per origin
         #[arg(long, default_value = "0")]
         counter: u32,
     },
-    
+
     /// List all keys
     List {
         /// Show detailed information
         #[arg(short, long)]
         detailed: bool,
     },
-    
+
     /// Sign data with a key
     Sign {
         /// Key ID (alternative to --label)
         #[arg(short, long, group = "key_ref")]
         key: Option<String>,
-        
+
         /// Key label (alternative to --key)
         #[arg(short, long, group = "key_ref")]
         label: Option<String>,
-        
+
         /// Data to sign (raw bytes, will be base64 encoded for transport)
         #[arg(short, long)]
         data: String,
     },
-    
+
     /// Import a seed
     ImportSeed {
         /// Seed mnemonic or raw hex seed
         #[arg(short, long)]
         mnemonic: String,
-        
+
         /// Label for the seed
         #[arg(short, long)]
         label: Option<String>,
     },
-    
+
     /// Derive a key from seed (BIP32)
     Derive {
         /// Seed ID
         #[arg(short, long)]
         seed: String,
-        
+
         /// Derivation path (e.g., m/44'/283'/0'/0/0)
         #[arg(short, long)]
         path: String,
-        
+
         /// Label for derived key
         #[arg(short, long)]
         label: Option<String>,
     },
-    
-    
+
     /// Delete a key
     Delete {
         /// Key ID (alternative to --label)
         #[arg(short, long, group = "delete_key_ref")]
         key: Option<String>,
-        
+
         /// Key label (alternative to --key)
         #[arg(short, long, group = "delete_key_ref")]
         label: Option<String>,
-        
+
         /// Force deletion without confirmation
         #[arg(short, long)]
         force: bool,
     },
-    
+
     /// Show key information
     Info {
         /// Key ID (alternative to --label)
         #[arg(short, long, group = "info_key_ref")]
         key: Option<String>,
-        
+
         /// Key label (alternative to --key)
         #[arg(short, long, group = "info_key_ref")]
         label: Option<String>,
     },
-    
+
     /// Health check
     Health,
+    
+    /// Initialize the keystore with a passphrase
+    Init {
+        /// Require passphrase confirmation
+        #[arg(long)]
+        confirm: bool,
+    },
 }
 
 /// Lookup key ID by label
@@ -170,6 +180,22 @@ async fn lookup_key_by_label(
             }
             Err("Ambiguous label - use --key with the UUID".into())
         }
+    }
+}
+
+/// Get passphrase from CLI arg or prompt interactively
+fn get_passphrase(cli_pass: Option<String>) -> Result<String, Box<dyn std::error::Error>> {
+    if let Some(pass) = cli_pass {
+        if pass.is_empty() {
+            return Err("Passphrase cannot be empty".into());
+        }
+        Ok(pass)
+    } else {
+        let passphrase = prompt_password("Enter passphrase: ")?;
+        if passphrase.is_empty() {
+            return Err("Passphrase cannot be empty".into());
+        }
+        Ok(passphrase)
     }
 }
 
@@ -205,13 +231,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         std::process::exit(1);
                     }
                 };
-                
-                // Prompt for passphrase
-                let passphrase = prompt_password("Enter passphrase: ")?;
-                if passphrase.is_empty() {
-                    eprintln!("Passphrase cannot be empty");
-                    std::process::exit(1);
-                }
+
+                // Get passphrase from CLI or prompt interactively
+                let passphrase = match get_passphrase(cli.passphrase.clone()) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        std::process::exit(1);
+                    }
+                };
                 
                 let request = tonic::Request::new(DeriveP256Request {
                     seed_id: seed_id.clone(),
@@ -241,12 +269,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             } else {
                 // Regular key generation
-                // Prompt for passphrase
-                let passphrase = prompt_password("Enter passphrase: ")?;
-                if passphrase.is_empty() {
-                    eprintln!("Passphrase cannot be empty");
-                    std::process::exit(1);
-                }
+                // Get passphrase from CLI or prompt interactively
+                let passphrase = match get_passphrase(cli.passphrase.clone()) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        std::process::exit(1);
+                    }
+                };
 
                 let request = tonic::Request::new(CreateKeyRequest {
                     algorithm: algorithm.clone(),
@@ -347,20 +377,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             };
             
-            // Prompt for passphrase
-            let passphrase = prompt_password("Enter passphrase: ")?;
-            if passphrase.is_empty() {
-                eprintln!("Passphrase cannot be empty");
-                std::process::exit(1);
-            }
-            
+            // Get passphrase from CLI or prompt interactively
+            let passphrase = match get_passphrase(cli.passphrase.clone()) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("{}", e);
+                    std::process::exit(1);
+                }
+            };
+
             // Decode base64 data if provided as base64, otherwise treat as raw string
             let data_bytes = if let Ok(decoded) = BASE64.decode(&data) {
                 decoded
             } else {
                 data.as_bytes().to_vec()
             };
-            
+
             let request = tonic::Request::new(SignRequest {
                 key_id: key_id.clone(),
                 data: data_bytes,
@@ -381,12 +413,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         
         Commands::ImportSeed { mnemonic, label } => {
-            // Prompt for passphrase
-            let passphrase = prompt_password("Enter passphrase: ")?;
-            if passphrase.is_empty() {
-                eprintln!("Passphrase cannot be empty");
-                std::process::exit(1);
-            }
+            // Get passphrase from CLI or prompt interactively
+            let passphrase = match get_passphrase(cli.passphrase.clone()) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("{}", e);
+                    std::process::exit(1);
+                }
+            };
 
             let request = tonic::Request::new(ImportSeedRequest {
                 mnemonic,
@@ -524,6 +558,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Err(e) => {
                     eprintln!("Failed to check health: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        
+        Commands::Init { confirm } => {
+            // Prompt for passphrase
+            let passphrase = rpassword::prompt_password("Enter passphrase: ")?;
+            if passphrase.is_empty() {
+                eprintln!("Passphrase cannot be empty");
+                std::process::exit(1);
+            }
+            
+            // Confirm passphrase if requested
+            if confirm {
+                let confirm_pass = rpassword::prompt_password("Confirm passphrase: ")?;
+                if passphrase != confirm_pass {
+                    eprintln!("Passphrases do not match");
+                    std::process::exit(1);
+                }
+            }
+            
+            let request = tonic::Request::new(InitRequest {
+                passphrase,
+                confirm,
+            });
+            
+            match client.init(request).await {
+                Ok(response) => {
+                    let resp = response.into_inner();
+                    if resp.success {
+                        println!("Keystore initialized successfully.");
+                        println!("  {}", resp.message);
+                    } else {
+                        eprintln!("Initialization failed: {}", resp.message);
+                        std::process::exit(1);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to initialize keystore: {}", e);
                     std::process::exit(1);
                 }
             }
