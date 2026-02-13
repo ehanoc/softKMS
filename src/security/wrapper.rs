@@ -9,6 +9,7 @@ use aes_gcm::{
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
+use zeroize::Zeroize;
 
 use super::{MasterKey, Result, SecurityError};
 
@@ -144,18 +145,12 @@ impl KeyWrapper {
         let salt = Self::generate_salt();
         let nonce = Self::generate_nonce();
 
-        // Derive key for this specific wrapped key
-        // Master key + per-key salt → encryption key
-        let mut derived_key = [0u8; 32];
-        pbkdf2::pbkdf2_hmac::<Sha256>(
-            self.master_key.expose_secret(),
-            &salt,
-            1, // Single iteration - salt provides uniqueness
-            &mut derived_key,
-        );
+        // Use master key directly with the salt as additional data
+        // The salt provides uniqueness, we don't need to derive another key
+        let master_key_bytes = self.master_key.expose_secret();
 
-        // Create cipher
-        let cipher = Aes256Gcm::new_from_slice(&derived_key).map_err(|e| {
+        // Create cipher directly from master key
+        let cipher = Aes256Gcm::new_from_slice(master_key_bytes).map_err(|e| {
             SecurityError::EncryptionFailed(format!("Failed to create cipher: {:?}", e))
         })?;
 
@@ -192,9 +187,6 @@ impl KeyWrapper {
         let mut hasher = Sha256::new();
         hasher.update(aad_with_version.as_bytes());
         let aad_hash = hasher.finalize().into();
-
-        // Clear derived key from memory
-        derived_key.zeroize();
 
         Ok(WrappedKey {
             version: WRAPPED_KEY_VERSION,
@@ -247,18 +239,12 @@ impl KeyWrapper {
             return Err(SecurityError::AadIntegrityFailed);
         }
 
-        // Derive key using stored salt
-        let mut derived_key = [0u8; 32];
-        pbkdf2::pbkdf2_hmac::<Sha256>(
-            self.master_key.expose_secret(),
-            &wrapped.salt,
-            1,
-            &mut derived_key,
-        );
+        // Use master key directly (same as wrap)
+        let master_key_bytes = self.master_key.expose_secret();
 
         // Create cipher
-        let cipher = Aes256Gcm::new_from_slice(&derived_key).map_err(|e| {
-            SecurityError::EncryptionFailed(format!("Failed to create cipher: {:?}", e))
+        let cipher = Aes256Gcm::new_from_slice(master_key_bytes).map_err(|e| {
+            SecurityError::DecryptionFailed(format!("Failed to create cipher: {:?}", e))
         })?;
 
         // Reconstruct ciphertext with tag
@@ -276,8 +262,7 @@ impl KeyWrapper {
             .decrypt(nonce_obj, payload)
             .map_err(|e| SecurityError::DecryptionFailed(e.to_string()))?;
 
-        // Clear derived key and ciphertext from memory
-        derived_key.zeroize();
+        // Clear sensitive data from memory
         drop(full_ciphertext);
 
         Ok(plaintext)

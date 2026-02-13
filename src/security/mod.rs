@@ -185,9 +185,12 @@ impl SecurityManager {
         let new_wrapper = self.create_wrapper(&new_key);
 
         // Re-wrap all keys
-        for (i, (plaintext, (wrapped, aad))) in plaintexts.iter().zip(keys.iter_mut()).enumerate() {
+        let total = keys.len();
+        for i in 0..total {
+            let plaintext = &plaintexts[i];
+            let (ref mut wrapped, ref aad) = keys[i];
             *wrapped = new_wrapper.wrap(plaintext, aad)?;
-            progress(i + 1, keys.len());
+            progress(i + 1, total);
         }
 
         // Update cache
