@@ -15,11 +15,13 @@ pub mod crypto;
 pub mod daemon;
 pub mod hd_wallet;
 pub mod ipc;
+pub mod security;
 pub mod storage;
 pub mod webauthn;
 
 // Re-export daemon for main.rs
 pub use daemon::Daemon;
+pub use security::{SecurityConfig, SecurityManager};
 
 use thiserror::Error;
 
