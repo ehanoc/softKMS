@@ -264,6 +264,71 @@ impl KeyStore for GrpcKeyStore {
         Err(Status::unimplemented("DeriveKey not yet implemented"))
     }
 
+    async fn derive_p256(
+        &self,
+        request: Request<DeriveP256Request>,
+    ) -> Result<Response<DeriveP256Response>, Status> {
+        debug!("Received DeriveP256 request");
+
+        let req = request.into_inner();
+
+        let seed_id = KeyId::parse_str(&req.seed_id)
+            .map_err(|_| Status::invalid_argument("Invalid seed ID"))?;
+
+        let metadata = self.key_service
+            .derive_p256_key(
+                seed_id,
+                req.origin.clone(),
+                req.user_handle.clone(),
+                req.counter,
+                req.label,
+                &req.passphrase,
+            )
+            .await
+            .map_err(map_error)?;
+
+        // Get the public key for the response
+        let result = self.key_service
+            .storage
+            .retrieve_key(metadata.id)
+            .await
+            .map_err(map_error)?;
+
+        let (_, encrypted_data) = result.ok_or_else(|| Status::internal("Failed to retrieve derived key"))?;
+
+        // Unwrap to get public key
+        let master_key = self.security_manager
+            .derive_master_key(&req.passphrase)
+            .map_err(|e| Status::internal(format!("Failed to get master key: {}", e)))?;
+
+        let wrapper = self.security_manager.create_wrapper(&master_key);
+        let aad = format!(
+            "softkms:key:{}:{}:{}",
+            metadata.id, metadata.algorithm, metadata.key_type
+        );
+
+        let wrapped = crate::security::WrappedKey::from_bytes(&encrypted_data)
+            .map_err(|e| Status::internal(format!("Invalid wrapped key: {}", e)))?;
+
+        let key_material = wrapper
+            .unwrap(&wrapped, &aad.into_bytes())
+            .map_err(|e| Status::internal(format!("Failed to unwrap key: {}", e)))?;
+
+        use crate::crypto::p256::DeterministicP256;
+        let public_key = DeterministicP256::get_public_key(&key_material)
+            .map_err(|e| Status::internal(format!("Failed to get public key: {}", e)))?;
+
+        let response = DeriveP256Response {
+            key_id: metadata.id.to_string(),
+            public_key: base64::encode(&public_key),
+            algorithm: "p256".to_string(),
+            created_at: metadata.created_at.to_rfc3339(),
+        };
+
+        info!("P-256 key {} derived for origin={}", response.key_id, req.origin);
+        Ok(Response::new(response))
+    }
+
     async fn change_passphrase(
         &self,
         _request: Request<ChangePassphraseRequest>,

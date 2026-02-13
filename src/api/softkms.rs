@@ -168,6 +168,42 @@ pub struct DeriveKeyResponse {
     #[prost(string, tag = "3")]
     pub derived_at: ::prost::alloc::string::String,
 }
+/// Derive P-256 key request (deterministic derivation for WebAuthn)
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DeriveP256Request {
+    #[prost(string, tag = "1")]
+    pub seed_id: ::prost::alloc::string::String,
+    /// Domain/origin (e.g., "github.com")
+    #[prost(string, tag = "2")]
+    pub origin: ::prost::alloc::string::String,
+    /// User identifier
+    #[prost(string, tag = "3")]
+    pub user_handle: ::prost::alloc::string::String,
+    /// Counter for multiple keys per origin
+    #[prost(uint32, tag = "4")]
+    pub counter: u32,
+    #[prost(string, optional, tag = "5")]
+    pub label: ::core::option::Option<::prost::alloc::string::String>,
+    /// For accessing seed
+    #[prost(string, tag = "6")]
+    pub passphrase: ::prost::alloc::string::String,
+}
+/// Derive P-256 key response
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DeriveP256Response {
+    #[prost(string, tag = "1")]
+    pub key_id: ::prost::alloc::string::String,
+    /// base64 encoded uncompressed P-256 public key
+    #[prost(string, tag = "2")]
+    pub public_key: ::prost::alloc::string::String,
+    /// "p256"
+    #[prost(string, tag = "3")]
+    pub algorithm: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub created_at: ::prost::alloc::string::String,
+}
 /// Initialize request
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -576,6 +612,32 @@ pub mod key_store_client {
                 .insert(GrpcMethod::new("softkms.KeyStore", "DeriveKey"));
             self.inner.unary(req, path, codec).await
         }
+        /// Derive a P-256 key deterministically (for WebAuthn/Passkey)
+        pub async fn derive_p256(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DeriveP256Request>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeriveP256Response>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/softkms.KeyStore/DeriveP256",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("softkms.KeyStore", "DeriveP256"));
+            self.inner.unary(req, path, codec).await
+        }
         /// Change keystore passphrase
         pub async fn change_passphrase(
             &mut self,
@@ -684,6 +746,14 @@ pub mod key_store_server {
             request: tonic::Request<super::DeriveKeyRequest>,
         ) -> std::result::Result<
             tonic::Response<super::DeriveKeyResponse>,
+            tonic::Status,
+        >;
+        /// Derive a P-256 key deterministically (for WebAuthn/Passkey)
+        async fn derive_p256(
+            &self,
+            request: tonic::Request<super::DeriveP256Request>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeriveP256Response>,
             tonic::Status,
         >;
         /// Change keystore passphrase
@@ -1125,6 +1195,52 @@ pub mod key_store_server {
                     let fut = async move {
                         let inner = inner.0;
                         let method = DeriveKeySvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/softkms.KeyStore/DeriveP256" => {
+                    #[allow(non_camel_case_types)]
+                    struct DeriveP256Svc<T: KeyStore>(pub Arc<T>);
+                    impl<
+                        T: KeyStore,
+                    > tonic::server::UnaryService<super::DeriveP256Request>
+                    for DeriveP256Svc<T> {
+                        type Response = super::DeriveP256Response;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DeriveP256Request>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as KeyStore>::derive_p256(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = DeriveP256Svc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

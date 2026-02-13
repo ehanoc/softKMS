@@ -12,6 +12,7 @@
 //! plaintext in memory for the minimum time necessary.
 
 use crate::crypto::ed25519::{Ed25519Engine, ED25519_SECRET_KEY_SIZE};
+use crate::crypto::p256::DeterministicP256;
 use crate::storage::StorageBackend;
 use crate::security::{SecurityManager, WrappedKey};
 use crate::{Config, Error, KeyId, KeyMetadata, KeyType, Result, Signature};
@@ -156,6 +157,16 @@ impl KeyService {
 
                 sig
             }
+            "p256" => {
+                // P-256 key is 32 bytes
+                let sig = DeterministicP256::sign(&key_material, data)
+                    .map_err(|e| Error::Crypto(format!("P-256 signing failed: {}", e)))?;
+                
+                Signature {
+                    bytes: sig,
+                    algorithm: "p256".to_string(),
+                }
+            }
             _ => {
                 let mut material_to_clear = key_material.clone();
                 material_to_clear.zeroize();
@@ -223,6 +234,131 @@ impl KeyService {
     pub async fn get_key(&self, key_id: KeyId) -> Result<Option<KeyMetadata>> {
         let result = self.storage.retrieve_key(key_id).await?;
         Ok(result.map(|(metadata, _)| metadata))
+    }
+
+    /// Derive a P-256 key deterministically from a stored seed
+    ///
+    /// Flow:
+    /// 1. Check if key already exists for this (seed_id, origin, user_handle, counter)
+    /// 2. If yes: return existing key (no seed needed)
+    /// 3. If no: retrieve seed, derive P-256 key, wrap and store it
+    pub async fn derive_p256_key(
+        &self,
+        seed_id: KeyId,
+        origin: String,
+        user_handle: String,
+        counter: u32,
+        label: Option<String>,
+        passphrase: &str,
+    ) -> Result<KeyMetadata> {
+        info!(
+            "Deriving P-256 key from seed {} for origin={} user={}",
+            seed_id, origin, user_handle
+        );
+
+        // Check if we already have a derived key with these parameters
+        // We store the derivation params in attributes for lookup
+        let keys = self.list_keys().await?;
+        let derivation_id = format!("{}:{}:{}:{}", seed_id, origin, user_handle, counter);
+        
+        for key in &keys {
+            if key.algorithm == "p256" {
+                if let Some(existing_label) = &key.label {
+                    if existing_label == &derivation_id {
+                        info!("P-256 key already exists for these parameters, returning existing");
+                        return Ok(key.clone());
+                    }
+                }
+            }
+        }
+
+        // Need to derive new key - retrieve the seed
+        let seed_result = self.storage.retrieve_key(seed_id).await?;
+        let (seed_metadata, seed_encrypted) = seed_result
+            .ok_or_else(|| Error::KeyNotFound(format!("Seed {} not found", seed_id)))?;
+
+        // Verify it's actually a seed
+        if seed_metadata.algorithm != "bip32-seed" {
+            return Err(Error::InvalidParams(
+                format!("Key {} is not a seed (algorithm: {})", seed_id, seed_metadata.algorithm)
+            ));
+        }
+
+        // Get master key
+        let master_key = self.security_manager
+            .derive_master_key(passphrase)
+            .map_err(|e| Error::Crypto(format!("Failed to derive master key: {}", e)))?;
+
+        // Unwrap seed
+        let wrapper = self.security_manager.create_wrapper(&master_key);
+        let seed_aad = Self::build_aad(&seed_metadata);
+        
+        let seed_wrapped = WrappedKey::from_bytes(&seed_encrypted)
+            .map_err(|e| Error::Crypto(format!("Invalid wrapped seed: {}", e)))?;
+        
+        let seed_material = wrapper
+            .unwrap(&seed_wrapped, &seed_aad)
+            .map_err(|e| Error::Crypto(format!("Failed to unwrap seed: {}", e)))?;
+
+        // Derive P-256 key using deterministic algorithm
+        // Note: In the TypeScript implementation, the seed is first processed through PBKDF2
+        // to get a 64-byte derived main key. Here we assume the stored seed is already that derived key.
+        let p256_private_key = DeterministicP256::derive_key(
+            &seed_material,
+            &origin,
+            &user_handle,
+            counter,
+        ).map_err(|e| Error::Crypto(format!("Failed to derive P-256 key: {}", e)))?;
+
+        // Get public key
+        let p256_public_key = DeterministicP256::get_public_key(&p256_private_key)
+            .map_err(|e| Error::Crypto(format!("Failed to get P-256 public key: {}", e)))?;
+
+        // Create new key metadata
+        let key_id = KeyId::new_v4();
+        let created_at = Utc::now();
+
+        let mut attributes = HashMap::new();
+        attributes.insert("seed_id".to_string(), seed_id.to_string());
+        attributes.insert("origin".to_string(), origin.clone());
+        attributes.insert("user_handle".to_string(), user_handle.clone());
+        attributes.insert("counter".to_string(), counter.to_string());
+        // Store derivation ID in label for easy lookup
+        let derivation_label = derivation_id.clone();
+
+        let metadata = KeyMetadata {
+            id: key_id,
+            label: Some(derivation_label),
+            algorithm: "p256".to_string(),
+            key_type: KeyType::Derived,
+            created_at,
+            attributes,
+        };
+
+        // Wrap P-256 key
+        let p256_aad = Self::build_aad(&metadata);
+        let p256_wrapped = wrapper
+            .wrap(&p256_private_key, &p256_aad)
+            .map_err(|e| Error::Crypto(format!("Failed to wrap P-256 key: {}", e)))?;
+
+        let p256_encrypted = p256_wrapped.to_bytes();
+
+        // Clear sensitive material
+        let mut p256_to_clear = p256_private_key.clone();
+        p256_to_clear.zeroize();
+        let mut seed_to_clear = seed_material.clone();
+        seed_to_clear.zeroize();
+        drop(master_key);
+
+        // Store the derived key
+        self.storage.store_key(key_id, &metadata, &p256_encrypted).await?;
+
+        info!(
+            "P-256 key {} derived and stored for origin={} user={}",
+            key_id, origin, user_handle
+        );
+
+        Ok(metadata)
     }
 
     pub async fn delete_key(&self, key_id: KeyId) -> Result<()> {

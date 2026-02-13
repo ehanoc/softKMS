@@ -1,6 +1,7 @@
 //! Cryptographic engine implementations
 
 pub mod ed25519;
+pub mod p256;
 
 use secrecy::Secret;
 

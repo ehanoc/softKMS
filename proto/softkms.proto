@@ -28,6 +28,9 @@ service KeyStore {
   // Derive a key from seed
   rpc DeriveKey(DeriveKeyRequest) returns (DeriveKeyResponse);
 
+  // Derive a P-256 key deterministically (for WebAuthn/Passkey)
+  rpc DeriveP256(DeriveP256Request) returns (DeriveP256Response);
+
   // Change keystore passphrase
   rpc ChangePassphrase(ChangePassphraseRequest) returns (ChangePassphraseResponse);
 
@@ -150,6 +153,24 @@ message DeriveKeyResponse {
   string key_id = 1;
   string public_key = 2;  // base64 encoded
   string derived_at = 3;
+}
+
+// Derive P-256 key request (deterministic derivation for WebAuthn)
+message DeriveP256Request {
+  string seed_id = 1;
+  string origin = 2;        // Domain/origin (e.g., "github.com")
+  string user_handle = 3;   // User identifier
+  uint32 counter = 4;       // Counter for multiple keys per origin
+  optional string label = 5;
+  string passphrase = 6;    // For accessing seed
+}
+
+// Derive P-256 key response
+message DeriveP256Response {
+  string key_id = 1;
+  string public_key = 2;    // base64 encoded uncompressed P-256 public key
+  string algorithm = 3;     // "p256"
+  string created_at = 4;
 }
 
 // Initialize request
