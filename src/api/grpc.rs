@@ -503,6 +503,7 @@ impl KeyStore for GrpcKeyStore {
                 req.coin_type,
                 scheme,
                 req.store_key,
+                req.label,
                 &req.passphrase,
             )
             .await

@@ -431,6 +431,7 @@ impl KeyService {
         coin_type: u32,
         scheme: HdDerivationScheme,
         store: bool,
+        label: Option<String>,
         passphrase: &str,
     ) -> Result<KeyMetadata> {
         info!(
@@ -510,11 +511,12 @@ impl KeyService {
         attributes.insert("coin_type".to_string(), coin_type.to_string());
         attributes.insert("hrp".to_string(), format!("{}", coin_type)); // Use coin type as default hrp
         
-        let derivation_label = derivation_id.clone();
+        // Use provided label if given, otherwise use derivation_id format (seed_id:path)
+        let final_label = label.unwrap_or_else(|| derivation_id.clone());
 
         let metadata = KeyMetadata {
             id: key_id,
-            label: Some(derivation_label),
+            label: Some(final_label),
             algorithm: "ed25519".to_string(),
             key_type: KeyType::Derived,
             created_at,
