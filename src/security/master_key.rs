@@ -10,6 +10,11 @@ use sha2::Sha256;
 
 use super::{Result, SecurityError};
 
+/// Fixed salt for master key derivation (32 bytes for PBKDF2)
+/// Using a fixed salt ensures the same passphrase always produces the same master key.
+/// The salt is not secret - security comes from the passphrase strength and PBKDF2 iterations.
+const MASTER_KEY_SALT: &[u8; 32] = b"softkms-master-key-salt-v1......";
+
 /// Master key derived from passphrase
 ///
 /// This struct holds the 256-bit master key in a `Secret` wrapper to prevent
@@ -47,8 +52,7 @@ impl MasterKey {
     ///
     /// Returns an error if PBKDF2 derivation fails
     pub fn derive(passphrase: &str, iterations: u32) -> Result<Self> {
-        let salt = Self::generate_salt();
-        Self::derive_with_salt(passphrase, &salt, iterations)
+        Self::derive_with_salt(passphrase, MASTER_KEY_SALT, iterations)
     }
 
     /// Derive master key with specific salt
@@ -188,9 +192,8 @@ mod tests {
         let key1 = MasterKey::derive("test", 1000).unwrap();
         let key2 = MasterKey::derive("test", 1000).unwrap();
 
-        // Same passphrase + same salt (random) = different keys
-        // (unless we happen to generate same salt, which is 1/2^256)
-        assert_ne!(key1.expose_secret(), key2.expose_secret());
+        // Same passphrase + fixed salt = same key
+        assert_eq!(key1.expose_secret(), key2.expose_secret());
     }
 
     #[test]

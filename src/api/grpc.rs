@@ -28,7 +28,6 @@ use super::softkms::key_store_server::{KeyStore, KeyStoreServer};
 pub struct GrpcKeyStore {
     key_service: Arc<KeyService>,
     security_manager: Arc<SecurityManager>,
-    initialized: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl GrpcKeyStore {
@@ -36,23 +35,16 @@ impl GrpcKeyStore {
     pub fn new(
         key_service: Arc<KeyService>,
         security_manager: Arc<SecurityManager>,
-        pre_initialized: bool,
     ) -> Self {
         Self {
             key_service,
             security_manager,
-            initialized: Arc::new(std::sync::atomic::AtomicBool::new(pre_initialized)),
         }
     }
 
     /// Check if daemon is initialized
     fn is_initialized(&self) -> bool {
-        self.initialized.load(std::sync::atomic::Ordering::SeqCst)
-    }
-
-    /// Mark as initialized
-    fn set_initialized(&self) {
-        self.initialized.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.security_manager.is_initialized()
     }
 }
 
@@ -106,7 +98,6 @@ impl KeyStore for GrpcKeyStore {
         // Initialize with passphrase and store verification hash
         match self.security_manager.init_with_passphrase(&req.passphrase) {
             Ok(_) => {
-                self.set_initialized();
                 info!("Daemon initialized with passphrase");
                 let response = InitResponse {
                     success: true,
@@ -394,7 +385,6 @@ pub async fn start(
     config: &Config,
     key_service: Arc<KeyService>,
     security_manager: Arc<SecurityManager>,
-    pre_initialized: bool,
 ) -> crate::Result<()> {
     let addr: SocketAddr = config
         .api
@@ -403,11 +393,11 @@ pub async fn start(
         .map_err(|e| Error::InvalidParams(format!("Invalid gRPC address: {}", e)))?;
 
     info!("Starting gRPC server on {}", addr);
-    if pre_initialized {
+    if security_manager.is_initialized() {
         info!("gRPC service marked as pre-initialized (verification hash exists)");
     }
 
-    let service = GrpcKeyStore::new(key_service, security_manager, pre_initialized);
+    let service = GrpcKeyStore::new(key_service, security_manager);
     let server = KeyStoreServer::new(service);
 
     Server::builder()

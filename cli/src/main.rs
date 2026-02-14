@@ -98,10 +98,6 @@ enum Commands {
         /// Label for the seed
         #[arg(short, long)]
         label: Option<String>,
-
-        /// Passphrase for keystore
-        #[arg(long)]
-        passphrase: Option<String>,
     },
 
     /// Derive a key from seed (BIP32)
@@ -416,15 +412,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         
-        Commands::ImportSeed { mnemonic, label, passphrase } => {
-            // Get passphrase from CLI or prompt interactively
-            let passphrase = match get_passphrase(passphrase) {
-                Ok(p) => p,
-                Err(e) => {
-                    eprintln!("{}", e);
-                    std::process::exit(1);
-                }
-            };
+        Commands::ImportSeed { mnemonic, label } => {
+            // Prompt for passphrase
+            let passphrase = prompt_password("Enter passphrase: ")?;
+            if passphrase.is_empty() {
+                eprintln!("Passphrase cannot be empty");
+                std::process::exit(1);
+            }
 
             let request = tonic::Request::new(ImportSeedRequest {
                 mnemonic,

@@ -109,19 +109,45 @@ pub struct SecurityManager {
     cache: SharedCache,
     config: SecurityConfig,
     verification_hash_path: PathBuf,
+    salt_path: PathBuf,
     /// In-memory verification hash for runtime passphrase validation
     verification_hash: std::sync::Mutex<Option<[u8; 32]>>,
+    /// In-memory salt for master key derivation
+    salt: std::sync::Mutex<Option<[u8; 32]>>,
 }
 
 impl SecurityManager {
     /// Create new security manager
     pub fn new(cache: SharedCache, config: SecurityConfig, storage_path: PathBuf) -> Self {
         let verification_hash_path = storage_path.join(".verification_hash");
+        let salt_path = storage_path.join(".salt");
+
+        // Load salt from disk if it exists
+        let salt = if salt_path.exists() {
+            match std::fs::read(&salt_path) {
+                Ok(stored_salt) if stored_salt.len() == 32 => {
+                    let mut salt = [0u8; 32];
+                    salt.copy_from_slice(&stored_salt);
+                    tracing::debug!("Loaded existing salt from disk");
+                    Some(salt)
+                }
+                _ => {
+                    tracing::debug!("Salt file exists but invalid, will generate new");
+                    None
+                }
+            }
+        } else {
+            tracing::debug!("No salt file found on disk");
+            None
+        };
+
         Self {
             cache,
             config,
             verification_hash_path,
+            salt_path,
             verification_hash: std::sync::Mutex::new(None),
+            salt: std::sync::Mutex::new(salt),
         }
     }
 
@@ -252,7 +278,14 @@ impl SecurityManager {
             master_key::prompt_passphrase()?
         };
 
-        let master_key = MasterKey::derive(&passphrase, self.config.pbkdf2_iterations)?;
+        // Use stored salt or generate new one if not initialized
+        let salt = {
+            let guard = self.salt.lock().map_err(|_| SecurityError::LockPoisoned)?;
+            guard.unwrap_or_else(MasterKey::generate_salt)
+        };
+
+        let master_key =
+            MasterKey::derive_with_salt(&passphrase, &salt, self.config.pbkdf2_iterations)?;
 
         // Cache the key
         {
@@ -271,8 +304,37 @@ impl SecurityManager {
     /// against stored verification hash before caching. Wrong passphrase will fail.
     /// If verification_hash is None (init phase), allows any passphrase.
     pub fn derive_master_key(&self, passphrase: &str) -> Result<MasterKey> {
-        // Derive key from provided passphrase
-        let master_key = MasterKey::derive(passphrase, self.config.pbkdf2_iterations)?;
+        // Get stored salt or fail if keystore not initialized
+        let salt = {
+            let guard = self.salt.lock().map_err(|_| SecurityError::LockPoisoned)?;
+            match *guard {
+                Some(salt) => salt,
+                None => {
+                    // No in-memory salt - check if one exists on disk
+                    if self.salt_path.exists() {
+                        let stored_salt = std::fs::read(&self.salt_path).map_err(|e| {
+                            SecurityError::Storage(format!("Failed to read salt: {}", e))
+                        })?;
+                        if stored_salt.len() == 32 {
+                            let mut salt = [0u8; 32];
+                            salt.copy_from_slice(&stored_salt);
+                            tracing::debug!("Loaded salt from disk for key derivation");
+                            salt
+                        } else {
+                            return Err(SecurityError::Storage("Invalid salt file".to_string()));
+                        }
+                    } else {
+                        return Err(SecurityError::InvalidPassphrase(
+                            "Keystore not initialized. Run 'softkms init' first.".to_string(),
+                        ));
+                    }
+                }
+            }
+        };
+
+        // Derive key from provided passphrase using the stored salt
+        let master_key =
+            MasterKey::derive_with_salt(passphrase, &salt, self.config.pbkdf2_iterations)?;
         let derived_hash = Self::compute_verification_hash(&master_key);
 
         // Check if we have an in-memory verification hash
@@ -345,7 +407,17 @@ impl SecurityManager {
                     .map_err(|_| SecurityError::LockPoisoned)?;
                 *guard = Some(expected_hash);
             } else {
-                tracing::debug!("No hash file on disk - allowing any passphrase (init phase)");
+                // No hash file - check if we're in init phase
+                // Init phase is only valid if there's no salt file either
+                if self.salt_path.exists() {
+                    return Err(SecurityError::InvalidPassphrase(
+                        "Keystore verification hash missing but salt exists. Please reinitialize."
+                            .to_string(),
+                    ));
+                }
+                tracing::debug!(
+                    "No hash or salt file on disk - allowing any passphrase (init phase)"
+                );
             }
         }
 
@@ -363,8 +435,22 @@ impl SecurityManager {
     /// This is used during keystore initialization. It derives the master key
     /// from the passphrase and stores a verification hash on disk and in memory.
     pub fn init_with_passphrase(&self, passphrase: &str) -> Result<MasterKey> {
-        // Derive key from passphrase
-        let master_key = MasterKey::derive(passphrase, self.config.pbkdf2_iterations)?;
+        // Generate and store salt for this keystore
+        let salt = MasterKey::generate_salt();
+        std::fs::write(&self.salt_path, &salt)
+            .map_err(|e| SecurityError::Storage(format!("Failed to store salt: {}", e)))?;
+
+        // Store salt in memory
+        {
+            let mut guard = self.salt.lock().map_err(|_| SecurityError::LockPoisoned)?;
+            *guard = Some(salt);
+        }
+
+        tracing::debug!("Generated and stored new salt for keystore");
+
+        // Derive key from passphrase using the stored salt
+        let master_key =
+            MasterKey::derive_with_salt(passphrase, &salt, self.config.pbkdf2_iterations)?;
 
         // Compute and store verification hash of the CORRECT key (both disk and memory)
         let hash = Self::compute_verification_hash(&master_key);
@@ -456,6 +542,14 @@ impl SecurityManager {
         let mut cache = self.cache.lock().map_err(|_| SecurityError::LockPoisoned)?;
         cache.clear();
         Ok(())
+    }
+
+    /// Check if keystore is initialized
+    ///
+    /// Returns true if the verification hash file exists, indicating
+    /// the keystore has been initialized with a passphrase.
+    pub fn is_initialized(&self) -> bool {
+        self.verification_hash_path.exists()
     }
 }
 

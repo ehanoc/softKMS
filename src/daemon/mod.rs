@@ -15,7 +15,7 @@ use crate::{Config, Result};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::signal;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 /// Daemon state
 pub struct Daemon {
@@ -41,6 +41,23 @@ impl Daemon {
         // Check if verification hash exists from previous init
         // If so, load it into memory so passphrase validation works
         let verification_hash_path = config.storage.path.join(".verification_hash");
+        let salt_path = config.storage.path.join(".salt");
+        
+        // Load salt if it exists
+        if salt_path.exists() {
+            match std::fs::read(&salt_path) {
+                Ok(stored_salt) if stored_salt.len() == 32 => {
+                    let mut salt = [0u8; 32];
+                    salt.copy_from_slice(&stored_salt);
+                    // Salt is loaded in SecurityManager::new, but verify it worked
+                    info!("Salt file exists - master key derivation will use stored salt");
+                }
+                _ => {
+                    warn!("Salt file exists but is invalid");
+                }
+            }
+        }
+        
         if verification_hash_path.exists() {
             match std::fs::read(&verification_hash_path) {
                 Ok(stored_hash) if stored_hash.len() == 32 => {
@@ -187,14 +204,10 @@ impl Daemon {
         let config = self.config.clone();
         let key_service = self.key_service.clone();
         let security_manager = self.security_manager.clone();
-        
-        // Check if verification hash exists to determine if daemon is pre-initialized
-        let verification_hash_path = config.storage.path.join(".verification_hash");
-        let pre_initialized = verification_hash_path.exists();
 
         let handle = tokio::spawn(async move {
             // Start gRPC server
-            if let Err(e) = crate::api::grpc::start(&config, key_service, security_manager, pre_initialized).await {
+            if let Err(e) = crate::api::grpc::start(&config, key_service, security_manager).await {
                 error!("gRPC server error: {}", e);
             }
         });
