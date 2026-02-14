@@ -170,7 +170,8 @@ async fn test_key_lifecycle_with_passphrase() {
 
     let security_config = SecurityConfig::new();
     let cache = create_cache(300);
-    let security_manager = Arc::new(SecurityManager::new(cache, security_config));
+    let security_manager = Arc::new(SecurityManager::new(cache, security_config, temp_dir.path().to_path_buf()));
+    security_manager.init_with_passphrase("my_secure_passphrase_123").unwrap();
     let config = Config::default();
 
     let service = KeyService::new(storage, security_manager, config);
@@ -247,7 +248,8 @@ async fn test_seed_import_and_operations() {
 
     let security_config = SecurityConfig::new();
     let cache = create_cache(300);
-    let security_manager = Arc::new(SecurityManager::new(cache, security_config));
+    let security_manager = Arc::new(SecurityManager::new(cache, security_config, temp_dir.path().to_path_buf()));
+    security_manager.init_with_passphrase("seed_passphrase_456").unwrap();
     let config = Config::default();
 
     let service = KeyService::new(storage, security_manager, config);
@@ -294,7 +296,8 @@ async fn test_encrypted_storage_format() {
 
     let security_config = SecurityConfig::new();
     let cache = create_cache(300);
-    let security_manager = Arc::new(SecurityManager::new(cache, security_config));
+    let security_manager = Arc::new(SecurityManager::new(cache, security_config, storage_path.clone()));
+    security_manager.init_with_passphrase("storage_test_passphrase").unwrap();
     let config = Config::default();
 
     let service = KeyService::new(storage, security_manager, config);

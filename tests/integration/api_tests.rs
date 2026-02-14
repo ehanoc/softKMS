@@ -24,6 +24,10 @@ async fn setup_test_env() -> (KeyService, tempfile::TempDir) {
     let security_config = SecurityConfig::new();
     let cache = create_cache(300);
     let security_manager = Arc::new(SecurityManager::new(cache, security_config, temp_dir.path().to_path_buf()));
+    
+    // Initialize the keystore with a passphrase
+    security_manager.init_with_passphrase("test_passphrase").unwrap();
+    
     let config = Config::default();
 
     let service = KeyService::new(storage, security_manager, config);
@@ -183,7 +187,7 @@ async fn test_passphrase_caching() {
 #[tokio::test]
 async fn test_same_passphrase_multiple_operations() {
     let (service, _temp) = setup_test_env().await;
-    let passphrase = "shared_secret_passphrase";
+    let passphrase = "test_passphrase";
 
     // Create multiple keys
     let key1 = service.create_key("ed25519".to_string(), Some("Key 1".to_string()), std::collections::HashMap::new(), passphrase).await.unwrap();
@@ -302,7 +306,7 @@ async fn test_storage_persistence() {
 
         let security_config = SecurityConfig::new();
         let cache = create_cache(300);
-        let security_manager = Arc::new(SecurityManager::new(cache, security_config));
+        let security_manager = Arc::new(SecurityManager::new(cache, security_config, storage_path.clone()));
         let config = Config::default();
 
         let service = KeyService::new(storage, security_manager, config);

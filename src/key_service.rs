@@ -16,6 +16,8 @@ use crate::crypto::p256::DeterministicP256;
 use crate::storage::StorageBackend;
 use crate::security::{SecurityManager, WrappedKey};
 use crate::{Config, Error, KeyId, KeyMetadata, KeyType, Result, Signature};
+use p256::ecdsa::SigningKey;
+use rand_core::OsRng;
 use chrono::Utc;
 use secrecy::ExposeSecret;
 use secrecy::Secret;
@@ -92,6 +94,16 @@ impl KeyService {
                 let public_key_bytes = public_key.to_vec();
                 let material = secret.expose_secret().to_vec();
                 (material, public_key_bytes)
+            }
+            "p256" => {
+                // Generate random P-256 key
+                use p256::ecdsa::SigningKey;
+                use rand_core::OsRng;
+                let signing_key = SigningKey::random(&mut OsRng);
+                let secret_bytes = signing_key.to_bytes();
+                let material = secret_bytes.to_vec();
+                let public_key = signing_key.verifying_key().to_encoded_point(false).as_bytes().to_vec();
+                (material, public_key)
             }
             _ => {
                 return Err(Error::Crypto(format!("Unsupported algorithm: {}", algorithm)));
@@ -393,7 +405,7 @@ mod tests {
         service: KeyService,
     }
 
-    async fn create_test_service() -> TestService {
+    async fn create_test_service_with_init(passphrase: &str) -> TestService {
         let temp_dir = TempDir::new().unwrap();
         let storage = Arc::new(FileStorage::new(temp_dir.path().to_path_buf(), Config::default()));
         storage.init().await.unwrap();
@@ -401,6 +413,9 @@ mod tests {
         let security_config = SecurityConfig::new();
         let cache = create_cache(300);
         let security_manager = Arc::new(SecurityManager::new(cache, security_config, temp_dir.path().to_path_buf()));
+        
+        // Initialize the security manager with passphrase
+        security_manager.init_with_passphrase(passphrase).unwrap();
 
         let config = Config::default();
 
@@ -414,9 +429,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_key_and_list() {
-        let test = create_test_service().await;
-        let service = &test.service;
         let passphrase = "test_passphrase_123";
+        let test = create_test_service_with_init(passphrase).await;
+        let service = &test.service;
 
         let metadata = service.create_key(
             "ed25519".to_string(),
@@ -435,9 +450,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_sign_with_key() {
-        let test = create_test_service().await;
-        let service = &test.service;
         let passphrase = "test_passphrase_123";
+        let test = create_test_service_with_init(passphrase).await;
+        let service = &test.service;
 
         let metadata = service.create_key(
             "ed25519".to_string(),
@@ -455,9 +470,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_import_seed() {
-        let test = create_test_service().await;
-        let service = &test.service;
         let passphrase = "test_passphrase_123";
+        let test = create_test_service_with_init(passphrase).await;
+        let service = &test.service;
         let seed = vec![0u8; 32];
 
         let metadata = service.import_seed(
@@ -474,9 +489,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_key() {
-        let test = create_test_service().await;
-        let service = &test.service;
         let passphrase = "test_passphrase_123";
+        let test = create_test_service_with_init(passphrase).await;
+        let service = &test.service;
 
         let metadata = service.create_key(
             "ed25519".to_string(),
@@ -493,9 +508,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_keys_same_passphrase() {
-        let test = create_test_service().await;
-        let service = &test.service;
         let passphrase = "shared_passphrase_123";
+        let test = create_test_service_with_init(passphrase).await;
+        let service = &test.service;
 
         let key1 = service.create_key(
             "ed25519".to_string(),
@@ -523,9 +538,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_p256_key_derivation_flow() {
-        let test = create_test_service().await;
-        let service = &test.service;
         let passphrase = "test_passphrase_123";
+        let test = create_test_service_with_init(passphrase).await;
+        let service = &test.service;
 
         // Step 1: Import a seed
         let seed = vec![0xABu8; 64]; // 64-byte seed (like BIP32 derived key)
