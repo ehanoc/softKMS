@@ -225,9 +225,17 @@ impl SecurityManager {
     /// The hash is stored to disk and used to verify subsequent passphrase entries.
     pub fn store_verification_hash(&self, master_key: &MasterKey) -> Result<()> {
         let hash = Self::compute_verification_hash(master_key);
+        // Write and flush to ensure the file is fully persisted before returning
         std::fs::write(&self.verification_hash_path, &hash).map_err(|e| {
             SecurityError::Storage(format!("Failed to store verification hash: {}", e))
         })?;
+        // Ensure parent directory is synced to prevent issues on some filesystems
+        if let Some(parent) = self.verification_hash_path.parent() {
+            let _ = std::fs::OpenOptions::new()
+                .read(true)
+                .open(parent)
+                .and_then(|f| f.sync_all());
+        }
         Ok(())
     }
 

@@ -95,18 +95,15 @@ fn test_cli_p256_key_generation() {
     let mut test = CliTest::new();
     test.start_daemon();
 
-    // Wait for daemon to be ready
     std::thread::sleep(Duration::from_millis(1000));
 
-    // Initialize keystore
-    let init_output = test.run_cli(&["--passphrase test123 init"]);
+    let init_output = test.run_cli(&["--passphrase", "test123", "init", "--confirm", "false"]);
     let init_stdout = String::from_utf8_lossy(&init_output.stdout);
     let init_stderr = String::from_utf8_lossy(&init_output.stderr);
 
     println!("Init stdout: {}", init_stdout);
     println!("Init stderr: {}", init_stderr);
 
-    // Generate P-256 key
     let output = test.run_cli(&[
         "--passphrase",
         "test123",
@@ -149,10 +146,8 @@ fn test_cli_p256_sign_and_verify() {
 
     std::thread::sleep(Duration::from_millis(1000));
 
-    // Initialize
-    let _ = test.run_cli(&["--passphrase test123 init"]);
+    let _ = test.run_cli(&["--passphrase", "test123", "init", "--confirm", "false"]);
 
-    // Generate key
     let gen_output = test.run_cli(&[
         "--passphrase",
         "test123",
@@ -165,7 +160,6 @@ fn test_cli_p256_sign_and_verify() {
 
     assert!(gen_output.status.success(), "Key generation failed");
 
-    // Sign data
     let sign_output = test.run_cli(&[
         "--passphrase",
         "test123",
@@ -189,7 +183,6 @@ fn test_cli_p256_sign_and_verify() {
         "Expected signature output"
     );
 
-    // Extract signature from output
     let signature_line = sign_stdout
         .lines()
         .find(|l| l.contains("Signature (base64):"))
@@ -201,7 +194,6 @@ fn test_cli_p256_sign_and_verify() {
         .expect("Could not extract signature")
         .trim();
 
-    // Verify signature
     let verify_output = test.run_cli(&[
         "verify",
         "--label",
@@ -237,10 +229,8 @@ fn test_cli_ed25519_sign_and_verify() {
 
     std::thread::sleep(Duration::from_millis(1000));
 
-    // Initialize
-    let _ = test.run_cli(&["--passphrase test123 init"]);
+    let _ = test.run_cli(&["--passphrase", "test123", "init", "--confirm", "false"]);
 
-    // Generate Ed25519 key
     let gen_output = test.run_cli(&[
         "--passphrase",
         "test123",
@@ -261,7 +251,6 @@ fn test_cli_ed25519_sign_and_verify() {
         gen_stderr
     );
 
-    // Sign data
     let sign_output = test.run_cli(&[
         "--passphrase",
         "test123",
@@ -279,7 +268,6 @@ fn test_cli_ed25519_sign_and_verify() {
         sign_stdout
     );
 
-    // Extract signature
     let signature_line = sign_stdout
         .lines()
         .find(|l| l.contains("Signature (base64):"))
@@ -291,7 +279,6 @@ fn test_cli_ed25519_sign_and_verify() {
         .expect("Could not extract signature")
         .trim();
 
-    // Verify signature
     let verify_output = test.run_cli(&[
         "verify",
         "--label",
@@ -325,10 +312,8 @@ fn test_cli_verify_invalid_signature() {
 
     std::thread::sleep(Duration::from_millis(1000));
 
-    // Initialize
-    let _ = test.run_cli(&["--passphrase test123 init"]);
+    let _ = test.run_cli(&["--passphrase", "test123", "init", "--confirm", "false"]);
 
-    // Generate key
     let _ = test.run_cli(&[
         "--passphrase",
         "test123",
@@ -339,7 +324,6 @@ fn test_cli_verify_invalid_signature() {
         "InvalidSigKey",
     ]);
 
-    // Sign original data
     let sign_output = test.run_cli(&[
         "--passphrase",
         "test123",
@@ -362,18 +346,16 @@ fn test_cli_verify_invalid_signature() {
         .unwrap()
         .trim();
 
-    // Try to verify with different data (should fail)
     let verify_output = test.run_cli(&[
         "verify",
         "--label",
         "InvalidSigKey",
         "--data",
-        "Different data", // Wrong data
+        "Different data",
         "--signature",
         signature,
     ]);
 
-    // Should fail with exit code != 0
     assert!(
         !verify_output.status.success(),
         "Verification should fail for wrong data"
@@ -394,10 +376,8 @@ fn test_cli_ed25519_key_generation() {
 
     std::thread::sleep(Duration::from_millis(1000));
 
-    // Initialize
-    let _ = test.run_cli(&["--passphrase test123 init"]);
+    let _ = test.run_cli(&["--passphrase", "test123", "init", "--confirm", "false"]);
 
-    // Generate Ed25519 key
     let output = test.run_cli(&[
         "--passphrase",
         "test123",
@@ -429,10 +409,8 @@ fn test_cli_list_keys() {
 
     std::thread::sleep(Duration::from_millis(1000));
 
-    // Initialize
-    let _ = test.run_cli(&["--passphrase test123 init"]);
+    let _ = test.run_cli(&["--passphrase", "test123", "init", "--confirm", "false"]);
 
-    // Create two keys
     let _ = test.run_cli(&[
         "--passphrase",
         "test123",
@@ -453,7 +431,6 @@ fn test_cli_list_keys() {
         "Key2",
     ]);
 
-    // List keys
     let list_output = test.run_cli(&["list"]);
     let list_stdout = String::from_utf8_lossy(&list_output.stdout);
 

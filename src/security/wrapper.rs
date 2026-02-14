@@ -7,9 +7,10 @@ use aes_gcm::{
     aead::{Aead, KeyInit, Payload},
     Aes256Gcm, Nonce,
 };
+use hkdf::Hkdf;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use super::{MasterKey, Result, SecurityError};
 
@@ -108,6 +109,30 @@ impl WrappedKey {
     }
 }
 
+/// Key Encryption Key (KEK) derived from master key and per-key salt
+/// Automatically zeroized when dropped for security
+#[derive(Zeroize, ZeroizeOnDrop)]
+struct KeyEncryptionKey {
+    key: [u8; 32],
+}
+
+impl KeyEncryptionKey {
+    /// Derive KEK from master key and salt using HKDF-SHA256
+    fn derive(master_key: &MasterKey, salt: &[u8; 32]) -> Self {
+        let master_key_bytes = master_key.expose_secret();
+        let hkdf = Hkdf::<Sha256>::new(Some(salt), master_key_bytes);
+        let mut key = [0u8; 32];
+        hkdf.expand(b"softkms-key-wrap-v1", &mut key)
+            .expect("HKDF expansion failed - this should never happen with valid parameters");
+        Self { key }
+    }
+
+    /// Get reference to the key bytes
+    fn as_bytes(&self) -> &[u8; 32] {
+        &self.key
+    }
+}
+
 /// Key wrapper for encryption/decryption operations
 pub struct KeyWrapper {
     master_key: MasterKey,
@@ -147,12 +172,12 @@ impl KeyWrapper {
         let salt = Self::generate_salt();
         let nonce = Self::generate_nonce();
 
-        // Use master key directly with the salt as additional data
-        // The salt provides uniqueness, we don't need to derive another key
-        let master_key_bytes = self.master_key.expose_secret();
+        // Derive per-key encryption key (KEK) from master key and salt
+        // This provides defense-in-depth: even if AES has issues, the KEK is unique per key
+        let kek = KeyEncryptionKey::derive(&self.master_key, &salt);
 
-        // Create cipher directly from master key
-        let cipher = Aes256Gcm::new_from_slice(master_key_bytes).map_err(|e| {
+        // Create cipher from derived KEK
+        let cipher = Aes256Gcm::new_from_slice(kek.as_bytes()).map_err(|e| {
             SecurityError::EncryptionFailed(format!("Failed to create cipher: {:?}", e))
         })?;
 
@@ -241,11 +266,11 @@ impl KeyWrapper {
             return Err(SecurityError::AadIntegrityFailed);
         }
 
-        // Use master key directly (same as wrap)
-        let master_key_bytes = self.master_key.expose_secret();
+        // Derive the same KEK used during wrap using the stored salt
+        let kek = KeyEncryptionKey::derive(&self.master_key, &wrapped.salt);
 
-        // Create cipher
-        let cipher = Aes256Gcm::new_from_slice(master_key_bytes).map_err(|e| {
+        // Create cipher from derived KEK
+        let cipher = Aes256Gcm::new_from_slice(kek.as_bytes()).map_err(|e| {
             SecurityError::DecryptionFailed(format!("Failed to create cipher: {:?}", e))
         })?;
 

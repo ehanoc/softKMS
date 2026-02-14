@@ -171,7 +171,7 @@ enum Commands {
     /// Initialize the keystore with a passphrase
     Init {
         /// Require passphrase confirmation
-        #[arg(long, default_value = "true")]
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         confirm: bool,
     },
 }
@@ -226,15 +226,11 @@ fn get_passphrase(cli_pass: Option<String>) -> Result<String, Box<dyn std::error
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    
-    // Connect to the daemon
     let mut client = KeyStoreClient::connect(cli.server.clone()).await?;
     
     match cli.command {
         Commands::Generate { algorithm, label, from_seed, origin, user_handle, counter } => {
-            // Check if this is a derivation request
             if let Some(seed_id) = from_seed {
-                // Derive from seed (P-256 deterministic)
                 if algorithm != "p256" {
                     eprintln!("--from-seed only supported with --algorithm p256");
                     std::process::exit(1);
@@ -256,7 +252,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
-                // Get passphrase from CLI or prompt interactively
                 let passphrase = match get_passphrase(cli.passphrase.clone()) {
                     Ok(p) => p,
                     Err(e) => {
@@ -292,8 +287,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             } else {
-                // Regular key generation
-                // Get passphrase from CLI or prompt interactively
                 let passphrase = match get_passphrase(cli.passphrase.clone()) {
                     Ok(p) => p,
                     Err(e) => {
@@ -359,12 +352,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         
-        Commands::Sign { key, label, data, encoding } => {
-            // Determine key_id from key or label
+        Commands::Sign { key, label, data, encoding: _ } => {
             let key_id = if let Some(kid) = key {
                 kid
             } else if let Some(lbl) = label {
-                // Lookup key by label
                 let list_request = tonic::Request::new(ListKeysRequest {
                     include_public_keys: false,
                 });
@@ -401,7 +392,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             };
             
-            // Get passphrase from CLI or prompt interactively
             let passphrase = match get_passphrase(cli.passphrase.clone()) {
                 Ok(p) => p,
                 Err(e) => {
@@ -410,7 +400,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            // Decode base64 data if provided as base64, otherwise treat as raw string
             let data_bytes = if let Ok(decoded) = BASE64.decode(&data) {
                 decoded
             } else {
@@ -437,7 +426,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         Commands::Verify { key, label, data, signature } => {
-            // Determine key_id from key or label
             let key_id = if let Some(kid) = key {
                 kid
             } else if let Some(lbl) = label {
@@ -453,14 +441,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             };
 
-            // Decode data (base64 or raw)
             let data_bytes = if let Ok(decoded) = BASE64.decode(&data) {
                 decoded
             } else {
                 data.as_bytes().to_vec()
             };
 
-            // Decode signature (must be base64)
             let signature_bytes = match BASE64.decode(&signature) {
                 Ok(decoded) => decoded,
                 Err(e) => {
@@ -494,7 +480,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         
         Commands::ImportSeed { mnemonic, label } => {
-            // Prompt for passphrase
             let passphrase = prompt_password("Enter passphrase: ")?;
             if passphrase.is_empty() {
                 eprintln!("Passphrase cannot be empty");
@@ -528,7 +513,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         
         
         Commands::Delete { key, label, force } => {
-            // Determine key_id from key or label
             let key_id = if let Some(kid) = key {
                 kid
             } else if let Some(lbl) = &label {
@@ -643,7 +627,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         
         Commands::Init { confirm } => {
-            // Get passphrase from CLI or prompt interactively
             let passphrase = match get_passphrase(cli.passphrase.clone()) {
                 Ok(p) => p,
                 Err(e) => {
@@ -652,7 +635,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            // Confirm passphrase if requested
             if confirm {
                 let confirm_pass = rpassword::prompt_password("Confirm passphrase: ")?;
                 if passphrase != confirm_pass {
