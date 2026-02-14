@@ -968,6 +968,7 @@ mod tests {
             283,
             HdDerivationScheme::Peikert,
             true, // store the key
+            None, // use default label format: seed_id:path
             passphrase,
         ).await.unwrap();
 

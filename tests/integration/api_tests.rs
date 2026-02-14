@@ -254,12 +254,9 @@ async fn test_different_data_different_signatures() {
 
 /// Test storage persistence across service recreation
 /// 
-/// Note: Currently each SecurityManager generates a new random salt for PBKDF2,
-/// so keys wrapped with one service instance cannot be unwrapped with another
-/// instance (even with the same passphrase). This is a known limitation.
-/// The salt should be stored with keystore metadata and reused.
+/// Verifies that keys created with one service instance can be accessed
+/// by a new instance using the same storage and passphrase.
 #[tokio::test]
-#[ignore = "Salt persistence issue - each SecurityManager generates new salt"]
 async fn test_storage_persistence() {
     use softkms::storage::file::FileStorage;
     use softkms::security::{SecurityConfig, SecurityManager, create_cache};
@@ -280,6 +277,10 @@ async fn test_storage_persistence() {
         let security_config = SecurityConfig::new();
         let cache = create_cache(300);
         let security_manager = Arc::new(SecurityManager::new(cache, security_config, storage_path.clone()));
+        
+        // Initialize the keystore with passphrase
+        security_manager.init_with_passphrase(passphrase).unwrap();
+        
         let config = Config::default();
 
         let service = KeyService::new(storage, security_manager, config);
@@ -307,6 +308,11 @@ async fn test_storage_persistence() {
         let security_config = SecurityConfig::new();
         let cache = create_cache(300);
         let security_manager = Arc::new(SecurityManager::new(cache, security_config, storage_path.clone()));
+        
+        // Note: init_with_passphrase should NOT be called here because
+        // the keystore is already initialized. SecurityManager::new() loads
+        // the existing salt from disk, allowing us to derive the same master key.
+        
         let config = Config::default();
 
         let service = KeyService::new(storage, security_manager, config);
