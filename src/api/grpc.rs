@@ -20,6 +20,9 @@ use crate::key_service::KeyService;
 use crate::security::SecurityManager;
 use crate::{Config, Error, KeyId, KeyMetadata, KeyType};
 
+// Import BIP39 for mnemonic handling
+use bip39::{Language, Mnemonic};
+
 // Re-export generated protobuf types
 pub use super::softkms::*;
 use super::softkms::key_store_server::{KeyStore, KeyStoreServer};
@@ -46,6 +49,19 @@ impl GrpcKeyStore {
     fn is_initialized(&self) -> bool {
         self.security_manager.is_initialized()
     }
+    
+    /// Convert BIP39 mnemonic to 64-byte seed
+    fn mnemonic_to_seed(mnemonic: &str) -> Result<Vec<u8>, Status> {
+        use bip39::{Language, Mnemonic};
+        
+        // Parse the mnemonic
+        let mnemonic = Mnemonic::parse_in_normalized(Language::English, mnemonic)
+            .map_err(|e| Status::invalid_argument(format!("Invalid BIP39 mnemonic: {}", e)))?;
+        
+        // Generate seed (64 bytes) with empty passphrase
+        let seed = mnemonic.to_seed_normalized("");
+        Ok(seed.to_vec())
+    }
 }
 
 fn map_error(e: Error) -> Status {
@@ -65,6 +81,7 @@ fn key_type_to_string(kt: KeyType) -> String {
         KeyType::Seed => "seed".to_string(),
         KeyType::Derived => "derived".to_string(),
         KeyType::Imported => "imported".to_string(),
+        KeyType::ExtendedPublic => "xpub".to_string(),
     }
 }
 
@@ -333,12 +350,32 @@ impl KeyStore for GrpcKeyStore {
         
         let req = request.into_inner();
         
-        // Parse mnemonic or use raw seed
-        // For now, treat as raw seed bytes
-        let seed = req.mnemonic.as_bytes().to_vec();
+        // Determine if input is BIP39 mnemonic or raw hex seed
+        let seed_bytes = if req.mnemonic.len() == 64 {
+            // 64 hex chars = 32 bytes, treat as raw seed
+            match hex::decode(&req.mnemonic) {
+                Ok(bytes) => {
+                    if bytes.len() == 32 {
+                        // Pad to 64 bytes for BIP32
+                        let mut padded = vec![0u8; 64];
+                        padded[..32].copy_from_slice(&bytes);
+                        padded
+                    } else {
+                        bytes
+                    }
+                }
+                Err(_) => {
+                    // Not valid hex, treat as mnemonic
+                    Self::mnemonic_to_seed(&req.mnemonic)?
+                }
+            }
+        } else {
+            // Treat as BIP39 mnemonic
+            Self::mnemonic_to_seed(&req.mnemonic)?
+        };
         
         let metadata = self.key_service
-            .import_seed(seed, req.label, &req.passphrase)
+            .import_seed(seed_bytes, req.label, &req.passphrase)
             .await
             .map_err(map_error)?;
         
@@ -433,6 +470,145 @@ impl KeyStore for GrpcKeyStore {
         };
 
         info!("P-256 key {} derived for origin={}", response.key_id, req.origin);
+        Ok(Response::new(response))
+    }
+
+    async fn derive_ed25519(
+        &self,
+        request: Request<DeriveEd25519Request>,
+    ) -> Result<Response<DeriveEd25519Response>, Status> {
+        debug!("Received DeriveEd25519 request");
+
+        if !self.is_initialized() {
+            return Err(Status::failed_precondition(
+                "Keystore not initialized. Run 'softkms init' first."
+            ));
+        }
+
+        let req = request.into_inner();
+
+        let seed_id = KeyId::parse_str(&req.seed_id)
+            .map_err(|_| Status::invalid_argument("Invalid seed ID"))?;
+
+        let scheme = match req.scheme {
+            1 => crate::crypto::hd_ed25519::HdDerivationScheme::Peikert,
+            2 => crate::crypto::hd_ed25519::HdDerivationScheme::V2,
+            _ => crate::crypto::hd_ed25519::HdDerivationScheme::Peikert,
+        };
+
+        let metadata = self.key_service
+            .derive_ed25519_key(
+                seed_id,
+                &req.derivation_path,
+                req.coin_type,
+                scheme,
+                req.store_key,
+                &req.passphrase,
+            )
+            .await
+            .map_err(map_error)?;
+
+        // Get the public key for the response
+        let public_key_b64 = base64::encode(&metadata.public_key);
+
+        let response = DeriveEd25519Response {
+            key_id: metadata.id.to_string(),
+            public_key: public_key_b64,
+            address: String::new(), // Address field kept for compatibility but not used
+            algorithm: "ed25519".to_string(),
+            created_at: metadata.created_at.to_rfc3339(),
+        };
+
+        info!(
+            "Ed25519 key {} derived with path {}", 
+            response.key_id, 
+            req.derivation_path
+        );
+        Ok(Response::new(response))
+    }
+
+    async fn import_xpub(
+        &self,
+        request: Request<ImportXpubRequest>,
+    ) -> Result<Response<ImportXpubResponse>, Status> {
+        debug!("Received ImportXpub request");
+
+        if !self.is_initialized() {
+            return Err(Status::failed_precondition(
+                "Keystore not initialized. Run 'softkms init' first."
+            ));
+        }
+
+        let req = request.into_inner();
+
+        let metadata = self.key_service
+            .import_xpub(
+                req.xpub,
+                req.coin_type,
+                req.account,
+                req.label,
+                &req.passphrase,
+            )
+            .await
+            .map_err(map_error)?;
+
+        let response = ImportXpubResponse {
+            xpub_id: metadata.id.to_string(),
+            created_at: metadata.created_at.to_rfc3339(),
+        };
+
+        info!("XPub {} imported for coin_type={} account={}", response.xpub_id, req.coin_type, req.account);
+        Ok(Response::new(response))
+    }
+
+    async fn derive_public(
+        &self,
+        request: Request<DerivePublicRequest>,
+    ) -> Result<Response<DerivePublicResponse>, Status> {
+        debug!("Received DerivePublic request");
+
+        if !self.is_initialized() {
+            return Err(Status::failed_precondition(
+                "Keystore not initialized. Run 'softkms init' first."
+            ));
+        }
+
+        let req = request.into_inner();
+
+        let xpub_id = KeyId::parse_str(&req.xpub_id)
+            .map_err(|_| Status::invalid_argument("Invalid xpub ID"))?;
+
+        let scheme = match req.scheme {
+            1 => crate::crypto::hd_ed25519::HdDerivationScheme::Peikert,
+            2 => crate::crypto::hd_ed25519::HdDerivationScheme::V2,
+            _ => crate::crypto::hd_ed25519::HdDerivationScheme::Peikert,
+        };
+
+        let hrp = req.hrp.as_deref();
+
+        let (key_id, address, public_key) = self.key_service
+            .derive_ed25519_public(xpub_id, req.index, scheme, hrp)
+            .await
+            .map_err(map_error)?;
+
+        let public_key_b64 = base64::encode(&public_key);
+
+        let response = DerivePublicResponse {
+            key_id: key_id.to_string(),
+            public_key: public_key_b64,
+            address,
+            path: format!("m/44'/{}/{}'/0/{}", 
+                req.xpub_id, 
+                req.index / 0x8000_0000,
+                req.index % 0x8000_0000),
+        };
+
+        info!(
+            "Public key {} derived from xpub {} at index {}",
+            response.key_id,
+            req.xpub_id,
+            req.index
+        );
         Ok(Response::new(response))
     }
 

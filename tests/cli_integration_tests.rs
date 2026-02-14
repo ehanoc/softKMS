@@ -37,6 +37,7 @@ impl CliTest {
 
     fn start_daemon(&mut self) {
         let storage_path = self.temp_dir.path().to_path_buf();
+        let pid_file = self.temp_dir.path().join("softkms.pid");
 
         // Use debug binary if running tests, otherwise release
         let daemon_path = if cfg!(debug_assertions) {
@@ -52,6 +53,8 @@ impl CliTest {
             .arg(&storage_path)
             .arg("--grpc-addr")
             .arg(&grpc_addr)
+            .arg("--pid-file")
+            .arg(&pid_file)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()

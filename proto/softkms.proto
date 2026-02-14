@@ -34,6 +34,15 @@ service KeyStore {
   // Derive a P-256 key deterministically (for WebAuthn/Passkey)
   rpc DeriveP256(DeriveP256Request) returns (DeriveP256Response);
 
+  // Derive an Ed25519 key from seed (BIP32/BIP44)
+  rpc DeriveEd25519(DeriveEd25519Request) returns (DeriveEd25519Response);
+
+  // Import an xpub for watch-only derivation
+  rpc ImportXpub(ImportXpubRequest) returns (ImportXpubResponse);
+
+  // Derive public key from xpub (no private key needed)
+  rpc DerivePublic(DerivePublicRequest) returns (DerivePublicResponse);
+
   // Change keystore passphrase
   rpc ChangePassphrase(ChangePassphraseRequest) returns (ChangePassphraseResponse);
 
@@ -56,6 +65,14 @@ enum KeyType {
   KEY_TYPE_SEED = 1;
   KEY_TYPE_DERIVED = 2;
   KEY_TYPE_IMPORTED = 3;
+  KEY_TYPE_EXTENDED_PUBLIC = 4;  // xpub for watch-only derivation
+}
+
+// Derivation scheme for HD wallets
+enum DerivationScheme {
+  DERIVATION_SCHEME_UNSPECIFIED = 0;
+  DERIVATION_SCHEME_PEIKERT = 1;  // Enhanced entropy (default)
+  DERIVATION_SCHEME_V2 = 2;       // Original IEEE standard
 }
 
 // Create key request
@@ -187,6 +204,57 @@ message DeriveP256Response {
   string public_key = 2;    // base64 encoded uncompressed P-256 public key
   string algorithm = 3;     // "p256"
   string created_at = 4;
+}
+
+// Derive Ed25519 key request (BIP32/BIP44)
+message DeriveEd25519Request {
+  string seed_id = 1;
+  string derivation_path = 2;  // BIP44 path: "m/44'/283'/0'/0/0"
+  uint32 coin_type = 3;          // BIP44 coin type (e.g., 283 for Algorand)
+  DerivationScheme scheme = 4; // PEIKERT (default) or V2
+  bool store_key = 5;            // If true, persist the derived key
+  optional string label = 6;
+  string passphrase = 7;         // For accessing seed
+}
+
+// Derive Ed25519 key response
+message DeriveEd25519Response {
+  string key_id = 1;
+  string public_key = 2;     // base64 encoded Ed25519 public key
+  string address = 3;        // Bech32 encoded address (if hrp available)
+  string algorithm = 4;      // "ed25519"
+  string created_at = 5;
+}
+
+// Import xpub request
+message ImportXpubRequest {
+  bytes xpub = 1;              // 64-byte xpub (public key + chain code)
+  uint32 coin_type = 2;
+  uint32 account = 3;
+  optional string label = 4;
+  string passphrase = 5;     // For wrapping xpub
+}
+
+// Import xpub response
+message ImportXpubResponse {
+  string xpub_id = 1;
+  string created_at = 2;
+}
+
+// Derive public key request (from xpub)
+message DerivePublicRequest {
+  string xpub_id = 1;
+  uint32 index = 2;
+  DerivationScheme scheme = 3; // PEIKERT or V2
+  optional string hrp = 4;     // Human-readable prefix for bech32 address
+}
+
+// Derive public key response
+message DerivePublicResponse {
+  string key_id = 1;
+  string public_key = 2;     // base64 encoded public key
+  string address = 3;        // Bech32 encoded address
+  string path = 4;           // Derivation path used
 }
 
 // Initialize request

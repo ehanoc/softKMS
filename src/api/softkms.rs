@@ -228,6 +228,105 @@ pub struct DeriveP256Response {
     #[prost(string, tag = "4")]
     pub created_at: ::prost::alloc::string::String,
 }
+/// Derive Ed25519 key request
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DeriveEd25519Request {
+    #[prost(string, tag = "1")]
+    pub seed_id: ::prost::alloc::string::String,
+    /// BIP44 path: "m/44'/283'/0'/0/0"
+    #[prost(string, tag = "2")]
+    pub derivation_path: ::prost::alloc::string::String,
+    /// BIP44 coin type (e.g., 283 for Algorand)
+    #[prost(uint32, tag = "3")]
+    pub coin_type: u32,
+    /// PEIKERT (default) or V2
+    #[prost(enumeration = "DerivationScheme", tag = "4")]
+    pub scheme: i32,
+    /// If true, persist the derived key
+    #[prost(bool, tag = "5")]
+    pub store_key: bool,
+    #[prost(string, optional, tag = "6")]
+    pub label: ::core::option::Option<::prost::alloc::string::String>,
+    /// For accessing seed
+    #[prost(string, tag = "7")]
+    pub passphrase: ::prost::alloc::string::String,
+}
+/// Derive Ed25519 key response
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DeriveEd25519Response {
+    #[prost(string, tag = "1")]
+    pub key_id: ::prost::alloc::string::String,
+    /// base64 encoded Ed25519 public key
+    #[prost(string, tag = "2")]
+    pub public_key: ::prost::alloc::string::String,
+    /// Bech32 encoded address (if hrp available)
+    #[prost(string, tag = "3")]
+    pub address: ::prost::alloc::string::String,
+    /// "ed25519"
+    #[prost(string, tag = "4")]
+    pub algorithm: ::prost::alloc::string::String,
+    #[prost(string, tag = "5")]
+    pub created_at: ::prost::alloc::string::String,
+}
+/// Import xpub request
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ImportXpubRequest {
+    /// 64-byte xpub (public key + chain code)
+    #[prost(bytes = "vec", tag = "1")]
+    pub xpub: ::prost::alloc::vec::Vec<u8>,
+    #[prost(uint32, tag = "2")]
+    pub coin_type: u32,
+    #[prost(uint32, tag = "3")]
+    pub account: u32,
+    #[prost(string, optional, tag = "4")]
+    pub label: ::core::option::Option<::prost::alloc::string::String>,
+    /// For wrapping xpub
+    #[prost(string, tag = "5")]
+    pub passphrase: ::prost::alloc::string::String,
+}
+/// Import xpub response
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ImportXpubResponse {
+    #[prost(string, tag = "1")]
+    pub xpub_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub created_at: ::prost::alloc::string::String,
+}
+/// Derive public key request (from xpub)
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DerivePublicRequest {
+    #[prost(string, tag = "1")]
+    pub xpub_id: ::prost::alloc::string::String,
+    #[prost(uint32, tag = "2")]
+    pub index: u32,
+    /// PEIKERT or V2
+    #[prost(enumeration = "DerivationScheme", tag = "3")]
+    pub scheme: i32,
+    /// Human-readable prefix for bech32 address
+    #[prost(string, optional, tag = "4")]
+    pub hrp: ::core::option::Option<::prost::alloc::string::String>,
+}
+/// Derive public key response
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DerivePublicResponse {
+    #[prost(string, tag = "1")]
+    pub key_id: ::prost::alloc::string::String,
+    /// base64 encoded public key
+    #[prost(string, tag = "2")]
+    pub public_key: ::prost::alloc::string::String,
+    /// Bech32 encoded address
+    #[prost(string, tag = "3")]
+    pub address: ::prost::alloc::string::String,
+    /// Derivation path used
+    #[prost(string, tag = "4")]
+    pub path: ::prost::alloc::string::String,
+}
 /// Initialize request
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -328,6 +427,31 @@ impl Algorithm {
         }
     }
 }
+/// Derivation scheme for HD wallets
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum DerivationScheme {
+    Unspecified = 0,
+    Peikert = 1,
+    V2 = 2,
+}
+impl DerivationScheme {
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            DerivationScheme::Unspecified => "DERIVATION_SCHEME_UNSPECIFIED",
+            DerivationScheme::Peikert => "DERIVATION_SCHEME_PEIKERT",
+            DerivationScheme::V2 => "DERIVATION_SCHEME_V2",
+        }
+    }
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "DERIVATION_SCHEME_UNSPECIFIED" => Some(Self::Unspecified),
+            "DERIVATION_SCHEME_PEIKERT" => Some(Self::Peikert),
+            "DERIVATION_SCHEME_V2" => Some(Self::V2),
+            _ => None,
+        }
+    }
+}
 /// Key types
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
@@ -336,6 +460,7 @@ pub enum KeyType {
     Seed = 1,
     Derived = 2,
     Imported = 3,
+    ExtendedPublic = 4,
 }
 impl KeyType {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -348,6 +473,7 @@ impl KeyType {
             KeyType::Seed => "KEY_TYPE_SEED",
             KeyType::Derived => "KEY_TYPE_DERIVED",
             KeyType::Imported => "KEY_TYPE_IMPORTED",
+            KeyType::ExtendedPublic => "KEY_TYPE_EXTENDED_PUBLIC",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -357,6 +483,7 @@ impl KeyType {
             "KEY_TYPE_SEED" => Some(Self::Seed),
             "KEY_TYPE_DERIVED" => Some(Self::Derived),
             "KEY_TYPE_IMPORTED" => Some(Self::Imported),
+            "KEY_TYPE_EXTENDED_PUBLIC" => Some(Self::ExtendedPublic),
             _ => None,
         }
     }
@@ -682,6 +809,84 @@ pub mod key_store_client {
                 .insert(GrpcMethod::new("softkms.KeyStore", "DeriveP256"));
             self.inner.unary(req, path, codec).await
         }
+        /// Derive an Ed25519 key from seed (BIP32/BIP44)
+        pub async fn derive_ed25519(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DeriveEd25519Request>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeriveEd25519Response>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/softkms.KeyStore/DeriveEd25519",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("softkms.KeyStore", "DeriveEd25519"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Import an xpub for watch-only derivation
+        pub async fn import_xpub(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ImportXpubRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ImportXpubResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/softkms.KeyStore/ImportXpub",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("softkms.KeyStore", "ImportXpub"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Derive public key from xpub (no private key needed)
+        pub async fn derive_public(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DerivePublicRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DerivePublicResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/softkms.KeyStore/DerivePublic",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("softkms.KeyStore", "DerivePublic"));
+            self.inner.unary(req, path, codec).await
+        }
         /// Change keystore passphrase
         pub async fn change_passphrase(
             &mut self,
@@ -803,6 +1008,30 @@ pub mod key_store_server {
             request: tonic::Request<super::DeriveP256Request>,
         ) -> std::result::Result<
             tonic::Response<super::DeriveP256Response>,
+            tonic::Status,
+        >;
+        /// Derive an Ed25519 key from seed (BIP32/BIP44)
+        async fn derive_ed25519(
+            &self,
+            request: tonic::Request<super::DeriveEd25519Request>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeriveEd25519Response>,
+            tonic::Status,
+        >;
+        /// Import an xpub for watch-only derivation
+        async fn import_xpub(
+            &self,
+            request: tonic::Request<super::ImportXpubRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ImportXpubResponse>,
+            tonic::Status,
+        >;
+        /// Derive public key from xpub (no private key needed)
+        async fn derive_public(
+            &self,
+            request: tonic::Request<super::DerivePublicRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DerivePublicResponse>,
             tonic::Status,
         >;
         /// Change keystore passphrase
@@ -1380,6 +1609,144 @@ pub mod key_store_server {
                     let fut = async move {
                         let inner = inner.0;
                         let method = ChangePassphraseSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/softkms.KeyStore/DeriveEd25519" => {
+                    #[allow(non_camel_case_types)]
+                    struct DeriveEd25519Svc<T: KeyStore>(pub Arc<T>);
+                    impl<
+                        T: KeyStore,
+                    > tonic::server::UnaryService<super::DeriveEd25519Request>
+                    for DeriveEd25519Svc<T> {
+                        type Response = super::DeriveEd25519Response;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DeriveEd25519Request>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as KeyStore>::derive_ed25519(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = DeriveEd25519Svc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/softkms.KeyStore/ImportXpub" => {
+                    #[allow(non_camel_case_types)]
+                    struct ImportXpubSvc<T: KeyStore>(pub Arc<T>);
+                    impl<
+                        T: KeyStore,
+                    > tonic::server::UnaryService<super::ImportXpubRequest>
+                    for ImportXpubSvc<T> {
+                        type Response = super::ImportXpubResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ImportXpubRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as KeyStore>::import_xpub(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = ImportXpubSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/softkms.KeyStore/DerivePublic" => {
+                    #[allow(non_camel_case_types)]
+                    struct DerivePublicSvc<T: KeyStore>(pub Arc<T>);
+                    impl<
+                        T: KeyStore,
+                    > tonic::server::UnaryService<super::DerivePublicRequest>
+                    for DerivePublicSvc<T> {
+                        type Response = super::DerivePublicResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DerivePublicRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as KeyStore>::derive_public(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = DerivePublicSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

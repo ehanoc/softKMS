@@ -76,8 +76,9 @@ rand = "0.8"
 rand_core = "0.6"
 
 # HD Wallet
-# bitcoin = "0.32" # For BIP32
-# slip44 = "0.1"   # For BIP44 coin types
+ed25519-bip32 = { git = "https://github.com/algorandfoundation/xHD-Wallet-API-rs/" }
+bip39 = { version = "2.0", default-features = false, features = ["alloc", "rand"] }
+bech32 = "0.11"
 
 # Storage
 rusqlite = { version = "0.31", features = ["bundled"] }

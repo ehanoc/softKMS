@@ -18,8 +18,8 @@ use softkms::api::softkms::key_store_client::KeyStoreClient;
 use softkms::api::softkms::{
     CreateKeyRequest, DeleteKeyRequest, GetKeyRequest,
     ImportSeedRequest, ListKeysRequest, SignRequest,
-    DeriveP256Request, HealthRequest, InitRequest,
-    VerifyRequest,
+    DeriveP256Request, DeriveEd25519Request, HealthRequest, InitRequest,
+    VerifyRequest, DerivationScheme,
 };
 
 #[derive(Parser)]
@@ -126,6 +126,10 @@ enum Commands {
 
     /// Derive a key from seed (BIP32)
     Derive {
+        /// Algorithm to derive (ed25519, p256)
+        #[arg(short, long, default_value = "ed25519")]
+        algorithm: String,
+        
         /// Seed ID
         #[arg(short, long)]
         seed: String,
@@ -133,6 +137,22 @@ enum Commands {
         /// Derivation path (e.g., m/44'/283'/0'/0/0)
         #[arg(short, long)]
         path: String,
+
+        /// Derivation scheme: peikert (default) or v2
+        #[arg(long, default_value = "peikert")]
+        scheme: String,
+
+        /// Origin for P-256 derivation
+        #[arg(long)]
+        origin: Option<String>,
+
+        /// User handle for P-256 derivation
+        #[arg(long)]
+        user_handle: Option<String>,
+
+        /// Counter for P-256 derivation
+        #[arg(long, default_value = "0")]
+        counter: u32,
 
         /// Label for derived key
         #[arg(short, long)]
@@ -480,11 +500,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         
         Commands::ImportSeed { mnemonic, label } => {
-            let passphrase = prompt_password("Enter passphrase: ")?;
-            if passphrase.is_empty() {
-                eprintln!("Passphrase cannot be empty");
-                std::process::exit(1);
-            }
+            let passphrase = match get_passphrase(cli.passphrase.clone()) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("{}", e);
+                    std::process::exit(1);
+                }
+            };
 
             let request = tonic::Request::new(ImportSeedRequest {
                 mnemonic,
@@ -506,9 +528,108 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         
-        Commands::Derive { seed: _, path: _, label: _ } => {
-            println!("HD wallet key derivation not yet implemented.");
-            std::process::exit(1);
+        Commands::Derive { algorithm, seed, path, scheme, origin, user_handle, counter, label } => {
+            let passphrase = match get_passphrase(cli.passphrase.clone()) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("{}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            // First, try to resolve seed as ID, then as label
+            let seed_id = if seed.len() == 36 && seed.chars().nth(8) == Some('-') && seed.chars().nth(13) == Some('-') && seed.chars().nth(18) == Some('-') && seed.chars().nth(23) == Some('-') {
+                // Looks like a UUID format
+                seed.clone()
+            } else {
+                // Try to resolve as label
+                match lookup_key_by_label(&mut client, &seed).await {
+                    Ok(id) => {
+                        println!("Resolved seed label '{}' to ID: {}", seed, id);
+                        id
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to find seed by label '{}': {}", seed, e);
+                        std::process::exit(1);
+                    }
+                }
+            };
+
+            // Extract coin type from path (m/44'/coin_type'/...)
+            let coin_type: u32 = path.split('/').nth(2)
+                .and_then(|s| s.trim_end_matches('\'').parse().ok())
+                .unwrap_or(283); // Default to Algorand (283) if not found
+
+            match algorithm.as_str() {
+                "ed25519" => {
+                    // Map scheme string to enum
+                    let scheme_enum = match scheme.as_str() {
+                        "v2" => DerivationScheme::V2 as i32,
+                        _ => DerivationScheme::Peikert as i32,
+                    };
+
+                    let request = tonic::Request::new(DeriveEd25519Request {
+                        seed_id,
+                        derivation_path: path,
+                        coin_type,
+                        scheme: scheme_enum,
+                        store_key: true,
+                        label,
+                        passphrase,
+                    });
+                    
+                    match client.derive_ed25519(request).await {
+                        Ok(response) => {
+                            let result = response.into_inner();
+                            println!("Ed25519 key derived successfully:");
+                            println!("  Key ID: {}", result.key_id);
+                            println!("  Algorithm: {}", result.algorithm);
+                            println!("  Public Key (base64): {}", result.public_key);
+                            if !result.address.is_empty() {
+                                println!("  Address: {}", result.address);
+                            }
+                            println!("  Created: {}", result.created_at);
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to derive Ed25519 key: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                "p256" => {
+                    // P256 derivation
+                    let origin = origin.expect("--origin required for p256 derivation");
+                    let user_handle = user_handle.expect("--user-handle required for p256 derivation");
+                    
+                    let request = tonic::Request::new(DeriveP256Request {
+                        seed_id,
+                        origin,
+                        user_handle,
+                        counter,
+                        label,
+                        passphrase,
+                    });
+                    
+                    match client.derive_p256(request).await {
+                        Ok(response) => {
+                            let result = response.into_inner();
+                            println!("P-256 key derived successfully:");
+                            println!("  Key ID: {}", result.key_id);
+                            println!("  Algorithm: {}", result.algorithm);
+                            println!("  Public Key (base64): {}", result.public_key);
+                            println!("  Created: {}", result.created_at);
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to derive P-256 key: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                _ => {
+                    eprintln!("Unknown algorithm: {}. Use 'ed25519' or 'p256'", algorithm);
+                    std::process::exit(1);
+                }
+            }
         }
         
         

@@ -12,6 +12,7 @@
 //! plaintext in memory for the minimum time necessary.
 
 use crate::crypto::ed25519::{Ed25519Engine, ED25519_SECRET_KEY_SIZE};
+use crate::crypto::hd_ed25519::{HdEd25519Engine, HdDerivationScheme, encode_bech32};
 use crate::crypto::p256::DeterministicP256;
 use crate::storage::StorageBackend;
 use crate::security::{SecurityManager, WrappedKey};
@@ -173,19 +174,43 @@ impl KeyService {
 
         let signature = match metadata.algorithm.as_str() {
             "ed25519" => {
-                if key_material.len() != ED25519_SECRET_KEY_SIZE {
-                    return Err(Error::Crypto("Invalid Ed25519 key material".to_string()));
+                // Check if this is an HD-derived key (96 bytes) or regular key (32 bytes)
+                if key_material.len() == 96 {
+                    // HD-derived Ed25519 key - use ed25519-bip32 signing
+                    let xprv = HdEd25519Engine::xprv_from_bytes(&key_material)
+                        .map_err(|e| Error::Crypto(format!("Failed to parse HD Ed25519 key: {}", e)))?;
+                    
+                    // Get the derivation scheme from metadata
+                    let scheme = match metadata.attributes.get("scheme") {
+                        Some(s) if s == "v2" => HdDerivationScheme::V2,
+                        _ => HdDerivationScheme::Peikert,
+                    };
+                    
+                    let engine = HdEd25519Engine::new(scheme);
+                    let sig = engine.sign(&xprv, data);
+                    
+                    Signature {
+                        bytes: sig.to_bytes().to_vec(),
+                        algorithm: "ed25519".to_string(),
+                    }
+                } else if key_material.len() == ED25519_SECRET_KEY_SIZE {
+                    // Regular Ed25519 key (32 bytes)
+                    let mut secret = [0u8; ED25519_SECRET_KEY_SIZE];
+                    secret.copy_from_slice(&key_material);
+
+                    let secret_secret = Secret::new(secret);
+                    let sig = Ed25519Engine::sign(&secret_secret, data)?;
+
+                    let mut temp_clear = secret;
+                    temp_clear.zeroize();
+
+                    sig
+                } else {
+                    return Err(Error::Crypto(format!(
+                        "Invalid Ed25519 key material length: expected 32 or 96, got {}",
+                        key_material.len()
+                    )));
                 }
-                let mut secret = [0u8; ED25519_SECRET_KEY_SIZE];
-                secret.copy_from_slice(&key_material);
-
-                let secret_secret = Secret::new(secret);
-                let sig = Ed25519Engine::sign(&secret_secret, data)?;
-
-                let mut temp_clear = secret;
-                temp_clear.zeroize();
-
-                sig
             }
             "p256" => {
                 // P-256 key is 32 bytes
@@ -391,6 +416,279 @@ impl KeyService {
         );
 
         Ok(metadata)
+    }
+
+    /// Derive an Ed25519 key from a stored seed using BIP32/BIP44
+    ///
+    /// Flow:
+    /// 1. Check if key already exists for this (seed_id, derivation_path)
+    /// 2. If yes: return existing key
+    /// 3. If no: retrieve seed, derive Ed25519 key, wrap and store it
+    pub async fn derive_ed25519_key(
+        &self,
+        seed_id: KeyId,
+        derivation_path: &str,
+        coin_type: u32,
+        scheme: HdDerivationScheme,
+        store: bool,
+        passphrase: &str,
+    ) -> Result<KeyMetadata> {
+        info!(
+            "Deriving Ed25519 key from seed {} with path {}",
+            seed_id, derivation_path
+        );
+
+        // Check if we already have a derived key with these parameters
+        let keys = self.list_keys().await?;
+        let derivation_id = format!("{}:{}", seed_id, derivation_path);
+        
+        for key in &keys {
+            if key.algorithm == "ed25519" && key.key_type == KeyType::Derived {
+                if let Some(existing_label) = &key.label {
+                    if existing_label == &derivation_id {
+                        info!("Ed25519 key already exists for these parameters, returning existing");
+                        return Ok(key.clone());
+                    }
+                }
+            }
+        }
+
+        // Need to derive new key - retrieve the seed
+        let seed_result = self.storage.retrieve_key(seed_id).await?;
+        let (seed_metadata, seed_encrypted) = seed_result
+            .ok_or_else(|| Error::KeyNotFound(format!("Seed {} not found", seed_id)))?;
+
+        // Verify it's actually a seed
+        if seed_metadata.algorithm != "bip32-seed" {
+            return Err(Error::InvalidParams(
+                format!("Key {} is not a seed (algorithm: {})", seed_id, seed_metadata.algorithm)
+            ));
+        }
+
+        // Get master key
+        let master_key = self.security_manager
+            .derive_master_key(passphrase)
+            .map_err(|e| Error::Crypto(format!("Failed to derive master key: {}", e)))?;
+
+        // Unwrap seed
+        let wrapper = self.security_manager.create_wrapper(&master_key);
+        let seed_aad = Self::build_aad(&seed_metadata);
+        
+        let seed_wrapped = WrappedKey::from_bytes(&seed_encrypted)
+            .map_err(|e| Error::Crypto(format!("Invalid wrapped seed: {}", e)))?;
+        
+        let seed_material = wrapper
+            .unwrap(&seed_wrapped, &seed_aad)
+            .map_err(|e| Error::Crypto(format!("Failed to unwrap seed: {}", e)))?;
+
+        // Ensure seed is exactly 64 bytes
+        if seed_material.len() != 64 {
+            return Err(Error::Crypto(format!(
+                "Invalid seed length: expected 64 bytes, got {}",
+                seed_material.len()
+            )));
+        }
+
+        // Derive Ed25519 key using HD wallet
+        let engine = HdEd25519Engine::new(scheme);
+        let derived = engine
+            .derive_path(&seed_material, derivation_path)
+            .map_err(|e| Error::Crypto(format!("Failed to derive Ed25519 key: {}", e)))?;
+
+        // Extract the full extended private key (64 bytes extended secret + 32 bytes chain code = 96 bytes)
+        // This is needed for proper BIP32-Ed25519 signing
+        let ed25519_extended_key: [u8; 96] = HdEd25519Engine::xprv_to_bytes(&derived.xprv);
+
+        // Create new key metadata
+        let key_id = KeyId::new_v4();
+        let created_at = Utc::now();
+
+        let mut attributes = HashMap::new();
+        attributes.insert("seed_id".to_string(), seed_id.to_string());
+        attributes.insert("derivation_path".to_string(), derivation_path.to_string());
+        attributes.insert("scheme".to_string(), if scheme == HdDerivationScheme::Peikert { "peikert".to_string() } else { "v2".to_string() });
+        attributes.insert("coin_type".to_string(), coin_type.to_string());
+        attributes.insert("hrp".to_string(), format!("{}", coin_type)); // Use coin type as default hrp
+        
+        let derivation_label = derivation_id.clone();
+
+        let metadata = KeyMetadata {
+            id: key_id,
+            label: Some(derivation_label),
+            algorithm: "ed25519".to_string(),
+            key_type: KeyType::Derived,
+            created_at,
+            attributes,
+            public_key: derived.public_key.to_vec(),
+        };
+
+        if store {
+            // Wrap Ed25519 extended key (96 bytes)
+            let ed25519_aad = Self::build_aad(&metadata);
+            let ed25519_wrapped = wrapper
+                .wrap(&ed25519_extended_key, &ed25519_aad)
+                .map_err(|e| Error::Crypto(format!("Failed to wrap Ed25519 key: {}", e)))?;
+
+            let ed25519_encrypted = ed25519_wrapped.to_bytes();
+
+            // Store the derived key
+            self.storage.store_key(key_id, &metadata, &ed25519_encrypted).await?;
+
+            info!(
+                "Ed25519 key {} derived and stored with path {}",
+                key_id, derivation_path
+            );
+        } else {
+            info!(
+                "Ed25519 key {} derived (not stored) with path {}",
+                key_id, derivation_path
+            );
+        }
+
+        // Clear sensitive material
+        let mut key_to_clear = ed25519_extended_key;
+        key_to_clear.zeroize();
+        let mut seed_to_clear = seed_material.clone();
+        seed_to_clear.zeroize();
+        drop(master_key);
+
+        Ok(metadata)
+    }
+
+    /// Import an xpub for public-only derivation
+    ///
+    /// This allows deriving child public keys without having the private key
+    pub async fn import_xpub(
+        &self,
+        xpub_bytes: Vec<u8>,
+        coin_type: u32,
+        account: u32,
+        label: Option<String>,
+        passphrase: &str,
+    ) -> Result<KeyMetadata> {
+        info!(
+            "Importing xpub for coin_type={} account={}",
+            coin_type, account
+        );
+
+        // Validate xpub length
+        if xpub_bytes.len() != 64 {
+            return Err(Error::InvalidParams(
+                format!("Invalid xpub length: expected 64 bytes, got {}", xpub_bytes.len())
+            ));
+        }
+
+        // Create new key metadata
+        let key_id = KeyId::new_v4();
+        let created_at = Utc::now();
+
+        let mut attributes = HashMap::new();
+        attributes.insert("coin_type".to_string(), coin_type.to_string());
+        attributes.insert("account".to_string(), account.to_string());
+
+        // Extract public key from xpub (first 32 bytes)
+        let public_key = xpub_bytes[0..32].to_vec();
+
+        let metadata = KeyMetadata {
+            id: key_id,
+            label,
+            algorithm: "ed25519-xpub".to_string(),
+            key_type: KeyType::ExtendedPublic,
+            created_at,
+            attributes,
+            public_key: public_key.clone(),
+        };
+
+        // Get master key
+        let master_key = self.security_manager
+            .derive_master_key(passphrase)
+            .map_err(|e| Error::Crypto(format!("Failed to derive master key: {}", e)))?;
+
+        // Wrap xpub
+        let wrapper = self.security_manager.create_wrapper(&master_key);
+        let aad = Self::build_aad(&metadata);
+        
+        let wrapped = wrapper
+            .wrap(&xpub_bytes, &aad)
+            .map_err(|e| Error::Crypto(format!("Failed to wrap xpub: {}", e)))?;
+
+        let encrypted = wrapped.to_bytes();
+
+        drop(master_key);
+
+        // Store the xpub
+        self.storage.store_key(key_id, &metadata, &encrypted).await?;
+
+        info!(
+            "XPub {} imported for coin_type={} account={}",
+            key_id, coin_type, account
+        );
+
+        Ok(metadata)
+    }
+
+    /// Derive a child public key from a stored xpub
+    pub async fn derive_ed25519_public(
+        &self,
+        xpub_id: KeyId,
+        index: u32,
+        scheme: HdDerivationScheme,
+        hrp: Option<&str>,
+    ) -> Result<(KeyId, String, [u8; 32])> {
+        info!(
+            "Deriving Ed25519 public key from xpub {} at index {}",
+            xpub_id, index
+        );
+
+        // Retrieve the xpub
+        let result = self.storage.retrieve_key(xpub_id).await?;
+        let (xpub_metadata, xpub_encrypted) = result
+            .ok_or_else(|| Error::KeyNotFound(format!("XPub {} not found", xpub_id)))?;
+
+        // Verify it's actually an xpub
+        if xpub_metadata.algorithm != "ed25519-xpub" || xpub_metadata.key_type != KeyType::ExtendedPublic {
+            return Err(Error::InvalidParams(
+                format!("Key {} is not an xpub", xpub_id)
+            ));
+        }
+
+        // Unwrap xpub (no passphrase needed for verification, but xpub is encrypted at rest)
+        // Actually, we need passphrase to unwrap - this is a security feature
+        // For true "watch-only" derivation, we'd need to cache the unwrapped xpub
+        // For now, we'll require passphrase to unwrap
+        let master_key = self.security_manager
+            .get_cached_master_key()
+            .map_err(|_| Error::Crypto("Keystore not initialized. Passphrase required for xpub operations.".to_string()))?;
+
+        let wrapper = self.security_manager.create_wrapper(&master_key);
+        let aad = Self::build_aad(&xpub_metadata);
+        
+        let xpub_wrapped = WrappedKey::from_bytes(&xpub_encrypted)
+            .map_err(|e| Error::Crypto(format!("Invalid wrapped xpub: {}", e)))?;
+        
+        let xpub_material = wrapper
+            .unwrap(&xpub_wrapped, &aad)
+            .map_err(|e| Error::Crypto(format!("Failed to unwrap xpub: {}", e)))?;
+
+        // Create XPub from bytes
+        let xpub = HdEd25519Engine::xpub_from_bytes(&xpub_material)
+            .map_err(|e| Error::Crypto(format!("Invalid xpub: {}", e)))?;
+
+        // Derive child public key
+        let engine = HdEd25519Engine::new(scheme);
+        let derived = engine.derive_public(&xpub, index)
+            .map_err(|e| Error::Crypto(format!("Failed to derive public key: {}", e)))?;
+
+        // Format address with hrp if provided
+        let address = if let Some(h) = hrp {
+            encode_bech32(h, &derived.public_key)
+        } else {
+            hex::encode(&derived.public_key)
+        };
+
+        let key_id = KeyId::new_v4();
+
+        Ok((key_id, address, derived.public_key))
     }
 
     pub async fn delete_key(&self, key_id: KeyId) -> Result<()> {
@@ -638,5 +936,62 @@ mod tests {
         // Verify total keys: 1 seed + 2 derived keys = 3 keys
         let keys = service.list_keys().await.unwrap();
         assert_eq!(keys.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_hd_ed25519_sign_and_verify() {
+        use crate::crypto::ed25519::Ed25519Engine;
+        
+        let passphrase = "test_passphrase_hd_ed25519";
+        let test = create_test_service_with_init(passphrase).await;
+        let service = &test.service;
+
+        // Step 1: Import a 64-byte seed (standard BIP32 seed)
+        let seed = hex::decode("a8ba80028922d9fcfa055c78aede55b5c575bcd8d5a53168edf45f36d9ec8f4694592b4bc892907583e22669ecdf1b0409a9f3bd5549f2dd751b51360909cd05").unwrap();
+        assert_eq!(seed.len(), 64);
+        
+        let seed_metadata = service.import_seed(
+            seed,
+            Some("HD Ed25519 Test Seed".to_string()),
+            passphrase,
+        ).await.unwrap();
+
+        assert_eq!(seed_metadata.algorithm, "bip32-seed");
+        assert_eq!(seed_metadata.key_type, KeyType::Seed);
+
+        // Step 2: Derive an Ed25519 key using BIP44 path
+        let derived_metadata = service.derive_ed25519_key(
+            seed_metadata.id,
+            "m/44'/283'/0'/0/0",
+            283,
+            HdDerivationScheme::Peikert,
+            true, // store the key
+            passphrase,
+        ).await.unwrap();
+
+        assert_eq!(derived_metadata.algorithm, "ed25519");
+        assert_eq!(derived_metadata.key_type, KeyType::Derived);
+        assert!(!derived_metadata.public_key.is_empty(), "Public key should be stored");
+
+        // Step 3: Sign data with the derived key
+        let test_data = b"hello";
+        let signature = service.sign(derived_metadata.id, test_data, passphrase).await.unwrap();
+
+        assert_eq!(signature.algorithm, "ed25519");
+        assert_eq!(signature.bytes.len(), 64);
+
+        // Step 4: Verify the signature using the stored public key
+        let public_key = &derived_metadata.public_key;
+        let valid = Ed25519Engine::verify(public_key, test_data, &signature.bytes).unwrap();
+        assert!(valid, "Signature should be valid");
+
+        // Step 5: Verify that wrong data fails
+        let wrong_data = b"wrong";
+        let wrong_valid = Ed25519Engine::verify(public_key, wrong_data, &signature.bytes).unwrap();
+        assert!(!wrong_valid, "Signature should be invalid for wrong data");
+
+        // Verify we have 2 keys (1 seed + 1 derived)
+        let keys = service.list_keys().await.unwrap();
+        assert_eq!(keys.len(), 2);
     }
 }

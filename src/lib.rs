@@ -98,6 +98,8 @@ pub enum KeyType {
     Derived,
     /// Imported key
     Imported,
+    /// Extended public key (xpub) for watch-only derivation
+    ExtendedPublic,
 }
 
 impl std::fmt::Display for KeyType {
@@ -106,6 +108,7 @@ impl std::fmt::Display for KeyType {
             KeyType::Seed => write!(f, "seed"),
             KeyType::Derived => write!(f, "derived"),
             KeyType::Imported => write!(f, "imported"),
+            KeyType::ExtendedPublic => write!(f, "xpub"),
         }
     }
 }
