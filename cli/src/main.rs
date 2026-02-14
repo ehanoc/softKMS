@@ -19,6 +19,7 @@ use softkms::api::softkms::{
     CreateKeyRequest, DeleteKeyRequest, GetKeyRequest,
     ImportSeedRequest, ListKeysRequest, SignRequest,
     DeriveP256Request, HealthRequest, InitRequest,
+    VerifyRequest,
 };
 
 #[derive(Parser)]
@@ -87,6 +88,29 @@ enum Commands {
         /// Data to sign (raw bytes, will be base64 encoded for transport)
         #[arg(short, long)]
         data: String,
+
+        /// Data encoding: raw (default) or hex
+        #[arg(long, default_value = "raw")]
+        encoding: String,
+    },
+
+    /// Verify a signature
+    Verify {
+        /// Key ID (alternative to --label)
+        #[arg(short, long, group = "verify_key_ref")]
+        key: Option<String>,
+
+        /// Key label (alternative to --key)
+        #[arg(short, long, group = "verify_key_ref")]
+        label: Option<String>,
+
+        /// Data that was signed (raw bytes or base64)
+        #[arg(short, long)]
+        data: String,
+
+        /// Signature to verify (base64 encoded)
+        #[arg(short, long)]
+        signature: String,
     },
 
     /// Import a seed
@@ -146,7 +170,7 @@ enum Commands {
     
     /// Initialize the keystore with a passphrase
     Init {
-        /// Require passphrase confirmation (recommended)
+        /// Require passphrase confirmation
         #[arg(long, default_value = "true")]
         confirm: bool,
     },
@@ -335,7 +359,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         
-        Commands::Sign { key, label, data } => {
+        Commands::Sign { key, label, data, encoding } => {
             // Determine key_id from key or label
             let key_id = if let Some(kid) = key {
                 kid
@@ -407,6 +431,63 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Err(e) => {
                     eprintln!("Failed to sign data: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        Commands::Verify { key, label, data, signature } => {
+            // Determine key_id from key or label
+            let key_id = if let Some(kid) = key {
+                kid
+            } else if let Some(lbl) = label {
+                match lookup_key_by_label(&mut client, &lbl).await {
+                    Ok(id) => id,
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                eprintln!("Either --key or --label must be specified");
+                std::process::exit(1);
+            };
+
+            // Decode data (base64 or raw)
+            let data_bytes = if let Ok(decoded) = BASE64.decode(&data) {
+                decoded
+            } else {
+                data.as_bytes().to_vec()
+            };
+
+            // Decode signature (must be base64)
+            let signature_bytes = match BASE64.decode(&signature) {
+                Ok(decoded) => decoded,
+                Err(e) => {
+                    eprintln!("Failed to decode signature from base64: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            let request = tonic::Request::new(VerifyRequest {
+                key_id: key_id.clone(),
+                data: data_bytes,
+                signature: signature_bytes,
+            });
+
+            match client.verify(request).await {
+                Ok(response) => {
+                    let result: softkms::api::softkms::VerifyResponse = response.into_inner();
+                    if result.valid {
+                        println!("Signature is VALID");
+                        println!("Algorithm: {}", result.algorithm);
+                    } else {
+                        println!("Signature is INVALID");
+                        std::process::exit(1);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to verify signature: {}", e);
                     std::process::exit(1);
                 }
             }
@@ -562,13 +643,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         
         Commands::Init { confirm } => {
-            // Prompt for passphrase
-            let passphrase = rpassword::prompt_password("Enter passphrase: ")?;
-            if passphrase.is_empty() {
-                eprintln!("Passphrase cannot be empty");
-                std::process::exit(1);
-            }
-            
+            // Get passphrase from CLI or prompt interactively
+            let passphrase = match get_passphrase(cli.passphrase.clone()) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("{}", e);
+                    std::process::exit(1);
+                }
+            };
+
             // Confirm passphrase if requested
             if confirm {
                 let confirm_pass = rpassword::prompt_password("Confirm passphrase: ")?;
@@ -577,7 +660,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     std::process::exit(1);
                 }
             }
-            
+
             let request = tonic::Request::new(InitRequest {
                 passphrase,
                 confirm,

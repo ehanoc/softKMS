@@ -123,6 +123,30 @@ pub struct SignResponse {
     #[prost(string, tag = "2")]
     pub algorithm: ::prost::alloc::string::String,
 }
+/// Verify request
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct VerifyRequest {
+    #[prost(string, tag = "1")]
+    pub key_id: ::prost::alloc::string::String,
+    /// raw bytes that were signed
+    #[prost(bytes = "vec", tag = "2")]
+    pub data: ::prost::alloc::vec::Vec<u8>,
+    /// signature to verify
+    #[prost(bytes = "vec", tag = "3")]
+    pub signature: ::prost::alloc::vec::Vec<u8>,
+}
+/// Verify response
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct VerifyResponse {
+    /// true if signature is valid
+    #[prost(bool, tag = "1")]
+    pub valid: bool,
+    /// algorithm used for verification
+    #[prost(string, tag = "2")]
+    pub algorithm: ::prost::alloc::string::String,
+}
 /// Import seed request
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -560,6 +584,26 @@ pub mod key_store_client {
             req.extensions_mut().insert(GrpcMethod::new("softkms.KeyStore", "Sign"));
             self.inner.unary(req, path, codec).await
         }
+        /// Verify a signature
+        pub async fn verify(
+            &mut self,
+            request: impl tonic::IntoRequest<super::VerifyRequest>,
+        ) -> std::result::Result<tonic::Response<super::VerifyResponse>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/softkms.KeyStore/Verify");
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new("softkms.KeyStore", "Verify"));
+            self.inner.unary(req, path, codec).await
+        }
         /// Import a seed for HD wallet
         pub async fn import_seed(
             &mut self,
@@ -732,6 +776,11 @@ pub mod key_store_server {
             &self,
             request: tonic::Request<super::SignRequest>,
         ) -> std::result::Result<tonic::Response<super::SignResponse>, tonic::Status>;
+        /// Verify a signature
+        async fn verify(
+            &self,
+            request: tonic::Request<super::VerifyRequest>,
+        ) -> std::result::Result<tonic::Response<super::VerifyResponse>, tonic::Status>;
         /// Import a seed for HD wallet
         async fn import_seed(
             &self,
@@ -1103,6 +1152,50 @@ pub mod key_store_server {
                     let fut = async move {
                         let inner = inner.0;
                         let method = SignSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/softkms.KeyStore/Verify" => {
+                    #[allow(non_camel_case_types)]
+                    struct VerifySvc<T: KeyStore>(pub Arc<T>);
+                    impl<T: KeyStore> tonic::server::UnaryService<super::VerifyRequest>
+                    for VerifySvc<T> {
+                        type Response = super::VerifyResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::VerifyRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as KeyStore>::verify(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = VerifySvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

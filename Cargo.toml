@@ -38,6 +38,10 @@ path = "tests/integration/daemon_tests.rs"
 name = "smoke_tests"
 path = "tests/e2e/smoke_tests.rs"
 
+[[test]]
+name = "cli_integration_tests"
+path = "tests/cli_integration_tests.rs"
+
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }

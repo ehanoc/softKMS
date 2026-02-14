@@ -22,6 +22,9 @@ service KeyStore {
   // Sign data with a key
   rpc Sign(SignRequest) returns (SignResponse);
 
+  // Verify a signature
+  rpc Verify(VerifyRequest) returns (VerifyResponse);
+
   // Import a seed for HD wallet
   rpc ImportSeed(ImportSeedRequest) returns (ImportSeedResponse);
 
@@ -126,6 +129,19 @@ message SignRequest {
 message SignResponse {
   bytes signature = 1;
   string algorithm = 2;
+}
+
+// Verify request
+message VerifyRequest {
+  string key_id = 1;
+  bytes data = 2;       // raw bytes that were signed
+  bytes signature = 3;  // signature to verify
+}
+
+// Verify response
+message VerifyResponse {
+  bool valid = 1;       // true if signature is valid
+  string algorithm = 2; // algorithm used for verification
 }
 
 // Import seed request

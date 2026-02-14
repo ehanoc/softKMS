@@ -240,6 +240,85 @@ impl KeyStore for GrpcKeyStore {
         Ok(Response::new(response))
     }
 
+    async fn verify(
+        &self,
+        request: Request<VerifyRequest>,
+    ) -> Result<Response<VerifyResponse>, Status> {
+        debug!("Received Verify request");
+        
+        if !self.is_initialized() {
+            return Err(Status::failed_precondition(
+                "Keystore not initialized. Run 'softkms init' first."
+            ));
+        }
+        
+        let req = request.into_inner();
+        let key_id = KeyId::parse_str(&req.key_id)
+            .map_err(|_| Status::invalid_argument("Invalid key ID"))?;
+        
+        // Get key metadata to find the algorithm and public key
+        let metadata = self.key_service
+            .get_key(key_id)
+            .await
+            .map_err(map_error)?
+            .ok_or_else(|| Status::not_found("Key not found"))?;
+        
+        // Get the public key from the key info
+        let public_key = if metadata.public_key.is_empty() {
+            // For stored keys, we need to retrieve and unwrap to get public key
+            let result = self.key_service
+                .storage()
+                .retrieve_key(metadata.id)
+                .await
+                .map_err(map_error)?;
+            
+            let (_, encrypted_data) = result.ok_or_else(|| Status::internal("Failed to retrieve key"))?;
+            
+            // For P-256 keys, we can derive public key from private key
+            if metadata.algorithm == "p256" {
+                // Get a dummy passphrase - verification doesn't need the real key
+                // We'll use the verification path that doesn't require unwrapping
+                // Actually, we need the passphrase to unwrap and verify
+                return Err(Status::unimplemented(
+                    "Verify for stored keys requires passphrase. Use the public key directly."
+                ));
+            } else {
+                return Err(Status::unimplemented(
+                    "Verify not yet implemented for algorithm {}",
+                ));
+            }
+        } else {
+            metadata.public_key.clone()
+        };
+        
+        // Verify based on algorithm
+        let valid = match metadata.algorithm.as_str() {
+            "p256" => {
+                use crate::crypto::p256::DeterministicP256;
+                DeterministicP256::verify(&public_key, &req.data, &req.signature)
+                    .map_err(|e| Status::internal(format!("Verification error: {}", e)))?
+            }
+            "ed25519" => {
+                use crate::crypto::ed25519::Ed25519Engine;
+                Ed25519Engine::verify(&public_key, &req.data, &req.signature)
+                    .map_err(|e| Status::internal(format!("Verification error: {}", e)))?
+            }
+            _ => {
+                return Err(Status::unimplemented(
+                    format!("Verify not implemented for algorithm: {}", metadata.algorithm)
+                ));
+            }
+        };
+        
+        let response = VerifyResponse {
+            valid,
+            algorithm: metadata.algorithm,
+        };
+        
+        debug!("Signature verification for key {}: {}", req.key_id, valid);
+        Ok(Response::new(response))
+    }
+
     async fn import_seed(
         &self,
         request: Request<ImportSeedRequest>,

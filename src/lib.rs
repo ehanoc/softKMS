@@ -85,6 +85,8 @@ pub struct KeyMetadata {
     pub created_at: chrono::DateTime<chrono::Utc>,
     /// Custom attributes
     pub attributes: std::collections::HashMap<String, String>,
+    /// Public key (optional, for verification)
+    pub public_key: Vec<u8>,
 }
 
 /// Key types

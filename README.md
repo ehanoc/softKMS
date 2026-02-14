@@ -237,13 +237,129 @@ cargo test --test integration
 
 ## Usage
 
-### Creating a Key
-```bash
-# Using CLI
-softkms key generate --algorithm ed25519 --label "My Key"
+### CLI Quick Start
 
-# Using gRPC (from your application)
+```bash
+# 1. Start the daemon
+./target/release/softkms-daemon &
+
+# 2. Initialize the keystore (creates master key)
+./target/release/softkms init
+# Enter passphrase (with confirmation by default)
+
+# 3. Generate a key
+./target/release/softkms generate --algorithm p256 --label "MyKey"
+
+# 4. List keys
+./target/release/softkms list
+
+# 5. Sign data
+./target/release/softkms sign --label "MyKey" --data "HelloWorld"
+
+# 6. Verify signature
+./target/release/softkms verify --label "MyKey" --data "HelloWorld" --signature "<base64-signature>"
 ```
+
+### Initialize Keystore
+
+Initialize the keystore with a passphrase:
+
+```bash
+# With passphrase confirmation (default)
+softkms init
+
+# Skip confirmation (for automation)
+softkms init --passphrase "yourpassphrase"
+```
+
+The keystore can only be initialized once. To reinitialize, you must delete the storage directory:
+
+```bash
+rm -rf ~/.softKMS/data/*
+```
+
+### Creating Keys
+
+Generate a new key with the specified algorithm:
+
+```bash
+# Generate P-256 key
+softkms generate --algorithm p256 --label "MyKey"
+
+# Generate Ed25519 key  
+softkms generate --algorithm ed25519 --label "SignKey"
+```
+
+Supported algorithms: `p256`, `ed25519`
+
+### Listing Keys
+
+```bash
+# List all keys
+softkms list
+
+# Output shows:
+# - Key ID (UUID)
+# - Algorithm (p256, ed25519)
+# - Label
+# - Creation timestamp
+```
+
+### Signing Data
+
+Sign data using a key (by label or ID):
+
+```bash
+# Sign by label
+softkms sign --label "MyKey" --data "data to sign"
+
+# Sign by key ID
+softkms sign --key <uuid> --data "data to sign"
+
+# With explicit passphrase
+softkms sign --label "MyKey" --data "data" --passphrase "mypass"
+```
+
+Output:
+```
+Signature (base64): <base64-encoded-signature>
+Algorithm: p256
+```
+
+### Verifying Signatures
+
+Verify a signature against the original data:
+
+```bash
+softkms verify --label "MyKey" --data "data to sign" --signature "<base64-signature>"
+```
+
+Output:
+```
+Signature: VALID
+Algorithm: p256
+```
+
+### Complete Example
+
+```bash
+# Start daemon
+./target/release/softkms-daemon &
+
+# Initialize
+./target/release/softkms init --passphrase "testpass"
+
+# Generate key
+./target/release/softkms generate --algorithm p256 --label "TestKey" --passphrase "testpass"
+
+# Sign
+SIGNATURE=$(./target/release/softkms sign --label "TestKey" --data "HelloWorld" --passphrase "testpass" | grep "Signature" | cut -d' ' -f3)
+
+# Verify
+./target/release/softkms verify --label "TestKey" --data "HelloWorld" --signature "$SIGNATURE"
+```
+
+### Creating a Key
 
 ### PKCS#11 Integration
 ```bash

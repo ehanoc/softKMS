@@ -79,18 +79,20 @@ impl KeyService {
         let key_id = KeyId::new_v4();
         let created_at = Utc::now();
 
-        let metadata = KeyMetadata {
-            id: key_id,
-            label: label.clone(),
-            algorithm: algorithm.clone(),
-            key_type: KeyType::Imported,
-            created_at,
-            attributes: attributes.clone(),
-        };
-
-        let (key_material, _public_key) = match algorithm.as_str() {
+        // Generate key material and public key first
+        let (key_material, public_key_bytes) = match algorithm.as_str() {
             "ed25519" => {
-                let (secret, public_key, _metadata) = Ed25519Engine::generate_key(metadata.clone())?;
+                // Create temporary metadata for key generation
+                let temp_metadata = KeyMetadata {
+                    id: key_id,
+                    label: label.clone(),
+                    algorithm: algorithm.clone(),
+                    key_type: KeyType::Imported,
+                    created_at,
+                    attributes: attributes.clone(),
+                    public_key: Vec::new(),
+                };
+                let (secret, public_key, _metadata) = Ed25519Engine::generate_key(temp_metadata)?;
                 let public_key_bytes = public_key.to_vec();
                 let material = secret.expose_secret().to_vec();
                 (material, public_key_bytes)
@@ -108,6 +110,17 @@ impl KeyService {
             _ => {
                 return Err(Error::Crypto(format!("Unsupported algorithm: {}", algorithm)));
             }
+        };
+
+        // Create metadata with public key
+        let metadata = KeyMetadata {
+            id: key_id,
+            label: label.clone(),
+            algorithm: algorithm.clone(),
+            key_type: KeyType::Imported,
+            created_at,
+            attributes: attributes.clone(),
+            public_key: public_key_bytes.clone(),
         };
 
         debug!("Key generated in memory, now wrapping for storage");
@@ -218,6 +231,7 @@ impl KeyService {
             key_type: KeyType::Seed,
             created_at,
             attributes: HashMap::new(),
+            public_key: Vec::new(),
         };
 
         let master_key = self.security_manager
@@ -350,6 +364,7 @@ impl KeyService {
             key_type: KeyType::Derived,
             created_at,
             attributes,
+            public_key: p256_public_key.clone(),
         };
 
         // Wrap P-256 key

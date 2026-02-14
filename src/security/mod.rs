@@ -434,7 +434,44 @@ impl SecurityManager {
     ///
     /// This is used during keystore initialization. It derives the master key
     /// from the passphrase and stores a verification hash on disk and in memory.
+    ///
+    /// # Security Warning
+    /// Running init on an existing keystore will generate a NEW salt, making all
+    /// existing keys unreadable. This is intentional - use `softkms list` to check
+    /// if keystore is already initialized.
     pub fn init_with_passphrase(&self, passphrase: &str) -> Result<MasterKey> {
+        // Check if keystore already has keys
+        let storage_dir = self
+            .salt_path
+            .parent()
+            .ok_or_else(|| SecurityError::Storage("Invalid storage path".to_string()))?;
+
+        if self.salt_path.exists() {
+            // Keystore is already initialized - warn user
+            tracing::warn!("Keystore already has a salt file. Re-initializing will make existing keys unreadable!");
+
+            // Check if there are any encrypted key files
+            let has_keys: bool = std::fs::read_dir(storage_dir)
+                .map(|entries| {
+                    entries.flatten().any(|entry| {
+                        entry
+                            .path()
+                            .extension()
+                            .map(|ext| ext == "enc")
+                            .unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false);
+
+            if has_keys {
+                return Err(SecurityError::InvalidPassphrase(
+                    "Keystore already contains keys. Re-initializing would make them unreadable. \
+                    If you want to start fresh, delete the storage directory first."
+                        .to_string(),
+                ));
+            }
+        }
+
         // Generate and store salt for this keystore
         let salt = MasterKey::generate_salt();
         std::fs::write(&self.salt_path, &salt)

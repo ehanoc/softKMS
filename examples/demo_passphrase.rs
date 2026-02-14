@@ -47,6 +47,7 @@ async fn main() {
         key_type: KeyType::Imported,
         created_at: chrono::Utc::now(),
         attributes: std::collections::HashMap::new(),
+        public_key: vec![],
     };
     
     // This will prompt: "Enter passphrase: "

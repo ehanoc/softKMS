@@ -130,6 +130,7 @@ mod tests {
             key_type: crate::KeyType::Imported,
             created_at: Utc::now(),
             attributes: HashMap::new(),
+            public_key: Vec::new(),
         }
     }
 

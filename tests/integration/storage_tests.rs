@@ -5,7 +5,6 @@
 use softkms::storage::file::FileStorage;
 use softkms::storage::StorageBackend;
 use softkms::{KeyId, KeyMetadata, KeyType};
-use std::path::PathBuf;
 
 mod common;
 
@@ -48,6 +47,7 @@ async fn test_file_storage_store_and_retrieve() {
         key_type: KeyType::Imported,
         created_at: chrono::Utc::now(),
         attributes: std::collections::HashMap::new(),
+        public_key: vec![],
     };
     let encrypted_data = vec![1, 2, 3, 4, 5]; // Fake encrypted data
     
@@ -106,6 +106,7 @@ async fn test_file_storage_exists() {
         key_type: KeyType::Imported,
         created_at: chrono::Utc::now(),
         attributes: std::collections::HashMap::new(),
+        public_key: vec![],
     };
     storage.store_key(key_id, &metadata, b"test").await.unwrap();
     
@@ -137,6 +138,7 @@ async fn test_file_storage_list_keys() {
             key_type: KeyType::Imported,
             created_at: chrono::Utc::now(),
             attributes: std::collections::HashMap::new(),
+            public_key: vec![],
         };
         storage.store_key(key_id, &metadata, b"test").await.unwrap();
     }
@@ -164,6 +166,7 @@ async fn test_file_storage_delete() {
         key_type: KeyType::Imported,
         created_at: chrono::Utc::now(),
         attributes: std::collections::HashMap::new(),
+        public_key: vec![],
     };
     
     // Store and verify exists
