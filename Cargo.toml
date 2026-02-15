@@ -107,6 +107,7 @@ indicatif = "0.17"
 # FFI for PKCS#11
 libc = "0.2"
 cbindgen = "0.26"
+cryptoki = "0.12"
 
 # Misc
 uuid = { version = "1.7", features = ["v4", "serde"] }

@@ -16,6 +16,7 @@ pub mod daemon;
 pub mod hd_wallet;
 pub mod ipc;
 pub mod key_service;
+pub mod pkcs11;
 pub mod security;
 pub mod storage;
 pub mod webauthn;
