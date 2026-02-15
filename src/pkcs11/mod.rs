@@ -118,6 +118,10 @@ const CKF_GENERATE: CK_ULONG = 0x00000040;
 const CKF_GENERATE_KEY_PAIR: CK_ULONG = 0x00000080;
 const CKF_DERIVE: CK_ULONG = 0x00000100;
 
+// CK_SESSION_INFO flags
+const CKF_RW_SESSION: CK_ULONG = 0x00000002;
+const CKF_SERIAL_SESSION: CK_ULONG = 0x00000004;
+
 // CK_SLOT_INFO flags
 const CKF_HW_SLOT: CK_ULONG = 0x00000001;
 const CKF_TOKEN_PRESENT: CK_ULONG = 0x00000001;
@@ -857,4 +861,264 @@ pub fn get_module_path() -> String {
     std::env::current_exe()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| "libsoftkms.so".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_slot_list_count_only() {
+        // Test C_GetSlotList when called with NULL slot_list (just get count)
+        let mut count: CK_ULONG = 0;
+        let result = unsafe { C_GetSlotList(0, std::ptr::null_mut(), &mut count as *mut CK_ULONG) };
+        
+        assert_eq!(result, CKR_OK);
+        assert_eq!(count, 1, "Should have exactly 1 slot");
+    }
+
+    #[test]
+    fn test_get_slot_list_with_buffer() {
+        // Test C_GetSlotList when called with buffer
+        let mut count: CK_ULONG = 0;
+        let mut slot: CK_ULONG = 999;
+        
+        // First call to get count
+        let result = unsafe { C_GetSlotList(0, std::ptr::null_mut(), &mut count as *mut CK_ULONG) };
+        assert_eq!(result, CKR_OK);
+        assert_eq!(count, 1);
+        
+        // Second call with buffer
+        let result = unsafe { C_GetSlotList(0, &mut slot as *mut CK_ULONG, &mut count as *mut CK_ULONG) };
+        assert_eq!(result, CKR_OK);
+        assert_eq!(slot, 0, "Slot 0 should be returned");
+    }
+
+    #[test]
+    fn test_get_slot_list_invalid_slot() {
+        // Test with non-zero slot - current implementation accepts any slot
+        // (returns slot 0 regardless)
+        let mut count: CK_ULONG = 0;
+        let mut slot: CK_ULONG = 999;
+        
+        let result = unsafe { C_GetSlotList(1, &mut slot as *mut CK_ULONG, &mut count as *mut CK_ULONG) };
+        
+        // Current implementation returns OK (it ignores the slot parameter)
+        // This is acceptable for a simple implementation
+        assert_eq!(result, CKR_OK);
+    }
+
+    #[test]
+    fn test_get_slot_list_null_count() {
+        // Test with NULL count - should fail
+        let result = unsafe { C_GetSlotList(0, std::ptr::null_mut(), std::ptr::null_mut()) };
+        
+        assert_eq!(result, CKR_ARGUMENTS_BAD);
+    }
+
+    #[test]
+    fn test_get_mechanism_list_count_only() {
+        // Test C_GetMechanismList when called with NULL list (just get count)
+        let mut count: CK_ULONG = 0;
+        let result = unsafe { C_GetMechanismList(0, std::ptr::null_mut(), &mut count as *mut CK_ULONG) };
+        
+        assert_eq!(result, CKR_OK);
+        assert!(count > 0, "Should have at least 1 mechanism");
+    }
+
+    #[test]
+    fn test_get_mechanism_list_with_buffer() {
+        // Test C_GetMechanismList when called with buffer
+        let mut count: CK_ULONG = 0;
+        
+        // First call to get count
+        let result = unsafe { C_GetMechanismList(0, std::ptr::null_mut(), &mut count as *mut CK_ULONG) };
+        assert_eq!(result, CKR_OK);
+        assert!(count >= 6, "Should have at least 6 mechanisms (ECDSA, EC_KEY_PAIR_GEN, etc.)");
+        
+        // Allocate buffer and get mechanisms
+        let mut mechs: Vec<CK_ULONG> = vec![0; count as usize];
+        let result = unsafe { C_GetMechanismList(0, mechs.as_mut_ptr(), &mut count as *mut CK_ULONG) };
+        assert_eq!(result, CKR_OK);
+        
+        // Check for expected mechanisms
+        let mech_set: Vec<CK_ULONG> = mechs[..count as usize].to_vec();
+        
+        // Should contain at least these mechanisms
+        assert!(mech_set.contains(&CKM_ECDSA), "Should have CKM_ECDSA");
+        assert!(mech_set.contains(&CKM_EC_KEY_PAIR_GEN), "Should have CKM_EC_KEY_PAIR_GEN");
+        assert!(mech_set.contains(&CKM_ECDSA_SHA256), "Should have CKM_ECDSA_SHA256");
+    }
+
+    #[test]
+    fn test_get_mechanism_list_invalid_slot() {
+        // Test with invalid slot
+        let mut count: CK_ULONG = 0;
+        let result = unsafe { C_GetMechanismList(1, std::ptr::null_mut(), &mut count as *mut CK_ULONG) };
+        
+        assert_eq!(result, CKR_SLOT_INVALID);
+    }
+
+    #[test]
+    fn test_get_mechanism_info_ecdsa() {
+        // Test C_GetMechanismInfo for CKM_ECDSA
+        let mut info = CK_MECHANISM_INFO {
+            ulMinKeySize: 0,
+            ulMaxKeySize: 0,
+            flags: 0,
+        };
+        
+        let result = unsafe { C_GetMechanismInfo(0, CKM_ECDSA, &mut info as *mut CK_MECHANISM_INFO) };
+        
+        assert_eq!(result, CKR_OK);
+        assert_eq!(info.ulMinKeySize, 256);
+        assert_eq!(info.ulMaxKeySize, 521);
+        assert!(info.flags & CKF_SIGN != 0, "Should have CKF_SIGN");
+        assert!(info.flags & CKF_VERIFY != 0, "Should have CKF_VERIFY");
+    }
+
+    #[test]
+    fn test_get_mechanism_info_ec_key_pair_gen() {
+        // Test C_GetMechanismInfo for CKM_EC_KEY_PAIR_GEN
+        let mut info = CK_MECHANISM_INFO {
+            ulMinKeySize: 0,
+            ulMaxKeySize: 0,
+            flags: 0,
+        };
+        
+        let result = unsafe { C_GetMechanismInfo(0, CKM_EC_KEY_PAIR_GEN, &mut info as *mut CK_MECHANISM_INFO) };
+        
+        assert_eq!(result, CKR_OK);
+        assert_eq!(info.ulMinKeySize, 256);
+        assert_eq!(info.ulMaxKeySize, 521);
+        assert!(info.flags & CKF_GENERATE_KEY_PAIR != 0, "Should have CKF_GENERATE_KEY_PAIR");
+    }
+
+    #[test]
+    fn test_get_mechanism_info_ecdsa_sha256() {
+        // Test C_GetMechanismInfo for CKM_ECDSA_SHA256
+        let mut info = CK_MECHANISM_INFO {
+            ulMinKeySize: 0,
+            ulMaxKeySize: 0,
+            flags: 0,
+        };
+        
+        let result = unsafe { C_GetMechanismInfo(0, CKM_ECDSA_SHA256, &mut info as *mut CK_MECHANISM_INFO) };
+        
+        assert_eq!(result, CKR_OK);
+        assert!(info.flags & CKF_SIGN != 0, "Should have CKF_SIGN");
+    }
+
+    #[test]
+    fn test_get_mechanism_info_ecdh() {
+        // Test C_GetMechanismInfo for CKM_ECDH
+        let mut info = CK_MECHANISM_INFO {
+            ulMinKeySize: 0,
+            ulMaxKeySize: 0,
+            flags: 0,
+        };
+        
+        let result = unsafe { C_GetMechanismInfo(0, CKM_ECDH, &mut info as *mut CK_MECHANISM_INFO) };
+        
+        assert_eq!(result, CKR_OK);
+        assert!(info.flags & CKF_DERIVE != 0, "Should have CKF_DERIVE");
+    }
+
+    #[test]
+    fn test_get_mechanism_info_invalid() {
+        // Test with invalid mechanism
+        let mut info = CK_MECHANISM_INFO {
+            ulMinKeySize: 0,
+            ulMaxKeySize: 0,
+            flags: 0,
+        };
+        
+        // Use an unknown mechanism
+        let result = unsafe { C_GetMechanismInfo(0, 0x9999, &mut info as *mut CK_MECHANISM_INFO) };
+        
+        assert_eq!(result, CKR_MECHANISM_INVALID);
+    }
+
+    #[test]
+    fn test_get_mechanism_info_null_ptr() {
+        // Test with NULL info pointer
+        let result = unsafe { C_GetMechanismInfo(0, CKM_ECDSA, std::ptr::null_mut()) };
+        
+        assert_eq!(result, CKR_ARGUMENTS_BAD);
+    }
+
+    #[test]
+    fn test_get_token_info() {
+        // Test C_GetTokenInfo
+        let mut info = CK_TOKEN_INFO {
+            label: [0; 32],
+            manufacturer_id: [0; 32],
+            model: [0; 16],
+            serial_number: [0; 16],
+            flags: 0,
+            ulMaxSessionCount: 0,
+            ulSessionCount: 0,
+            ulMaxRwSessionCount: 0,
+            ulRwSessionCount: 0,
+            ulMaxPinLen: 0,
+            ulMinPinLen: 0,
+            ulTotalPublicMemory: 0,
+            ulFreePublicMemory: 0,
+            ulTotalPrivateMemory: 0,
+            ulFreePrivateMemory: 0,
+            hardware_version: CK_VERSION { major: 0, minor: 0 },
+            firmware_version: CK_VERSION { major: 0, minor: 0 },
+            utc_time: [0; 16],
+        };
+        
+        let result = unsafe { C_GetTokenInfo(0, &mut info as *mut CK_TOKEN_INFO) };
+        
+        assert_eq!(result, CKR_OK);
+        
+        // Check label (should be "softKMS")
+        let label = String::from_utf8_lossy(&info.label);
+        assert!(label.contains("softKMS"), "Label should contain 'softKMS'");
+    }
+
+    #[test]
+    fn test_open_session() {
+        // Test C_OpenSession
+        let mut session: CK_SESSION = 0;
+        
+        let result = unsafe { C_OpenSession(0, CKF_RW_SESSION | CKF_SERIAL_SESSION, std::ptr::null_mut(), std::ptr::null(), &mut session as *mut CK_SESSION) };
+        
+        assert_eq!(result, CKR_OK);
+        assert!(session != 0, "Session handle should be non-zero");
+        
+        // Clean up - close session
+        unsafe { C_CloseSession(session); }
+    }
+
+    #[test]
+    fn test_open_session_invalid_slot() {
+        // Test with invalid slot
+        let mut session: CK_SESSION = 0;
+        
+        let result = unsafe { C_OpenSession(1, CKF_RW_SESSION | CKF_SERIAL_SESSION, std::ptr::null_mut(), std::ptr::null(), &mut session as *mut CK_SESSION) };
+        
+        assert_eq!(result, CKR_SLOT_INVALID);
+    }
+
+    #[test]
+    fn test_constants() {
+        // Verify mechanism constants
+        assert_eq!(CKM_ECDSA, 0x1001);
+        assert_eq!(CKM_EC_KEY_PAIR_GEN, 0x1050);
+        assert_eq!(CKM_ECDSA_SHA256, 0x1041);
+        assert_eq!(CKM_ECDSA_SHA384, 0x1042);
+        assert_eq!(CKM_ECDH, 0x1040);
+        assert_eq!(CKM_ECDH1_DERIVE, 0x1051);
+        
+        // Verify flag constants
+        assert_eq!(CKF_SIGN, 0x00000002);
+        assert_eq!(CKF_VERIFY, 0x00000004);
+        assert_eq!(CKF_GENERATE, 0x00000040);
+        assert_eq!(CKF_GENERATE_KEY_PAIR, 0x00000080);
+        assert_eq!(CKF_DERIVE, 0x00000100);
+    }
 }

@@ -40,8 +40,16 @@ name = "smoke_tests"
 path = "tests/e2e/smoke_tests.rs"
 
 [[test]]
+name = "pkcs11_e2e_tests"
+path = "tests/e2e/pkcs11_e2e_tests.rs"
+
+[[test]]
 name = "cli_integration_tests"
 path = "tests/cli_integration_tests.rs"
+
+[[test]]
+name = "pkcs11_integration_tests"
+path = "tests/integration/pkcs11_tests.rs"
 
 [dependencies]
 # Async runtime
