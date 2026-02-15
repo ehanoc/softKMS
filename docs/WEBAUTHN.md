@@ -1,6 +1,8 @@
 # WebAuthn/FIDO2 Authenticator Support
 
-**Status**: Optional module (not enabled by default)
+**Status**: Skeleton/Stub (Not Functional)
+
+> **⚠️ Important**: The WebAuthn module is currently a skeleton with stub implementations. The CTAP2 protocol, credential management, and native messaging are NOT implemented. This document describes the intended design, not the current implementation.
 
 softKMS can optionally act as a software-based FIDO2 authenticator for WebAuthn/Passkey operations. This enables:
 - Backup and recovery of hardware security keys
@@ -27,37 +29,40 @@ softKMS can optionally act as a software-based FIDO2 authenticator for WebAuthn/
 ## Architecture
 
 ```mermaid
-C4Container
-    title WebAuthn Architecture
+flowchart TB
+    subgraph Browser
+        W[navigator.credentials]
+        E[Extension]
+    end
     
-    System_Boundary(browser, "Browser") {
-        Container(web_api, "navigator.credentials", "Web API", "WebAuthn API")
-        Container(extension, "Browser Extension", "Native Messaging", "Routes to softKMS")
-    }
+    subgraph Daemon
+        P[CTAP2 Protocol]
+        C[Credential Manager]
+        X[Crypto ES256]
+        H[HD Wallet]
+    end
     
-    Container_Boundary(daemon, "softKMS Daemon") {
-        Container_Boundary(ctap2, "CTAP2 Server") {
-            Container(protocol, "Protocol Handler", "CTAP2", "Command processing")
-            Container(cred_mgr, "Credential Manager", "Lifecycle", "Credential operations")
-            Container(crypto, "Crypto", "ES256", "ECDSA P-256")
-            Container(hd_wallet, "HD Wallet", "Derivation", "BIP32 key derivation")
-        }
-    }
+    subgraph Storage
+        S[Encrypted Seed]
+        K[Derived Keys]
+    end
     
-    System_Boundary(storage, "Encrypted Storage") {
-        Container(derived, "Derived Keys", "Individually encrypted")
-        Container(metadata, "Metadata", "Credential info")
-        Container(seed_store, "Seed", "Encrypted, recovery only")
-    }
+    W --> E
+    E --> P
+    P --> C
+    P --> X
+    C --> H
+    H --> S
+    C --> K
     
-    Rel(web_api, extension, "WebAuthn API calls")
-    Rel(extension, protocol, "CTAP2 over Native Messaging")
-    Rel(protocol, cred_mgr, "Manages")
-    Rel(protocol, crypto, "Uses")
-    Rel(cred_mgr, hd_wallet, "Derives from")
-    Rel(hd_wallet, seed_store, "Uses")
-    Rel(cred_mgr, derived, "Stores")
-    Rel(cred_mgr, metadata, "Stores")
+    style W fill:#f5f5f5,stroke:#333
+    style E fill:#e0e0e0,stroke:#333
+    style P fill:#e0e0e0,stroke:#333
+    style C fill:#d0d0d0,stroke:#333
+    style X fill:#d0d0d0,stroke:#333
+    style H fill:#d0d0d0,stroke:#333
+    style S fill:#e0e0e0,stroke:#333
+    style K fill:#e0e0e0,stroke:#333
 ```
 
 ## Design Decisions
@@ -308,31 +313,36 @@ default_resident = false
 
 ### Known Limitations
 
+> **This module is not yet functional.**
+
+- WebAuthn module is a skeleton only
+- CTAP2 protocol not implemented
+- No browser extension available
+- Requires: ES256 crypto engine, credential storage, native messaging
 - Software authenticator (not hardware-protected)
 - No biometric verification (relies on PIN)
 - Self-attestation only (no hardware attestation)
-- Requires browser extension
 - Linux only (for now)
 
 ## API Reference
 
 ### CTAP2 Commands
 
-Implemented CTAP2 commands:
+Planned CTAP2 commands (NOT YET IMPLEMENTED):
 
 | Command | Code | Status | Description |
 |---------|------|--------|-------------|
-| authenticatorMakeCredential | 0x01 | ✅ | Create new credential |
-| authenticatorGetAssertion | 0x02 | ✅ | Authenticate |
-| authenticatorGetInfo | 0x04 | ✅ | Get capabilities |
-| authenticatorClientPIN | 0x06 | ✅ | PIN operations |
-| authenticatorReset | 0x07 | ✅ | Reset authenticator |
-| authenticatorGetNextAssertion | 0x08 | ✅ | Multiple credentials |
-| authenticatorCredentialManagement | 0x0A | ✅ | Credential mgmt |
+| authenticatorMakeCredential | 0x01 | 🚧 | Create new credential |
+| authenticatorGetAssertion | 0x02 | 🚧 | Authenticate |
+| authenticatorGetInfo | 0x04 | 🚧 | Get capabilities |
+| authenticatorClientPIN | 0x06 | 🚧 | PIN operations |
+| authenticatorReset | 0x07 | 🚧 | Reset authenticator |
+| authenticatorGetNextAssertion | 0x08 | 🚧 | Multiple credentials |
+| authenticatorCredentialManagement | 0x0A | 🚧 | Credential mgmt |
 
-### Supported Algorithms
+### Supported Algorithms (Planned)
 
-- ✅ ES256 (ECDSA P-256 + SHA-256) - Required
+- 🚧 ES256 (ECDSA P-256 + SHA-256) - Required
 - 🚧 Ed25519 - Optional, planned
 - 🚧 ES384 - Optional, planned
 

@@ -97,11 +97,10 @@ softkms list | grep seed
 
 ```bash
 # Derive first Algorand address
-# Path: m/44'/283'/0'/0/0
+# Coin type (283) is embedded in the path
 softkms derive --algorithm ed25519 \
   --seed $SEED_ID \
   --path "m/44'/283'/0'/0/0" \
-  --coin-type 283 \
   --label "algo-main-address-0"
 
 # Output:
@@ -130,21 +129,6 @@ softkms derive --algorithm ed25519 \
   --path "m/44'/283'/0'/0/0" \
   --scheme v2 \
   --label "algo-v2"
-```
-
-### Ephemeral derivation (don't store)
-
-```bash
-# Derive without storing - useful for one-time addresses
-softkms derive --algorithm ed25519 \
-  --seed $SEED_ID \
-  --path "m/44'/283'/0'/0/999" \
-  --store false \
-  --label "temp-address"
-
-# Output:
-#   Stored: false (ephemeral)
-# Note: This key won't appear in 'softkms list'
 ```
 
 ### Multiple accounts
@@ -345,9 +329,7 @@ for i in $(seq $START_INDEX $((START_INDEX + COUNT - 1))); do
   softkms derive --algorithm ed25519 \
     --seed $SEED_ID \
     --path "m/44'/$COIN_TYPE'/$ACCOUNT'/0/$i" \
-    --coin-type $COIN_TYPE \
-    --label "algo-recv-$i" \
-    --store true
+    --label "algo-recv-$i"
 done
 
 # Check all derived keys
@@ -373,8 +355,7 @@ echo "================================" >> $OUTPUT_FILE
 for i in $(seq 0 $((COUNT - 1))); do
   RESULT=$(softkms derive --algorithm ed25519 \
     --seed $SEED_ID \
-    --path "m/44'/$COIN_TYPE'/0'/0/$i" \
-    --store false 2>&1)
+    --path "m/44'/$COIN_TYPE'/0'/0/$i" 2>&1)
   
   KEY_ID=$(echo "$RESULT" | grep "Key ID:" | cut -d' ' -f3)
   ADDRESS=$(echo "$RESULT" | grep "Address:" | cut -d' ' -f3)
@@ -465,8 +446,7 @@ for i in {1..3}; do
   RECV_OUTPUT=$(softkms derive --algorithm ed25519 \
     --seed $SEED_ID \
     --path "m/44'/283'/0'/0/$i" \
-    --label "algo-recv-$i" \
-    --store false)  # Don't store for privacy
+    --label "algo-recv-$i")
   RECV_ADDR=$(echo "$RECV_OUTPUT" | grep "Address:" | awk '{print $2}')
   echo "Receiving Address $i: $RECV_ADDR"
 done

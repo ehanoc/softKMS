@@ -7,55 +7,73 @@ softKMS is a modern, modular software key management system designed as a replac
 ## High-Level Architecture
 
 ```mermaid
-C4Container
-    title softKMS High-Level Architecture
+flowchart TB
+    subgraph Client["Clients"]
+        C1[Human<br/>CLI]
+        C2[Agent<br/>AI]
+    end
     
-    Person(client, "Clients", "CLI, gRPC, REST, PKCS#11")
+    subgraph Daemon["softKMS Daemon"]
+        subgraph API["API Layer"]
+            A1[gRPC/REST<br/>Same for all]
+        end
+        
+        subgraph Auth["Auth Layer (Future)"]
+            RBAC[RBAC Engine]
+            EPH[Ephemeral Tokens]
+        end
+        
+        subgraph Core["Core Engine"]
+            E1[Crypto Engines]
+            E2[HD Wallet]
+            E3[Key Service]
+        end
+        
+        subgraph Sec["Security Layer"]
+            S1[Master Key<br/>PBKDF2]
+            S2[Memory Guard<br/>Zeroize]
+        end
+        
+        subgraph Store["Storage"]
+            F1[File Storage]
+            T1[TPM2]
+            V1[Vault]
+        end
+    end
     
-    Container_Boundary(daemon, "softKMS Daemon") {
-        Container_Boundary(api, "API Layer") {
-            Container(grpc, "gRPC Server", "Async", "High-performance API")
-            Container(rest, "REST Server", "HTTP", "JSON API")
-            Container(pkcs11, "PKCS#11 Bridge", "C FFI", "Standard interface")
-        }
-        
-        Container_Boundary(engine, "Core Engine") {
-            Container(crypto, "Crypto Engine", "Pluggable", "Ed25519, ECDSA, RSA")
-            Container(hd, "HD Wallet", "BIP32", "Key derivation")
-            Container(keymgr, "Key Manager", "Lifecycle", "Access control")
-        }
-        
-        Container_Boundary(optional, "Optional Modules") {
-            Container(webauthn, "WebAuthn", "FIDO2", "Authenticator")
-        }
-        
-        Container_Boundary(security, "Security Layer") {
-            Container(master, "Master Key", "PBKDF2", "Key derivation")
-            Container(mem, "Memory Guard", "Zeroize", "Memory protection")
-            Container(audit, "Audit Log", "Events", "Security logging")
-        }
-        
-        Container_Boundary(storage, "Storage Layer") {
-            Container(file, "File Storage", "Encrypted", "Local files")
-            Container(tpm2, "TPM2", "HSM", "Hardware-backed")
-            Container(vault, "HashiCorp Vault", "Cloud", "Cloud KMS")
-        }
-    }
+    C1 --> A1
+    C2 --> A1
     
-    Rel(client, grpc, "Calls")
-    Rel(client, rest, "Calls")
-    Rel(client, pkcs11, "Calls")
-    Rel(grpc, crypto, "Uses")
-    Rel(grpc, hd, "Uses")
-    Rel(grpc, keymgr, "Uses")
-    Rel(crypto, master, "Protected by")
-    Rel(hd, master, "Protected by")
-    Rel(keymgr, master, "Protected by")
-    Rel(crypto, mem, "Uses")
-    Rel(webauthn, crypto, "Uses")
-    Rel(file, tpm2, "Alternative to")
-    Rel(file, vault, "Alternative to")
+    A1 --> RBAC
+    RBAC --> EPH
+    EPH --> E3
+    
+    E3 --> E1
+    E3 --> E2
+    
+    E1 --> S1
+    E2 --> S1
+    E3 --> S1
+    
+    E1 --> S2
+    
+    E3 --> F1
+    
+    style Daemon fill:#f5f5f5,stroke:#333
+    style A1 fill:#e8e8e8,stroke:#333
+    style RBAC fill:#d0d0d0,stroke:#333,stroke-dasharray:5 5
+    style EPH fill:#d0d0d0,stroke:#333,stroke-dasharray:5 5
+    style E3 fill:#d0d0d0,stroke:#333
+    style E1 fill:#d8d8d8,stroke:#333
+    style E2 fill:#d8d8d8,stroke:#333
+    style S1 fill:#c0c0c0,stroke:#333
+    style S2 fill:#d0d0d0,stroke:#333
+    style F1 fill:#e0e0e0,stroke:#333
+    style T1 fill:#e0e0e0,stroke:#333
+    style V1 fill:#e0e0e0,stroke:#333
 ```
+
+> **Future (dashed)**: RBAC + Ephemeral Tokens - Same API for humans and agents, roles determine key access and TTLs
 
 ## Core Modules
 
@@ -305,13 +323,11 @@ flowchart TB
 ### Multi-Process (Future)
 
 ```mermaid
-C4Container
-    title Multi-Process Architecture (Future)
+flowchart LR
+    A[API Process<br/>Untrusted] -->|IPC| S[Secure Process<br/>Trusted]
     
-    Container(api_proc, "API Process", "Rust", "Untrusted - handles client requests")
-    Container(secure_proc, "Secure Process", "Rust", "Trusted - key operations")
-    
-    Rel(api_proc, secure_proc, "IPC", "Secure communication")
+    style A fill:#f5f5f5,stroke:#333
+    style S fill:#e0e0e0,stroke:#333
 ```
 
 **Advantages**:
@@ -342,43 +358,15 @@ C4Container
 
 ```mermaid
 flowchart TB
-    subgraph Untrusted["Untrusted Zone"]
-        U1["Client applications"]
-        U2["Network requests"]
-        U3["PKCS#11 callers"]
-        U4["Browser extensions (optional)"]
-    end
-
-    subgraph Validation["Validation Zone"]
-        V1["Request parsing"]
-        V2["Input validation"]
-        V3["Authentication"]
-    end
-
-    subgraph Trusted["Trusted Zone"]
-        T1["Key operations"]
-        T2["Cryptographic material"]
-        T3["Master key"]
-        T4["Credential signing (optional)"]
-    end
-
-    subgraph Storage["Storage Zone"]
-        S1["Encrypted at rest"]
-        S2["Storage backends"]
-    end
-
-    Untrusted -->|"API calls / Native Messaging"| Validation
-    Validation --> Trusted
-    Trusted --> Storage
-
-    style U1 fill:#e8e8e8,stroke:#555,stroke-width:2px
-    style U2 fill:#e8e8e8,stroke:#555,stroke-width:2px
-    style U3 fill:#e8e8e8,stroke:#555,stroke-width:2px
-    style U4 fill:#e8e8e8,stroke:#555,stroke-width:2px
-    style V1 fill:#d0d0d0,stroke:#444,stroke-width:2px
-    style V2 fill:#d0d0d0,stroke:#444,stroke-width:2px
-    style V3 fill:#d0d0d0,stroke:#444,stroke-width:2px
-    style T1 fill:#c0c0c0,stroke:#333,stroke-width:3px
+    U[Clients] --> V[Validation]
+    V --> T[Trusted Zone<br/>Key Operations]
+    T --> S[Storage<br/>Encrypted]
+    
+    style U fill:#f5f5f5,stroke:#333
+    style V fill:#e0e0e0,stroke:#333
+    style T fill:#d0d0d0,stroke:#333
+    style S fill:#e0e0e0,stroke:#333
+```
     style T2 fill:#c0c0c0,stroke:#333,stroke-width:3px
     style T3 fill:#c0c0c0,stroke:#333,stroke-width:3px
     style T4 fill:#d0d0d0,stroke:#444,stroke-width:2px

@@ -1,9 +1,9 @@
-# Quick Start for Next Instance
+# Quick Start for Developers
 
-## Current State (Snapshot Ready)
+## Current State
 
-**Last Updated**: 2024-02-12  
-**Status**: v0.1 - Project structure complete, builds successfully
+**Last Updated**: 2026-02-15  
+**Status**: v0.2 - Functional with tests
 
 ## How to Get Started
 
@@ -14,115 +14,87 @@ cd ~/workspace/softKMS
 ```
 
 Expected output:
-- ✅ Rust toolchain OK
-- ✅ Docker OK (optional)
-- ✅ Build completes with warnings (9 expected)
-- ✅ Binaries: `softkms-daemon` (1.2M), `softkms` (873K)
+- ✅ Build completes
+- ✅ Tests pass (18 tests)
+- ✅ Binaries: `softkms-daemon`, `softkms`
 
-### 2. Key Files to Understand
+### 2. Key Files
 
-| File | Purpose | Status |
-|------|---------|--------|
-| `README.md` | Project overview | Complete |
-| `STATUS.md` | What's implemented | Complete |
-| `NEXT_STEPS.md` | Priority tasks | Complete |
-| `docs/ARCHITECTURE.md` | Design docs | Complete |
-| `src/lib.rs` | Core types | Complete |
-| `src/storage/file.rs` | Storage impl | Complete |
-| `src/api/` | API layer | Stubs only |
-| `src/crypto/` | Crypto | Trait only |
-| `src/daemon/` | Daemon | Stub |
+| File | Purpose |
+|------|---------|
+| `README.md` | Project overview |
+| `STATUS.md` | What's implemented (source of truth) |
+| `docs/ARCHITECTURE.md` | Design docs |
+| `src/lib.rs` | Core types |
+| `src/key_service.rs` | Key lifecycle |
+| `src/api/grpc.rs` | gRPC implementation |
+| `cli/src/main.rs` | CLI commands |
 
-### 3. What Works
+### 3. Running
 
-- ✅ Project structure
-- ✅ Build system
-- ✅ Core types and errors
-- ✅ Storage trait + FileStorage
-- ✅ Async patterns
-- ✅ CLI structure (stubs)
+```bash
+# Build
+cargo build --release
 
-### 4. What Doesn't (TODOs)
+# Start daemon
+./target/release/softkms-daemon &
 
-- ❌ Actual daemon startup
-- ❌ gRPC protobuf definitions
-- ❌ REST API handlers
-- ❌ Crypto engines (Ed25519, ECDSA)
-- ❌ HD wallet derivation
-- ❌ Key encryption
-- ❌ PKCS#11 FFI
-- ❌ Configuration loading
-- ❌ Tests
+# Initialize (first time)
+./target/release/softkms init
 
-### 5. Next Priority
+# Use CLI
+./target/release/softkms list
+./target/release/softkms generate --algorithm ed25519 --label "test"
+./target/release/softkms sign --label "test" --data "hello"
 
-See `NEXT_STEPS.md` for full list, but quick wins:
+# Run tests
+cargo test
+```
 
-1. **Configuration** (`src/config.rs`) - Load from TOML
-2. **Storage Encryption** - Add AES-GCM wrapper
-3. **Ed25519** - First crypto engine
-4. **Daemon Startup** - Actually start the daemon
+### 4. Architecture
 
-### 6. Key Design Decisions
+```
+src/
+├── api/           # gRPC server
+├── crypto/        # Ed25519, P-256, HD engines
+├── security/      # AES-GCM, PBKDF2, master key
+├── storage/       # File-based encrypted storage
+├── key_service.rs # Key lifecycle (wrap/unwrap)
+└── daemon/        # Daemon startup
+```
 
-- **Language**: Rust (not C)
-- **Async**: Native async traits (Rust 1.75+)
-- **Storage**: Pluggable trait-based
-- **API**: gRPC + REST + PKCS#11
-- **HD Wallets**: First-class BIP32 support
-- **Security**: Master PIN -> PBKDF2 -> AES-GCM
+### 5. Next Steps
 
-### 7. Dependencies
+1. Read STATUS.md for current implementation state
+2. Pick a task from NEXT_STEPS.md or the GitHub issues
+3. Check existing code for patterns
 
-All working in Cargo.toml:
-- tokio, tonic, axum
-- ring, ed25519-dalek
-- rusqlite, secrecy, zeroize
-- clap, tracing, prometheus
+## Documentation
 
-### 8. Related Context
+```
+README.md              → Project overview
+STATUS.md              → Implementation status (authoritative)
+docs/ARCHITECTURE.md   → Architecture design
+docs/SECURITY_MODEL.md → Security design
+docs/cli-hd-ed25519-*.md → CLI guides
+```
 
-- softKMS is designed as a server-side KMS with WebAuthn support
-- See ARCHITECTURE.md for detailed design documentation
-
-### 9. Build Commands
+## Common Commands
 
 ```bash
 # Build
 ./build.sh
 
-# Just check
-cargo check
-
 # Run daemon
-cargo run --bin softkms-daemon
+./target/release/softkms-daemon --foreground
 
-# Run CLI
-cargo run --bin softkms -- --help
+# CLI
+./target/release/softkms --help
+./target/release/softkms init
+./target/release/softkms generate --algorithm ed25519 --label "mykey"
+./target/release/softkms sign --label "mykey" --data "hello"
+
+# Tests
+cargo test
+./test_runner.sh
 ```
-
-### 10. Documentation Structure
-
-```
-README.md              → Project overview
-STATUS.md              → Implementation status
-NEXT_STEPS.md          → Priority tasks
-docs/ARCHITECTURE.md   → Architecture docs
-docs/QUICK_START.md    → This file
-```
-
-## For Next Session
-
-1. Read STATUS.md first (5 min)
-2. Read NEXT_STEPS.md (5 min)
-3. Pick a Priority 1 task
-4. Check existing code for patterns
-5. Implement!
-
-## Questions?
-
-If something doesn't make sense:
-- Check STATUS.md for current state
-- Check ARCHITECTURE.md for design
-- Look at existing code for patterns
-- Related project: wallet-provider-extensions/keystore

@@ -7,45 +7,38 @@ softKMS implements a secure key management system where cryptographic keys are *
 ## System Context
 
 ```mermaid
-C4Context
-  title softKMS System Context - Security Model
-
-  Person(user, "User", "Person or application")
-  
-  System_Boundary(softKMS, "softKMS") {
-    System(cli, "CLI Client", "Command line interface")
-    System(daemon, "softKMS Daemon", "Key management service")
-  }
-  
-  System_Ext(storage, "Encrypted Storage", "~/.softKMS/data/")
-  
-  Rel(user, cli, "Uses", "CLI commands")
-  Rel(cli, daemon, "gRPC API", "Passphrase + operations")
-  Rel(daemon, storage, "Reads/Writes", "AES-256-GCM encrypted")
-
+flowchart LR
+    U[User] -->|Master Key| D[Daemon]
+    A[Agent] -->|Ephemeral Token| D
+    D -->|AES-256-GCM| S[Storage]
+    
+    style U fill:#f5f5f5,stroke:#333
+    style A fill:#f5f5f5,stroke:#333,stroke-dasharray:5 5
+    style D fill:#d0d0d0,stroke:#333
+    style S fill:#e0e0e0,stroke:#333
 ```
+
+> **Future (dashed)**: Agent support - Same API, agents use ephemeral tokens with roles determining key access and TTLs
 
 ## Security Boundaries
 
 ```mermaid
-C4Context
-  title softKMS Security Boundaries
-
-  Person(user, "User")
-  
-  Enterprise_Boundary(untrusted, "Untrusted Zone") {
-    System(cli, "CLI Client")
-  }
-  
-  Enterprise_Boundary(trusted, "Trusted Zone") {
-    System(daemon, "softKMS Daemon")
-    SystemDb(storage, "Encrypted Storage")
-  }
-  
-  Rel(user, cli, "Interacts")
-  Rel(cli, daemon, "gRPC", "TLS (production)")
-  Rel(daemon, storage, "Encrypt/Decrypt")
-
+flowchart LR
+    subgraph Untrusted
+        U[User] --> CLI[CLI Client]
+    end
+    
+    subgraph Trusted
+        D[Daemon] --> S[Encrypted Storage]
+    end
+    
+    CLI -->|gRPC| D
+    D -.->|encrypt/decrypt| S
+    
+    style U fill:#f5f5f5,stroke:#333
+    style CLI fill:#f5f5f5,stroke:#333
+    style D fill:#d0d0d0,stroke:#333
+    style S fill:#e0e0e0,stroke:#333
 ```
 
 ## Core Security Principles
@@ -62,37 +55,15 @@ All keys (including seeds, derived keys, and imported keys) are encrypted before
 
 ```mermaid
 flowchart TB
-    subgraph Rest["At Rest"]
-        R1["Encrypted Key File\nAES-256-GCM"]
-    end
+    R[Encrypted<br/>Storage] --> M[Memory<br/>Unwrapped]
+    M --> O[Use<br/>Sign/Derive]
+    O --> Z[Zeroize<br/>Clear Memory]
+    Z --> R
     
-    subgraph Memory["In Memory"]
-        M1["Wrapped Key"]
-        M2["Master Key"]
-        M3["Plaintext Key"]
-    end
-    
-    subgraph Operation["Operation"]
-        O1["Sign / Derive"]
-    end
-    
-    subgraph Clear["Clear"]
-        C1["Zeroize\nMemory"]
-    end
-    
-    R1 -->|"1. Load"| M1
-    M1 -->|"2. Unwrap\n(with Master Key)"| M2
-    M2 -->|"3. Decrypt"| M3
-    M3 -->|"4. Use"| O1
-    O1 -->|"5. Immediately"| C1
-    C1 -->|"6. Return to"| Rest
-    
-    style R1 fill:#e0e0e0,stroke:#666,stroke-width:2px
-    style M1 fill:#f5f5f5,stroke:#666,stroke-width:2px
-    style M2 fill:#c0c0c0,stroke:#333,stroke-width:3px
-    style M3 fill:#c0c0c0,stroke:#333,stroke-width:3px
-    style O1 fill:#d0d0d0,stroke:#444,stroke-width:3px
-    style C1 fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style R fill:#e0e0e0,stroke:#333
+    style M fill:#d0d0d0,stroke:#333
+    style O fill:#c0c0c0,stroke:#333
+    style Z fill:#d0d0d0,stroke:#333
 ```
 
 **Timeline:**
@@ -105,31 +76,24 @@ flowchart TB
 ### 3. Client-Daemon Isolation
 
 ```mermaid
-C4Container
-  title softKMS Security Architecture
-
-  Person(user, "User")
-  
-  Container_Boundary(cli_boundary, "CLI Process") {
-    Container(cli, "CLI Client", "Rust", "User interface")
-  }
-  
-  Container_Boundary(daemon_boundary, "Daemon Process") {
-    Container(api, "gRPC API", "tonic", "API endpoints")
-    Container(key_service, "Key Service", "Rust", "Business logic")
-    Container(security, "Security Manager", "Rust", "Encryption/decryption")
-    ContainerDb(memory, "Key Cache", "Memory", "Master key (5 min TTL)")
-  }
-  
-  ContainerDb(storage, "Encrypted Files", "File System", "~/.softKMS/data/")
-  
-  Rel(user, cli, "Commands")
-  Rel(cli, api, "gRPC", "Metadata only")
-  Rel(api, key_service, "Operations")
-  Rel(key_service, security, "Wrap/Unwrap")
-  Rel(security, memory, "Cache master key")
-  Rel(key_service, storage, "Store/Retrieve")
-
+flowchart LR
+    U[User] --> CLI[CLI]
+    
+    subgraph Daemon
+        API[gRPC API] --> KS[Key Service]
+        KS --> SM[Security<br/>Manager]
+        SM --> C[Cache]
+    end
+    
+    KS --> S[Storage]
+    
+    style U fill:#f5f5f5,stroke:#333
+    style CLI fill:#e0e0e0,stroke:#333
+    style API fill:#e0e0e0,stroke:#333
+    style KS fill:#d0d0d0,stroke:#333
+    style SM fill:#d0d0d0,stroke:#333
+    style C fill:#c0c0c0,stroke:#333
+    style S fill:#e0e0e0,stroke:#333
 ```
 
 - **Daemon** holds all key material - runs as isolated process
@@ -191,27 +155,21 @@ storage.store_key(id, &metadata, &wrapped.to_bytes()).await?;
 
 ```mermaid
 sequenceDiagram
-    participant S as SecurityManager
     participant K as KeyService
-    participant E as Ed25519Engine
+    participant S as SecurityManager
     participant St as Storage
     
-    Note over K: sign(key_id, data)
+    K->>St: retrieve_key(id)
+    St-->>K: encrypted_key
     
-    K->>St: retrieve_key(key_id)
-    St-->>K: (metadata, encrypted_data)
-    
-    K->>S: derive_master_key(passphrase)
+    K->>S: get_master_key()
     S-->>K: master_key
     
-    K->>S: unwrap(encrypted_data, aad)
-    Note right of S: AES-256-GCM decrypt
-    S-->>K: key_material (plaintext)
+    K->>S: unwrap(key)
+    S-->>K: plaintext
     
-    K->>E: sign(data, key_material)
-    E-->>K: signature
-    
-    Note over K: zeroize(key_material)
+    K->>K: sign(data)
+    K->>K: zeroize(key)
     
     K-->>K: return signature
 ```
@@ -256,34 +214,14 @@ Binary format: `[version:1][salt:32][nonce:12][tag:16][aad_hash:32][ciphertext:N
 
 ```mermaid
 flowchart LR
-    subgraph Input["Input"]
-        P[User Passphrase]
-    end
+    P[Passphrase] -->|PBKDF2| MK[Master Key]
+    MK --> W[Wrap Keys]
+    MK --> U[Unwrap Keys]
     
-    subgraph Derive["Derivation"]
-        PBKDF2["PBKDF2-HMAC-SHA256\n210,000 iterations"]
-        Salt["Random Salt\n32 bytes"]
-    end
-    
-    subgraph Output["Output"]
-        MK["Master Key\n256 bits"]
-    end
-    
-    subgraph Usage["Usage"]
-        Wrap["Wrap Keys\nAES-256-GCM"]
-        Unwrap["Unwrap Keys\nAES-256-GCM"]
-    end
-    
-    P -->|"+"| Salt
-    Salt --> PBKDF2
-    PBKDF2 --> MK
-    MK --> Wrap
-    MK --> Unwrap
-    
-    style P fill:#f5f5f5,stroke:#666,stroke-width:2px
-    style MK fill:#c0c0c0,stroke:#333,stroke-width:3px
-    style Wrap fill:#e8e8e8,stroke:#555,stroke-width:2px
-    style Unwrap fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style P fill:#f5f5f5,stroke:#333
+    style MK fill:#c0c0c0,stroke:#333
+    style W fill:#e0e0e0,stroke:#333
+    style U fill:#e0e0e0,stroke:#333
 ```
 
 ### Additional Authenticated Data (AAD)
@@ -324,38 +262,24 @@ pub struct Ed25519Key {
 
 ```mermaid
 flowchart TB
-    subgraph Generation["Key Generation"]
-        G1[Generate Key] --> G2[Wrap Key]
-        G2 --> G3[Store Encrypted]
-        G2 --> G4[Zeroize Plaintext]
-    end
+    G1[Generate] --> G2[Wrap]
+    G2 --> G3[Store Encrypted]
+    G2 --> G4[Zeroize]
     
-    subgraph Signing["Signing Operation"]
-        S1[Load Encrypted] --> S2[Unwrap]
-        S2 --> S3[Sign Data]
-        S3 --> S4[Zeroize]
-        S4 --> S5[Return Signature]
-    end
+    S1[Load] --> S2[Unwrap]
+    S2 --> S3[Sign]
+    S3 --> S4[Zeroize]
+    S4 --> S5[Return]
     
-    subgraph Memory["Memory State"]
-        M1[Only briefly unwrapped]
-        M2[Always zeroized after use]
-    end
-    
-    G4 --> M2
-    S4 --> M2
-    
-    style G1 fill:#f5f5f5,stroke:#666,stroke-width:2px
-    style G2 fill:#e8e8e8,stroke:#555,stroke-width:2px
-    style G3 fill:#e0e0e0,stroke:#666,stroke-width:2px
-    style G4 fill:#d0d0d0,stroke:#444,stroke-width:3px
-    style S1 fill:#e0e0e0,stroke:#666,stroke-width:2px
-    style S2 fill:#e8e8e8,stroke:#555,stroke-width:2px
-    style S3 fill:#d0d0d0,stroke:#444,stroke-width:3px
-    style S4 fill:#c0c0c0,stroke:#333,stroke-width:3px
-    style S5 fill:#f5f5f5,stroke:#666,stroke-width:2px
-    style M1 fill:#e8e8e8,stroke:#555,stroke-width:2px
-    style M2 fill:#c0c0c0,stroke:#333,stroke-width:3px
+    style G1 fill:#f5f5f5,stroke:#333
+    style G2 fill:#e0e0e0,stroke:#333
+    style G3 fill:#e0e0e0,stroke:#333
+    style G4 fill:#d0d0d0,stroke:#333
+    style S1 fill:#e0e0e0,stroke:#333
+    style S2 fill:#e0e0e0,stroke:#333
+    style S3 fill:#d0d0d0,stroke:#333
+    style S4 fill:#d0d0d0,stroke:#333
+    style S5 fill:#f5f5f5,stroke:#333
 ```
 
 ### Memory Locking (Optional)
@@ -379,28 +303,28 @@ This prevents sensitive key material from being swapped to disk.
 
 ```mermaid
 flowchart TB
-    subgraph Trusted["Trusted"]
-        T1[softKMS Daemon]
-        T2[User Passphrase]
-        T3[Rust Memory Safety]
+    T[Trusted] --> U[Untrusted]
+    
+    subgraph T
+        T1[Daemon]
+        T2[Passphrase]
+        T3[Rust Safety]
     end
     
-    subgraph Untrusted["Untrusted"]
+    subgraph U
         U1[CLI Client]
-        U2[Storage Medium]
+        U2[Storage]
         U3[Network]
-        U4[Other Processes]
     end
     
-    T1 -->|"Protects against"| Untrusted
+    T --> U
     
-    style T1 fill:#c0c0c0,stroke:#333,stroke-width:3px
-    style T2 fill:#c0c0c0,stroke:#333,stroke-width:3px
-    style T3 fill:#d0d0d0,stroke:#444,stroke-width:2px
-    style U1 fill:#e8e8e8,stroke:#555,stroke-width:2px
-    style U2 fill:#e8e8e8,stroke:#555,stroke-width:2px
-    style U3 fill:#e8e8e8,stroke:#555,stroke-width:2px
-    style U4 fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style T1 fill:#d0d0d0,stroke:#333
+    style T2 fill:#d0d0d0,stroke:#333
+    style T3 fill:#e0e0e0,stroke:#333
+    style U1 fill:#f5f5f5,stroke:#333
+    style U2 fill:#f5f5f5,stroke:#333
+    style U3 fill:#f5f5f5,stroke:#333
 ```
 
 - The softKMS daemon process
@@ -426,33 +350,19 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    subgraph Attacks["Potential Attacks"]
-        A1[Memory Dump]
-        A2[Weak Passphrase]
-        A3[Side Channel]
-        A4[Root Access]
-    end
+    A1[Memory Dump] -->|Zeroize| M1[Mitigation]
+    A2[Weak Passphrase] -->|PBKDF2| M2[Mitigation]
+    A3[Side Channel] -->|Rust Safety| M3[Mitigation]
+    A4[Root Access] -->|mlock| M4[Mitigation]
     
-    subgraph Mitigations["Mitigations"]
-        M1[Zeroization\nMemory Locking]
-        M2[PBKDF2\n210k rounds]
-        M3[Rust Safety\nConstant Time]
-        M4[mlock\nPermissions]
-    end
-    
-    A1 -->|"Limited by"| M1
-    A2 -->|"Slowed by"| M2
-    A3 -->|"Protected by"| M3
-    A4 -->|"Hardened by"| M4
-    
-    style A1 fill:#e8e8e8,stroke:#555,stroke-width:2px
-    style A2 fill:#e8e8e8,stroke:#555,stroke-width:2px
-    style A3 fill:#e8e8e8,stroke:#555,stroke-width:2px
-    style A4 fill:#e8e8e8,stroke:#555,stroke-width:2px
-    style M1 fill:#c0c0c0,stroke:#333,stroke-width:3px
-    style M2 fill:#d0d0d0,stroke:#444,stroke-width:3px
-    style M3 fill:#d0d0d0,stroke:#444,stroke-width:3px
-    style M4 fill:#d0d0d0,stroke:#444,stroke-width:3px
+    style A1 fill:#f5f5f5,stroke:#333
+    style A2 fill:#f5f5f5,stroke:#333
+    style A3 fill:#f5f5f5,stroke:#333
+    style A4 fill:#f5f5f5,stroke:#333
+    style M1 fill:#d0d0d0,stroke:#333
+    style M2 fill:#d0d0d0,stroke:#333
+    style M3 fill:#d0d0d0,stroke:#333
+    style M4 fill:#d0d0d0,stroke:#333
 ```
 
 1. **Memory dumps**: If an attacker can read daemon memory while keys are unwrapped, keys are exposed

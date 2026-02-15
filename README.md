@@ -7,6 +7,7 @@ A modern, modular, and secure alternative to SoftHSM designed for Linux systems 
 - **HD Wallet Infrastructure**: BIP32/BIP44 key derivation for cryptocurrency operations
 - **Development & Testing**: Software HSM for development environments
 - **Passkey Backup**: WebAuthn/FIDO2 authenticator with seed-based recovery
+- **Non Human Identities**: Key management for IoT devices, microservices with ephemeral keys or credentials.
 
 ## Overview
 
@@ -37,48 +38,37 @@ softKMS is a software-based Key Management System (KMS) that provides:
 
 ```mermaid
 flowchart TB
-    subgraph "Client Zone"
-        CLI["CLI Client"]
-        APP["Applications"]
-        WEB["Web Services"]
+    subgraph "Gateway Layer"
+        GRPC[gRPC:50051]
+        REST[REST:8080]
+        PKCS[PKCS#11]
     end
 
-    subgraph "Gateway Layer"
-        direction LR
-        GRPC["gRPC:50051"]
-        REST["REST:8080"]
-        PKCS["PKCS#11"]
+    subgraph "Auth Layer (Future)"
+        RBAC[RBAC Engine]
+        EPH[Ephemeral Tokens]
     end
 
     subgraph "Security Core"
-        direction TB
-        
-        subgraph "Key Services"
-            KEY["Key Service"]
-            CRYPTO["Crypto Engines"]
-            HD["HD Wallet"]
-        end
-        
-        subgraph "Protection Layer"
-            SEC["Security Manager"]
-            MEM["Memory Guard"]
-        end
+        KEY[Key Service]
+        CRYPTO[Crypto Engines]
+        HD[HD Wallet]
+        SEC[Security Manager]
+        MEM[Memory Guard]
     end
 
     subgraph "Storage Layer"
-        direction LR
-        FILE["Encrypted Files"]
-        TPM["TPM2 Hardware"]
-        VAULT["HashiCorp Vault"]
+        FILE[Encrypted Files]
+        TPM[TPM2 Hardware]
+        VAULT[HashiCorp Vault]
     end
-
-    CLI --> GRPC
-    APP --> REST
-    WEB --> PKCS
+   
+    GRPC --> RBAC
+    REST --> RBAC
+    PKCS --> RBAC
     
-    GRPC --> KEY
-    REST --> KEY
-    PKCS --> KEY
+    RBAC --> EPH
+    EPH --> KEY
     
     KEY --> CRYPTO
     KEY --> HD
@@ -91,25 +81,26 @@ flowchart TB
     KEY --> TPM
     KEY --> VAULT
     
-    style CLI fill:#f5f5f5,stroke:#666,stroke-width:2px
-    style APP fill:#f5f5f5,stroke:#666,stroke-width:2px
-    style WEB fill:#f5f5f5,stroke:#666,stroke-width:2px
-    style GRPC fill:#e8e8e8,stroke:#555,stroke-width:2px
-    style REST fill:#e8e8e8,stroke:#555,stroke-width:2px
-    style PKCS fill:#e8e8e8,stroke:#555,stroke-width:2px
-    style KEY fill:#d0d0d0,stroke:#444,stroke-width:3px
-    style CRYPTO fill:#d8d8d8,stroke:#555,stroke-width:2px
-    style HD fill:#d8d8d8,stroke:#555,stroke-width:2px
-    style SEC fill:#c0c0c0,stroke:#333,stroke-width:3px
-    style MEM fill:#d0d0d0,stroke:#555,stroke-width:2px
-    style FILE fill:#e0e0e0,stroke:#666,stroke-width:2px
-    style TPM fill:#e0e0e0,stroke:#666,stroke-width:2px
-    style VAULT fill:#e0e0e0,stroke:#666,stroke-width:2px
+    style GRPC fill:#e8e8e8,stroke:#333
+    style REST fill:#e8e8e8,stroke:#333
+    style PKCS fill:#e8e8e8,stroke:#333
+    style RBAC fill:#d0d0d0,stroke:#333,stroke-dasharray:5 5
+    style EPH fill:#d0d0d0,stroke:#333,stroke-dasharray:5 5
+    style KEY fill:#d0d0d0,stroke:#333
+    style CRYPTO fill:#d8d8d8,stroke:#333
+    style HD fill:#d8d8d8,stroke:#333
+    style SEC fill:#c0c0c0,stroke:#333
+    style MEM fill:#d0d0d0,stroke:#333
+    style FILE fill:#e0e0e0,stroke:#333
+    style TPM fill:#e0e0e0,stroke:#333
+    style VAULT fill:#e0e0e0,stroke:#333
 ```
 
+> **Future (dashed)**: RBAC + Ephemeral Tokens - Same API for humans and agents, roles determine key access
+
 **Architecture Overview:**
-1. **Client Zone** - Users and applications connect via CLI, HTTP, or PKCS#11
-2. **Gateway Layer** - Three API entry points handle incoming requests
+1. **Client Zone** - Users, applications, and agents connect via CLI, HTTP, gRPC, or PKCS#11
+2. **Gateway Layer** - API entry points handle incoming requests
 3. **Security Core** - Central services for key operations and protection
 4. **Storage Layer** - Encrypted data persisted to files, TPM, or cloud vaults
 
@@ -143,25 +134,33 @@ ENTRYPOINT ["/bin/softkms-daemon"]
 
 ## Features
 
-### Current (v0.1)
-- [x] Basic daemon architecture
-- [x] gRPC API
-- [x] PKCS#11 compatibility layer
-- [x] Ed25519 and ECDSA signing
-- [x] Encrypted file storage
+### Current (v0.2)
+- [x] Daemon architecture with startup/shutdown
+- [x] gRPC API (full implementation)
+- [x] CLI with all commands (generate, sign, verify, derive, init, etc.)
+- [x] Ed25519 and P-256 cryptographic engines
+- [x] HD wallet derivation (BIP32/44 with Peikert scheme)
+- [x] Encrypted file storage (AES-256-GCM)
+- [x] Security layer with master key derivation (PBKDF2)
 - [x] Docker support
+- [x] Deterministic key derivation for WebAuthn/Passkey support
 
-### Roadmap
-- [ ] HD Wallet support (BIP32/44)
+### Planned
 - [ ] REST API
+- [ ] PKCS#11 FFI layer
 - [ ] TPM2 integration
 - [ ] HashiCorp Vault backend
-- [ ] Git/GPG integration
-- [ ] Lattice-based crypto (post-quantum)
-- [ ] SoftHSM database migration
 - [ ] Prometheus metrics
-- [ ] Web UI
-- [ ] WebAuthn/FIDO2 authenticator (optional module)
+- [ ] WebAuthn/FIDO2 authenticator (CTAP2 protocol)
+- [ ] Lattice-based crypto (post-quantum)
+
+### Future: Agent Support
+- [ ] Same API for humans and agents (no separate Agent API)
+- [ ] RBAC engine with roles (admin, signer, viewer, etc.)
+- [ ] Ephemeral tokens for agents (TTL-based, auto-expiring)
+- [ ] Role determines: which keys, which operations, max validity
+- [ ] Key policies (allowed operations, timeouts)
+- [ ] Audit trails for agent key usage
 
 ## Installation
 
@@ -359,8 +358,6 @@ SIGNATURE=$(./target/release/softkms sign --label "TestKey" --data "HelloWorld" 
 ./target/release/softkms verify --label "TestKey" --data "HelloWorld" --signature "$SIGNATURE"
 ```
 
-### Creating a Key
-
 ### PKCS#11 Integration
 ```bash
 # Set environment variable
@@ -442,54 +439,6 @@ curl -X POST http://localhost:8080/v1/keys/{key-id}/sign \
   -d '{"data": "base64-encoded-data"}'
 ```
 
-## Quick Start
-
-### Running the Daemon
-
-```bash
-# Build first
-cargo build --release
-
-# Start the daemon (runs in background)
-./scripts/softkms-start.sh
-
-# Check if it's running
-./scripts/softkms-status.sh
-
-# Test the API
-curl http://127.0.0.1:8080/health
-
-# View logs
-./scripts/softkms-logs.sh -f
-
-# Stop the daemon
-./scripts/softkms-stop.sh
-```
-
-**Data and logs are stored in `~/.softKMS/`:**
-- Config: `~/.softKMS/config.toml`
-- Keys: `~/.softKMS/data/`
-- Logs: `~/.softKMS/logs/daemon.log`
-
-### Running Tests
-
-```bash
-# Run all tests
-cargo test
-
-# Run with output
-cargo test -- --nocapture
-
-# Run specific test
-cargo test test_daemon_creation
-
-# Run integration tests only
-cargo test --test integration
-
-# Use the test runner script
-./test_runner.sh
-```
-
 ## Development
 
 ### Building from Source
@@ -512,13 +461,16 @@ docker build -t softkms .
 ```
 softKMS/
 ├── src/                  # Core daemon (Rust)
-│   ├── api/             # gRPC and REST APIs
-│   ├── crypto/          # Cryptographic engines
-│   ├── hd_wallet/       # HD wallet derivation
+│   ├── api/             # gRPC server and protobuf
+│   ├── crypto/          # Cryptographic engines (Ed25519, P-256, HD)
+│   ├── hd_wallet/       # HD wallet derivation (BIP32/44)
+│   ├── security/        # Security layer (encryption, master key)
 │   ├── storage/         # Storage backends
-│   ├── webauthn/        # Optional: FIDO2/WebAuthn module
-│   └── ...
+│   ├── key_service.rs   # Key lifecycle management
+│   ├── daemon/          # Daemon startup/shutdown
+│   └── webauthn/        # Optional: FIDO2/WebAuthn module (stub)
 ├── cli/                  # Command-line tool
+├── proto/                # Protocol Buffer definitions
 ├── docs/                 # Documentation
 ├── docker/               # Docker configurations
 └── pkg/                  # Packaging (deb, rpm)

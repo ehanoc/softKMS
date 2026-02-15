@@ -7,82 +7,64 @@ The CLI **NEVER** accesses keys directly. All key operations go through the daem
 ## System Context Diagram
 
 ```mermaid
-C4Context
-  title softKMS System Context
-
-  Person(user, "User", "Application or end user")
-  
-  System_Boundary(softKMS, "softKMS") {
-    System(cli, "CLI Client", "Command line interface")
-    System(daemon, "softKMS Daemon", "Key management service")
-  }
-  
-  System_Ext(storage, "Encrypted Storage", "~/.softKMS/data/")
-  
-  Rel(user, cli, "Uses", "CLI commands")
-  Rel(cli, daemon, "gRPC API calls", "Passphrase + operations")
-  Rel(daemon, storage, "Reads/Writes", "AES-256-GCM encrypted")
+flowchart LR
+    U[User] -->|Master Key| D[Daemon]
+    A[Agent] -->|Ephemeral Token| D
+    D -->|AES-256-GCM| S[Storage]
+    
+    style U fill:#f5f5f5,stroke:#333
+    style A fill:#f5f5f5,stroke:#333,stroke-dasharray:5 5
+    style D fill:#d0d0d0,stroke:#333
+    style S fill:#e0e0e0,stroke:#333
 ```
+
+> **Future (dashed)**: Agent support - Same API, agents use ephemeral tokens with RBAC roles
 
 ## Container Diagram
 
 ```mermaid
-C4Container
-  title softKMS Container Architecture
-
-  Person(user, "User")
-  
-  Container_Boundary(cli_app, "CLI Application") {
-    Container(cli_main, "CLI Main", "Rust", "Command parsing and user interaction")
-    Container(cli_client, "gRPC Client", "tonic", "API communication")
-    Container(passphrase_prompt, "Passphrase Prompt", "rpassword", "Secure user input")
-  }
-  
-  Container_Boundary(daemon_app, "Daemon Application") {
-    Container(grpc_server, "gRPC Server", "tonic", "API endpoints")
-    Container(key_service, "Key Service", "Rust", "Business logic")
-    Container(security_mgr, "Security Manager", "Rust", "Master key + encryption")
-    Container(storage_adapter, "Storage Adapter", "Rust", "File I/O operations")
-  }
-  
-  ContainerDb(encrypted_files, "Encrypted Key Files", "File System", "~/.softKMS/data/*.enc")
-  ContainerDb(metadata_files, "Metadata Files", "JSON", "~/.softKMS/data/*.json")
-  
-  Rel(user, passphrase_prompt, "Enters passphrase")
-  Rel(passphrase_prompt, cli_main, "Passphrase (secure)")
-  Rel(cli_main, cli_client, "Commands")
-  Rel(cli_client, grpc_server, "gRPC", "Port 50051")
-  Rel(grpc_server, key_service, "Operations")
-  Rel(key_service, security_mgr, "Encrypt/Decrypt")
-  Rel(key_service, storage_adapter, "Store/Retrieve")
-  Rel(storage_adapter, encrypted_files, "Write encrypted keys")
-  Rel(storage_adapter, metadata_files, "Write metadata")
+flowchart TB
+    subgraph CLI[CLI Application]
+        P[Passphrase] --> C[CLI Main]
+        C --> G[gRPC Client]
+    end
+    
+    subgraph Daemon[Daemon]
+        G2[gRPC Server] --> KS[Key Service]
+        KS --> SM[Security Manager]
+        KS --> ST[Storage]
+    end
+    
+    G -->|gRPC| G2
+    
+    style U fill:#f5f5f5,stroke:#333
+    style P fill:#f5f5f5,stroke:#333
+    style C fill:#e0e0e0,stroke:#333
+    style G fill:#e0e0e0,stroke:#333
+    style G2 fill:#e0e0e0,stroke:#333
+    style KS fill:#d0d0d0,stroke:#333
+    style SM fill:#d0d0d0,stroke:#333
+    style ST fill:#e0e0e0,stroke:#333
 ```
 
 ## Component Diagram
 
 ```mermaid
-C4Component
-  title softKMS Key Service Components
-
-  Container(cli_client, "gRPC Client")
-  Container(grpc_server, "gRPC Server")
-  
-  Component(key_service, "KeyService", "Rust Struct", "Key lifecycle management")
-  Component(ed25519_engine, "Ed25519Engine", "Crypto", "Ed25519 operations")
-  Component(key_wrapper, "KeyWrapper", "Security", "AES-256-GCM wrap/unwrap")
-  Component(master_key, "MasterKey", "Security", "PBKDF2-derived key")
-  Component(passphrase_cache, "PassphraseCache", "Security", "5-minute TTL cache")
-  
-  ContainerDb(file_storage, "FileStorage", "Storage", "Encrypted key files")
-  
-  Rel(cli_client, grpc_server, "Create key, Sign data, etc.")
-  Rel(grpc_server, key_service, "Call methods")
-  Rel(key_service, ed25519_engine, "Generate keys, Sign")
-  Rel(key_service, key_wrapper, "Wrap/Unwrap keys")
-  Rel(key_wrapper, master_key, "Use for encryption")
-  Rel(master_key, passphrase_cache, "Derive from passphrase")
-  Rel(key_service, file_storage, "Store/Load encrypted")
+flowchart LR
+    C[gRPC Client] --> G[gRPC Server]
+    G --> KS[Key Service]
+    KS --> E[Ed25519 Engine]
+    KS --> W[Key Wrapper]
+    W --> MK[Master Key]
+    KS --> S[Storage]
+    
+    style C fill:#e0e0e0,stroke:#333
+    style G fill:#e0e0e0,stroke:#333
+    style KS fill:#d0d0d0,stroke:#333
+    style E fill:#d0d0d0,stroke:#333
+    style W fill:#d0d0d0,stroke:#333
+    style MK fill:#c0c0c0,stroke:#333
+    style S fill:#e0e0e0,stroke:#333
 ```
 
 ## CLI Responsibilities
@@ -105,33 +87,21 @@ C4Component
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant CLI as CLI Client
+    participant CLI as CLI
     participant D as Daemon
     participant SM as SecurityManager
     participant S as Storage
 
-    U->>CLI: softkms generate --algorithm ed25519 --label "My Key"
-    CLI->>U: Enter passphrase: ***
+    U->>CLI: generate key
     CLI->>D: gRPC CreateKeyRequest
-    Note over CLI,D: {algorithm, label, passphrase}
-    
-    D->>SM: derive_master_key(passphrase)
-    SM->>SM: PBKDF2(passphrase, salt, 210k)
-    SM->>SM: Cache master_key (5 min TTL)
+    D->>SM: derive_master_key()
     SM-->>D: master_key
-    
-    D->>D: Generate Ed25519 key pair
-    D->>SM: wrap(key_material, aad)
-    SM->>SM: AES-256-GCM encrypt
-    SM-->>D: WrappedKey
-    
-    D->>S: store_key(metadata, encrypted_data)
-    S->>S: Write to ~/.softKMS/data/
+    D->>SM: wrap(key)
+    SM-->>D: wrapped
+    D->>S: store_key()
     S-->>D: OK
-    
-    D-->>CLI: CreateKeyResponse
-    Note over D,CLI: {id, algorithm, label, created_at}
-    CLI->>U: Display key info
+    D-->>CLI: response
+    CLI->>U: key info
 ```
 
 ## Dynamic View: Sign Data
@@ -139,64 +109,41 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant CLI as CLI Client
+    participant CLI as CLI
     participant D as Daemon
     participant SM as SecurityManager
     participant S as Storage
 
-    U->>CLI: softkms sign --key <uuid> --data "Hello"
-    CLI->>U: Enter passphrase: ***
+    U->>CLI: sign data
     CLI->>D: gRPC SignRequest
-    Note over CLI,D: {key_id, data, passphrase}
-    
-    D->>S: retrieve_key(key_id)
-    S-->>D: (metadata, encrypted_data)
-    
-    D->>SM: derive_master_key(passphrase)
-    SM->>SM: Get from cache or derive
-    SM-->>D: master_key
-    
-    D->>SM: unwrap(encrypted_data, aad)
-    SM->>SM: AES-256-GCM decrypt
-    SM-->>D: key_material (plaintext)
-    
-    D->>D: Ed25519.sign(data, key_material)
-    D->>D: zeroize(key_material)
-    
-    D-->>CLI: SignResponse
-    Note over D,CLI: {signature, algorithm}
-    CLI->>U: Display signature
+    D->>S: retrieve_key()
+    S-->>D: encrypted_key
+    D->>SM: unwrap(key)
+    SM-->>D: plaintext
+    D->>D: sign()
+    D->>D: zeroize()
+    D-->>CLI: signature
+    CLI->>U: signature
 ```
 
 ## Key Security Lifecycle
 
 ```mermaid
 flowchart TB
-    subgraph Generate["1. Generate"]
-        G1[Generate Ed25519 key pair]
-        G2[Derive master key from passphrase]
-        G3[Wrap key with AES-256-GCM]
-        G4[Store encrypted key]
-        G5[Clear plaintext from memory]
-    end
+    G1[Generate] --> G2[Derive Master] --> G3[Wrap] --> G4[Store] --> G5[Zeroize]
+    G4 --> R[At Rest]
+    R --> U1[Retrieve] --> U2[Unwrap] --> U3[Sign] --> U4[Zeroize]
     
-    subgraph Rest["2. At Rest"]
-        R1[Encrypted key file]
-        R2[Metadata JSON]
-    end
-    
-    subgraph Use["3. Use"]
-        U1[Retrieve encrypted key]
-        U2[Unwrap with master key]
-        U3[Sign data]
-        U4[Clear key from memory]
-    end
-    
-    G1 --> G2 --> G3 --> G4 --> G5 --> R1
-    R1 --> U1 --> U2 --> U3 --> U4
-
-    style G1 fill:#f5f5f5,stroke:#666,stroke-width:2px
-    style G2 fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style G1 fill:#f5f5f5,stroke:#333
+    style G2 fill:#e0e0e0,stroke:#333
+    style G3 fill:#e0e0e0,stroke:#333
+    style G4 fill:#e0e0e0,stroke:#333
+    style G5 fill:#d0d0d0,stroke:#333
+    style R fill:#e0e0e0,stroke:#333
+    style U1 fill:#e0e0e0,stroke:#333
+    style U2 fill:#e0e0e0,stroke:#333
+    style U3 fill:#d0d0d0,stroke:#333
+    style U4 fill:#d0d0d0,stroke:#333
     style G3 fill:#e8e8e8,stroke:#555,stroke-width:2px
     style G4 fill:#e0e0e0,stroke:#666,stroke-width:2px
     style G5 fill:#c0c0c0,stroke:#333,stroke-width:3px
@@ -212,45 +159,20 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    subgraph Input["User Input"]
-        U[User]
-        P[Passphrase Prompt<br/>rpassword]
-    end
+    U[User] --> P[Passphrase]
+    P -->|gRPC| D[Daemon]
+    D -->|PBKDF2| MK[Master Key]
+    MK --> C[Cache<br/>5 min]
+    C --> W[Wrap]
+    C --> U2[Unwrap]
     
-    subgraph Transport["Transport"]
-        CLI[CLI Client]
-        D[Daemon]
-    end
-    
-    subgraph Security["Security Layer"]
-        SM[SecurityManager]
-        PBKDF2[PBKDF2<br/>210k iterations]
-        Cache[Master Key Cache<br/>5 min TTL]
-    end
-    
-    subgraph Crypto["Cryptographic Operations"]
-        Wrap[Wrap Keys<br/>AES-256-GCM]
-        Unwrap[Unwrap Keys<br/>AES-256-GCM]
-    end
-    
-    U -->|Types passphrase| P
-    P -->|Secure input| CLI
-    CLI -->|gRPC request| D
-    D -->|Derive master key| SM
-    SM --> PBKDF2
-    PBKDF2 -->|Master key| Cache
-    Cache -->|Cached key| Wrap
-    Cache -->|Cached key| Unwrap
-
-    style U fill:#f5f5f5,stroke:#666,stroke-width:2px
-    style P fill:#e8e8e8,stroke:#555,stroke-width:2px
-    style CLI fill:#e8e8e8,stroke:#555,stroke-width:2px
-    style D fill:#d0d0d0,stroke:#444,stroke-width:3px
-    style SM fill:#c0c0c0,stroke:#333,stroke-width:3px
-    style PBKDF2 fill:#d0d0d0,stroke:#444,stroke-width:2px
-    style Cache fill:#c0c0c0,stroke:#333,stroke-width:3px
-    style Wrap fill:#e8e8e8,stroke:#555,stroke-width:2px
-    style Unwrap fill:#e8e8e8,stroke:#555,stroke-width:2px
+    style U fill:#f5f5f5,stroke:#333
+    style P fill:#f5f5f5,stroke:#333
+    style D fill:#d0d0d0,stroke:#333
+    style MK fill:#c0c0c0,stroke:#333
+    style C fill:#c0c0c0,stroke:#333
+    style W fill:#e0e0e0,stroke:#333
+    style U2 fill:#e0e0e0,stroke:#333
 ```
 
 ## Security Benefits

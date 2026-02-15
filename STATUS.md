@@ -1,7 +1,7 @@
 # Current Implementation Status
 
-**Last Updated**: 2024-02-13
-**Project Phase**: v0.2 - Daemon Functional with Tests
+**Last Updated**: 2026-02-15
+**Project Phase**: v0.2 - Functional with Tests
 
 ## What's Actually Implemented
 
@@ -15,7 +15,7 @@
 - [x] Build system (build.sh)
 - [x] Docker configuration
 - [x] systemd service file
-- [x] CLI structure (with clap argument parsing)
+- [x] CLI with full implementation (clap + gRPC client)
 - [x] Testing infrastructure (tests/, test_runner.sh)
 - [x] Integration tests for storage
 - [x] E2E smoke tests
@@ -23,44 +23,39 @@
 - [x] **Signal handling (SIGTERM, SIGINT)**
 - [x] **PID file management**
 - [x] **Health checks**
-- [x] **CLI argument parsing with clap**
-- [x] **gRPC server startup (skeleton)**
-- [x] **REST server startup (skeleton)**
-- [x] **Docker entrypoint script**
+- [x] **gRPC API (full implementation)**
+- [x] **Protocol Buffer definitions (proto/softkms.proto)**
 - [x] **Object-safe StorageBackend trait**
 - [x] **Management scripts (start/stop/status/logs)**
-- [x] **User-local data directory (~/.softKMS/)
+- [x] **User-local data directory (~/.softKMS/)**
+- [x] **Security layer (AES-256-GCM, PBKDF2, master key)**
+- [x] **Ed25519 crypto engine**
+- [x] **P-256 crypto engine**
+- [x] **HD wallet derivation (BIP32/44, Peikert scheme)**
+- [x] **Key wrap/unwrap lifecycle**
+- [x] **Seed import (BIP39 mnemonic or raw hex)**
 
 ### ⚠️ Partially Implemented
-- [~] gRPC API (server binds, no actual protobuf services yet)
-- [~] REST API (server binds, basic routes defined)
-- [~] Cryptographic trait (defined but no implementations)
-- [~] Daemon (functional but minimal - just starts servers)
+- [~] REST API (server skeleton only, not functional)
+- [~] WebAuthn module (stubs/skeleton only - not functional)
 
-### ❌ Not Implemented (Placeholders/TODOs)
-- [ ] Actual gRPC protobuf definitions and services
-- [ ] REST API handlers (just placeholders)
+### ❌ Not Implemented
+- [ ] REST API handlers
 - [ ] IPC layer (Unix sockets, D-Bus)
-- [ ] Actual crypto engines (Ed25519, ECDSA, ES256)
-- [ ] HD wallet derivation (BIP32)
-- [ ] Configuration loading from file
 - [ ] PKCS#11 FFI layer
-- [ ] Key encryption/wrapping
+- [ ] TPM2 integration
+- [ ] HashiCorp Vault backend
 - [ ] Audit logging
 - [ ] Prometheus metrics
-- [ ] Actual CLI command implementations (just shows help)
+- [ ] WebAuthn/CTAP2 protocol (module is skeleton)
+- [ ] Non-Human Identity (NHI) support with Access Control Lists (ACLs), Role-Based Access Control (RBAC) and ephemeral keys for short-term use. 
 
-### 🆕 WebAuthn Module (New - Skeleton Only)
+### 🆕 WebAuthn Module (Skeleton Only - Not Functional)
 - [x] Module structure and types (src/webauthn/)
-- [x] CTAP2 skeleton implementation
-- [x] Credential management skeleton
-- [x] Native messaging skeleton
-- [x] HD wallet derivation for credentials
-- [ ] Actual CTAP2 protocol implementation
-- [ ] Browser extension integration
-- [ ] ES256 crypto engine (P-256 + SHA-256)
-- [ ] Credential store integration
-- [ ] PIN management
+- [ ] CTAP2 protocol implementation
+- [ ] Credential management
+- [ ] Native messaging for browser
+- [ ] ES256 crypto engine
 
 ## Architecture Status
 
@@ -68,35 +63,40 @@
 ```
 src/
 ├── lib.rs              ✅ Complete - Core types and errors
-├── main.rs             ✅ Complete - Entry point with CLI parsing
+├── main.rs             ✅ Complete - Entry point
 ├── api/
 │   ├── mod.rs          ✅ Complete - API coordinator
-│   ├── grpc.rs         ✅ Complete - gRPC server skeleton
-│   └── rest.rs         ✅ Complete - REST server skeleton
+│   ├── grpc.rs         ✅ Complete - gRPC server (full)
+│   ├── rest.rs         ⚠️ Stub only
+│   └── softkms.rs      ✅ Complete - Protobuf generated types
 ├── crypto/
-│   └── mod.rs          ✅ Complete - Trait defined
+│   ├── mod.rs          ✅ Complete - Crypto trait
+│   ├── ed25519.rs      ✅ Complete - Ed25519 engine
+│   ├── p256.rs         ✅ Complete - P-256 engine
+│   └── hd_ed25519.rs   ✅ Complete - HD Ed25519 derivation
+├── security/
+│   ├── mod.rs          ✅ Complete - Security manager
+│   ├── master_key.rs   ✅ Complete - Master key derivation
+│   ├── wrapper.rs      ✅ Complete - AES-GCM wrap/unwrap
+│   └── config.rs       ✅ Complete - Security config
 ├── daemon/
 │   └── mod.rs          ✅ Complete - Full daemon impl
 ├── hd_wallet/
-│   └── mod.rs          ✅ Complete - HD wallet stub
-├── ipc/
-│   └── mod.rs          ✅ Complete - Trait stub
+│   └── mod.rs          ✅ Complete - HD wallet
+├── key_service.rs      ✅ Complete - Key lifecycle management
 ├── storage/
 │   ├── mod.rs          ✅ Complete - Storage trait (object-safe)
-│   └── file.rs         ✅ Complete - File storage impl
+│   ├── file.rs         ✅ Complete - File storage impl
+│   └── encrypted.rs     ✅ Complete - Encrypted storage
 └── webauthn/
-    ├── mod.rs          ✅ Complete - WebAuthn module skeleton
-    ├── types.rs        ✅ Complete - CTAP2 types
-    ├── credential.rs   ✅ Complete - Credential mgmt stub
-    ├── ctap2.rs        ✅ Complete - CTAP2 protocol stub
-    ├── native_messaging.rs ✅ Complete - Browser integration stub
-    └── derivation.rs   ✅ Complete - HD wallet credential derivation
+    ├── mod.rs          ⚠️ Stub - Module skeleton only
+    └── ...             ⚠️ Stubs - Not functional
 ```
 
 ### Build Status
 - **Compiles**: Yes ✅
-- **Tests**: 8 unit tests passing
-- **Warnings**: ~70 warnings (mostly unused code in skeletons)
+- **Tests**: 18 tests passing (10 unit + 8 integration)
+- **Warnings**: ~15 warnings (unused imports in stubs)
 - **Binaries**: softkms-daemon (~1.5MB), softkms (~900KB)
 
 ## Key Design Decisions Made
@@ -162,12 +162,15 @@ target/release/softkms:    ~900KB
 ```
 
 ## Documentation Coverage
-- README.md: Comprehensive
-- ARCHITECTURE.md: Detailed architecture docs
-- WEBAUTHN.md: WebAuthn module documentation
-- Module docs: ~50% coverage
+- README.md: Comprehensive (needs periodic updates)
+- STATUS.md: Implementation status (needs updates)
+- docs/ARCHITECTURE.md: Detailed architecture docs
+- docs/WEBAUTHN.md: WebAuthn module (notes skeleton status)
+- docs/SECURITY_MODEL.md: Security design
+- docs/CLI_DAEMON_ARCHITECTURE.md: CLI/daemon architecture
+- docs/cli-hd-ed25519-*.md: HD wallet guides
+- Module docs: ~60% coverage
 - No CONTRIBUTING.md
-- No API specs (protobuf)
 - No configuration examples
 
 ## Performance
