@@ -97,7 +97,13 @@ impl DaemonClient {
         );
         
         match client.init(request).await {
-            Ok(response) => Ok(response.into_inner().success),
+            Ok(response) => {
+                // Store passphrase for subsequent calls
+                if response.into_inner().success {
+                    self.passphrase = Some(passphrase.to_string());
+                }
+                Ok(true)
+            },
             Err(e) => Err(DaemonError::Rpc(e.to_string())),
         }
     }
@@ -182,6 +188,26 @@ impl DaemonClient {
         
         match client.verify(request).await {
             Ok(response) => Ok(response.into_inner().valid),
+            Err(e) => Err(DaemonError::Rpc(e.to_string())),
+        }
+    }
+    
+    /// Create/generate a new key
+    pub async fn create_key(&mut self, algorithm: &str, label: Option<&str>, passphrase: &str) -> DaemonResult<String> {
+        let client = self.client.as_mut()
+            .ok_or(DaemonError::Connection("Not connected".to_string()))?;
+        
+        let mut attributes = std::collections::HashMap::new();
+        
+        let request = tonic::Request::new(CreateKeyRequest {
+            algorithm: algorithm.to_string(),
+            label: label.map(String::from),
+            attributes,
+            passphrase: passphrase.to_string(),
+        });
+        
+        match client.create_key(request).await {
+            Ok(response) => Ok(response.into_inner().key_id),
             Err(e) => Err(DaemonError::Rpc(e.to_string())),
         }
     }

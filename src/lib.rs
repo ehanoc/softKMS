@@ -7,7 +7,6 @@
 //! - gRPC and REST APIs
 //! - PKCS#11 compatibility
 
-#![deny(unsafe_code)]
 #![warn(missing_docs)]
 
 pub mod api;
@@ -16,7 +15,10 @@ pub mod daemon;
 pub mod hd_wallet;
 pub mod ipc;
 pub mod key_service;
+
+#[allow(unsafe_code)]
 pub mod pkcs11;
+
 pub mod security;
 pub mod storage;
 pub mod webauthn;
