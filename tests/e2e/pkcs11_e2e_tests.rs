@@ -6,44 +6,76 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 fn setup() {
-    // Cleanup any existing state
-    let _ = Command::new("pkill").arg("softkms-daemon").output();
-    std::thread::sleep(Duration::from_secs(2));
-
-    // Clean up data directories
-    let _ = std::fs::remove_dir_all("/home/user/.softKMS");
-    let _ = std::fs::remove_dir_all("/home/user/.local/share/softKMS");
-}
-
-fn start_fresh_daemon() {
-    // Start daemon using built binary
-    let _ = Command::new("./target/debug/softkms-daemon")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn();
-
+    // Force kill ALL daemon processes with extreme prejudice
+    let _ = Command::new("pkill")
+        .args(&["-9", "-f", "softkms-daemon"])
+        .output();
     std::thread::sleep(Duration::from_secs(3));
 
-    // Initialize with passphrase "test"
-    let output = Command::new("./target/debug/softkms")
-        .args(&["-p", "test", "init", "--confirm", "false"])
-        .output();
+    // Clean data directories
+    let _ = std::fs::remove_dir_all("/home/user/.softKMS");
+    let _ = std::fs::remove_dir_all("/home/user/.local/share/softKMS");
 
-    if let Ok(out) = output {
-        if !out.status.success() {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            if !stderr.contains("already initialized") {
-                eprintln!("Init warning: {}", stderr);
-            }
-        }
-    }
-
-    // Give daemon time to fully initialize
+    // Verify nothing is running on the port
+    let _ = Command::new("fuser").args(&["-k", "50051/tcp"]).output();
     std::thread::sleep(Duration::from_secs(1));
 }
 
+fn wait_for_daemon_ready() -> bool {
+    for i in 0..10 {
+        let output = Command::new("./target/debug/softkms")
+            .args(&["list"])
+            .output();
+
+        if output.map(|o| o.status.success()).unwrap_or(false) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    false
+}
+
+fn start_fresh_daemon() {
+    // Start daemon - fail if can't
+    let child = Command::new("./target/debug/softkms-daemon")
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .expect("Failed to start daemon");
+
+    // Don't drop child immediately - let it run
+    std::thread::sleep(Duration::from_secs(3));
+
+    // Wait for daemon to be ready
+    if !wait_for_daemon_ready() {
+        panic!("Daemon did not become ready in time");
+    }
+
+    // Initialize with passphrase
+    let output = Command::new("./target/debug/softkms")
+        .args(&["-p", "test", "init", "--confirm", "false"])
+        .output()
+        .expect("Failed to run init");
+
+    // CRITICAL: Check init actually worked
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        panic!("Init failed: {}", stderr);
+    }
+
+    // Give daemon time to fully initialize after init
+    std::thread::sleep(Duration::from_secs(1));
+
+    // Verify daemon is still working
+    if !wait_for_daemon_ready() {
+        panic!("Daemon stopped responding after init");
+    }
+}
+
 fn teardown() {
-    let _ = Command::new("pkill").arg("softkms-daemon").output();
+    let _ = Command::new("pkill")
+        .args(&["-9", "softkms-daemon"])
+        .output();
     std::thread::sleep(Duration::from_secs(1));
 }
 
@@ -69,10 +101,24 @@ fn test_pkcs11_e2e_smoke() {
 
 /// Test key generation flow
 #[test]
-#[ignore] // Requires daemon to be running with correct passphrase setup
 fn test_pkcs11_e2e_keygen() {
     setup();
     start_fresh_daemon();
+
+    // Debug: verify daemon is ready
+    let ready_check = Command::new("./target/debug/softkms")
+        .args(&["-p", "test", "list"])
+        .output();
+
+    let ready_ok = ready_check
+        .as_ref()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !ready_ok {
+        eprintln!("WARNING: Daemon might not be ready");
+    } else {
+        eprintln!("Daemon is ready");
+    }
 
     // Generate key with explicit mechanism
     let output = Command::new("pkcs11-tool")
@@ -96,6 +142,10 @@ fn test_pkcs11_e2e_keygen() {
         .expect("pkcs11-tool should work");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    println!("STDOUT: {}", stdout);
+    println!("STDERR: {}", stderr);
 
     assert!(
         output.status.success(),
@@ -120,13 +170,12 @@ fn test_pkcs11_e2e_keygen() {
 
 /// Test signing flow
 #[test]
-#[ignore] // Requires daemon to be running with correct passphrase setup
 fn test_pkcs11_e2e_sign() {
     setup();
     start_fresh_daemon();
 
     // Generate key
-    let _ = Command::new("pkcs11-tool")
+    let gen_output = Command::new("pkcs11-tool")
         .args(&[
             "--module",
             "target/debug/libsoftkms.so",
@@ -143,7 +192,15 @@ fn test_pkcs11_e2e_sign() {
             "-m",
             "0x1050",
         ])
-        .output();
+        .output()
+        .expect("Failed to generate key");
+
+    let gen_stderr = String::from_utf8_lossy(&gen_output.stderr);
+    assert!(
+        gen_output.status.success(),
+        "Key generation failed: {}",
+        gen_stderr
+    );
 
     // Create test data
     let data_path = "/tmp/e2e_test_data.txt";
@@ -189,7 +246,6 @@ fn test_pkcs11_e2e_sign() {
 
 /// Test multiple keys can coexist
 #[test]
-#[ignore] // Requires daemon to be running with correct passphrase setup
 fn test_pkcs11_e2e_multiple_keys() {
     setup();
     start_fresh_daemon();
@@ -216,10 +272,12 @@ fn test_pkcs11_e2e_multiple_keys() {
             .output()
             .expect("pkcs11-tool should work");
 
+        let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             output.status.success(),
-            "Key {} generation should succeed",
-            i
+            "Key {} generation should succeed: {}",
+            i,
+            stderr
         );
     }
 
