@@ -3,90 +3,44 @@
 //! This module implements a PKCS#11 provider that allows existing applications
 //! (OpenSSH, Git, OpenSSL) to use softKMS as an HSM backend.
 //!
-//! ## Overview
-//!
-//! The PKCS#11 provider exposes softKMS keys as PKCS#11 objects, allowing
-//! standard applications to interact with softKMS without modification.
-//!
-//! ## Usage
-//!
-//! ```bash
-//! # Set PKCS#11 module path
-//! export PKCS11_MODULE=~/.softKMS/libsoftkms-pkcs11.so
-//!
-//! # Use with OpenSSH
-//! ssh-add -s ~/.softKMS/libsoftkms-pkcs11.so
-//!
-//! # Use with OpenSSL
-//! openssl req -new -key ed25519 -engine pkcs11 -keyform engine
-//! ```
-//!
-//! ## Supported Mechanisms (Planned)
-//!
-//! - CKM_EDDSA: EdDSA signing (Ed25519)
-//! - CKM_ECDSA: ECDSA signing (P-256)
-//!
 //! ## Architecture
 //!
-//! The provider maps softKMS concepts to PKCS#11:
+//! The PKCS#11 provider acts as a CLIENT to the softKMS daemon via gRPC:
 //!
-//! | softKMS | PKCS#11 |
-//! |---------|---------|
-//! | Key | CKO_PRIVATE_KEY / CKO_PUBLIC_KEY |
-//! | Key ID | CKA_ID |
-//! | Key Label | CKA_LABEL |
-//! | Passphrase | PIN |
+//! ```text
+//! Application → PKCS#11 API → libsoftkms-pkcs11.so → gRPC → softKMS Daemon
+//! ```
+//!
+//! ## Implementation Status
+//!
+//! This is a WORKING STUB that demonstrates the architecture.
+//! Full PKCS#11 compliance requires more implementation.
 
-use tracing::{error, info, warn};
+use tracing::{info, warn, error};
 
-/// PKCS#11 Provider Errors
+mod client;
+pub use client::DaemonClient;
+
+/// PKCS#11 Result
+pub type Pkcs11Result<T> = Result<T, Pkcs11Error>;
+
+/// PKCS#11 errors
 #[derive(Debug, Clone)]
 pub enum Pkcs11Error {
-    /// Initialization failed
-    Initialization(String),
-
-    /// Slot not found
+    NotInitialized,
     SlotNotFound,
-
-    /// Session error
-    SessionError(String),
-
-    /// Object not found
-    ObjectNotFound,
-
-    /// Key not found
-    KeyNotFound(String),
-
-    /// Mechanism not supported
-    MechanismNotSupported(String),
-
-    /// Cryptographic error
-    CryptoError(String),
-
-    /// Operation not supported
-    NotSupported(String),
+    SessionError,
+    Argument,
+    BufferTooSmall,
+    MechanismNotSupported,
+    KeyNotFound,
+    NotSupported,
+    FunctionFailed,
 }
-
-impl std::fmt::Display for Pkcs11Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Pkcs11Error::Initialization(msg) => write!(f, "Initialization failed: {}", msg),
-            Pkcs11Error::SlotNotFound => write!(f, "Slot not found"),
-            Pkcs11Error::SessionError(msg) => write!(f, "Session error: {}", msg),
-            Pkcs11Error::ObjectNotFound => write!(f, "Object not found"),
-            Pkcs11Error::KeyNotFound(id) => write!(f, "Key not found: {}", id),
-            Pkcs11Error::MechanismNotSupported(m) => write!(f, "Mechanism not supported: {}", m),
-            Pkcs11Error::CryptoError(msg) => write!(f, "Crypto error: {}", msg),
-            Pkcs11Error::NotSupported(msg) => write!(f, "Not supported: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for Pkcs11Error {}
 
 /// Initialize the PKCS#11 provider
-pub fn initialize() -> Result<(), Pkcs11Error> {
-    info!("PKCS#11 provider stub initialized");
+pub fn initialize() -> Pkcs11Result<()> {
+    info!("softKMS PKCS#11 provider initialized (stub)");
     Ok(())
 }
 
@@ -108,7 +62,6 @@ pub struct ProviderInfo {
 
 /// Get the PKCS#11 module path
 pub fn get_module_path() -> String {
-    // Default location: ~/.softKMS/
     if let Ok(home) = std::env::var("HOME") {
         format!("{}/.softKMS/libsoftkms-pkcs11.so", home)
     } else {
@@ -118,7 +71,32 @@ pub fn get_module_path() -> String {
 
 /// Check if PKCS#11 is available
 pub fn is_available() -> bool {
-    // Check if the library can be loaded
-    // For now, just check if cryptoki is available
     true
+}
+
+/// Sign data via the daemon (conceptual)
+///
+/// This demonstrates how signing would work:
+/// 1. PKCS#11 receives C_Sign request
+/// 2. Calls daemon client
+/// 3. Daemon performs signing
+/// 4. Returns signature
+pub async fn sign_via_daemon(
+    daemon: &mut DaemonClient,
+    key_id: &str,
+    data: &[u8],
+) -> Pkcs11Result<Vec<u8>> {
+    warn!("sign_via_daemon: Would sign via daemon gRPC");
+    Ok(vec![])
+}
+
+/// Verify via the daemon (conceptual)
+pub async fn verify_via_daemon(
+    daemon: &mut DaemonClient,
+    key_id: &str,
+    data: &[u8],
+    signature: &[u8],
+) -> Pkcs11Result<bool> {
+    warn!("verify_via_daemon: Would verify via daemon gRPC");
+    Ok(false)
 }
