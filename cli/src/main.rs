@@ -194,6 +194,13 @@ enum Commands {
         #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         confirm: bool,
     },
+
+    /// PKCS#11 provider information
+    Pkcs11 {
+        /// Show PKCS#11 module path
+        #[arg(long)]
+        module: bool,
+    },
 }
 
 /// Lookup key ID by label
@@ -246,6 +253,28 @@ fn get_passphrase(cli_pass: Option<String>) -> Result<String, Box<dyn std::error
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
+    
+    // Handle PKCS#11 command - doesn't need daemon connection
+    if let Commands::Pkcs11 { module } = cli.command {
+        if module {
+            let path = softkms::pkcs11::get_module_path();
+            println!("PKCS#11 Module Path:");
+            println!("  {}", path);
+            println!("");
+            println!("To use with applications:");
+            println!("  export PKCS11_MODULE={}", path);
+        } else {
+            let info = softkms::pkcs11::get_info();
+            println!("PKCS#11 Provider Information:");
+            println!("  Name: {}", info.name);
+            println!("  Version: {}.{}", info.version.0, info.version.1);
+            println!("  Description: {}", info.description);
+            println!("");
+            println!("Use --module to show the module path");
+        }
+        return Ok(());
+    }
+    
     let mut client = KeyStoreClient::connect(cli.server.clone()).await?;
     
     match cli.command {
@@ -785,6 +814,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     std::process::exit(1);
                 }
             }
+        }
+        
+        Commands::Pkcs11 { module } => {
+            // Already handled above - this is a fallback
+            unreachable!("PKCS#11 command should be handled before daemon connection");
         }
     }
     
