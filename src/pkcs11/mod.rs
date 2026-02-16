@@ -32,8 +32,13 @@ static SESSIONS: Lazy<Mutex<HashMap<u64, SessionState>>> = Lazy::new(|| Mutex::n
 static DAEMON_CLIENT: Lazy<Mutex<Option<(DaemonClient, tokio::runtime::Runtime)>>> = 
     Lazy::new(|| Mutex::new(None));
 
-// Daemon server address
+// Daemon server address - can be overridden via environment variable
 const DEFAULT_DAEMON_ADDR: &str = "http://127.0.0.1:50051";
+
+fn get_daemon_addr() -> String {
+    std::env::var("SOFTKMS_DAEMON_ADDR")
+        .unwrap_or_else(|_| DEFAULT_DAEMON_ADDR.to_string())
+}
 
 // Return codes
 const CKR_OK: u32 = 0;
@@ -578,7 +583,10 @@ fn ensure_daemon_connected() -> Result<(), String> {
     
     if client_guard.is_none() {
         let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
-        let mut client = DaemonClient::new(DEFAULT_DAEMON_ADDR);
+        let daemon_addr = get_daemon_addr();
+        let mut client = DaemonClient::new(&daemon_addr);
+        
+        debug!("Connecting to daemon at {}", daemon_addr);
         
         rt.block_on(async {
             client.connect().await
@@ -677,17 +685,26 @@ pub extern "C" fn C_GenerateKeyPair(
     let key_id_result: Result<String, String> = {
         let mut client_guard = match DAEMON_CLIENT.lock() {
             Ok(c) => c,
-            Err(_) => return CKR_DEVICE_ERROR,
+            Err(_) => {
+                error!("Failed to lock DAEMON_CLIENT");
+                return CKR_DEVICE_ERROR;
+            }
         };
         
         if let Some((ref mut client, ref rt)) = *client_guard {
             let passphrase_clone = passphrase.clone();
-            rt.block_on(async move {
+            match rt.block_on(async move {
                 match client.create_key("p256", Some("pkcs11-key"), &passphrase_clone).await {
                     Ok(id) => Ok(id),
                     Err(e) => Err(e.to_string())
                 }
-            })
+            }) {
+                Ok(id) => Ok(id),
+                Err(e) => {
+                    error!("Failed to create key: {}", e);
+                    Err(e)
+                }
+            }
         } else {
             Err("No client".to_string())
         }
