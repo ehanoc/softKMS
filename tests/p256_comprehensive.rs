@@ -55,6 +55,7 @@ mod p256_tests {
             Some("Random P256 Key".to_string()),
             std::collections::HashMap::new(),
             passphrase,
+            None,
         ).await.unwrap();
 
         assert_eq!(metadata.algorithm, "p256");
@@ -68,7 +69,7 @@ mod p256_tests {
 
         // Sign with the key
         let data = b"Test message for P-256 signing";
-        let signature = service.sign(metadata.id, data, passphrase).await.unwrap();
+        let signature = service.sign(metadata.id, data, passphrase, None).await.unwrap();
 
         assert_eq!(signature.algorithm, "p256");
         assert_eq!(signature.bytes.len(), 64); // P-256 signature is 64 bytes (r || s)
@@ -118,7 +119,7 @@ mod p256_tests {
 
         // Sign with derived key
         let data = b"WebAuthn challenge";
-        let signature = service.sign(p256_metadata.id, data, passphrase).await.unwrap();
+        let signature = service.sign(p256_metadata.id, data, passphrase, None).await.unwrap();
         
         assert_eq!(signature.algorithm, "p256");
         assert_eq!(signature.bytes.len(), 64);
@@ -182,7 +183,7 @@ mod p256_tests {
         // Each key should sign successfully
         for (i, key) in [&key1, &key2, &key3].iter().enumerate() {
             let data = format!("Message {}", i).as_bytes().to_vec();
-            let sig = service.sign(key.id, &data, passphrase).await.unwrap();
+            let sig = service.sign(key.id, &data, passphrase, None).await.unwrap();
             assert_eq!(sig.algorithm, "p256");
         }
     }
@@ -240,12 +241,13 @@ mod p256_tests {
             None,
             std::collections::HashMap::new(),
             passphrase,
+            None,
         ).await.unwrap();
 
         // Sign same data twice
         let data = b"Deterministic test message";
-        let sig1 = service.sign(metadata.id, data, passphrase).await.unwrap();
-        let sig2 = service.sign(metadata.id, data, passphrase).await.unwrap();
+        let sig1 = service.sign(metadata.id, data, passphrase, None).await.unwrap();
+        let sig2 = service.sign(metadata.id, data, passphrase, None).await.unwrap();
 
         // P-256 signatures should be different (randomized signatures for security)
         // but both should verify correctly
@@ -268,11 +270,12 @@ mod p256_tests {
             None,
             std::collections::HashMap::new(),
             correct_pass,
+            None,
         ).await.unwrap();
 
         // Try to sign with wrong passphrase
         let data = b"Test data";
-        let result = service.sign(metadata.id, data, wrong_pass).await;
+        let result = service.sign(metadata.id, data, wrong_pass, None).await;
         
         // Should fail with invalid passphrase
         assert!(result.is_err());
@@ -292,6 +295,7 @@ mod p256_tests {
             Some("To Delete".to_string()),
             std::collections::HashMap::new(),
             passphrase,
+            None,
         ).await.unwrap();
 
         // Verify exists
@@ -306,7 +310,7 @@ mod p256_tests {
         assert_eq!(keys_after.len(), 0);
 
         // Try to sign with deleted key
-        let result = service.sign(metadata.id, b"test", passphrase).await;
+        let result = service.sign(metadata.id, b"test", passphrase, None).await;
         assert!(result.is_err());
     }
 }
@@ -351,11 +355,12 @@ mod passphrase_tests {
             None,
             std::collections::HashMap::new(),
             passphrase,
+            None,
         ).await.unwrap();
 
         // Sign with same passphrase
         let data = b"Test message";
-        let result = service.sign(metadata.id, data, passphrase).await;
+        let result = service.sign(metadata.id, data, passphrase, None).await;
         assert!(result.is_ok());
     }
 
@@ -372,11 +377,12 @@ mod passphrase_tests {
             None,
             std::collections::HashMap::new(),
             correct_pass,
+            None,
         ).await.unwrap();
 
         // Try wrong passphrase
         let data = b"Test message";
-        let result = service.sign(metadata.id, data, wrong_pass).await;
+        let result = service.sign(metadata.id, data, wrong_pass, None).await;
         assert!(result.is_err());
     }
 
@@ -387,13 +393,13 @@ mod passphrase_tests {
         let service = &test.service;
 
         // Create multiple keys with same passphrase
-        let key1 = service.create_key("ed25519".to_string(), Some("Key 1".to_string()), std::collections::HashMap::new(), passphrase).await.unwrap();
-        let key2 = service.create_key("ed25519".to_string(), Some("Key 2".to_string()), std::collections::HashMap::new(), passphrase).await.unwrap();
-        let key3 = service.create_key("p256".to_string(), Some("Key 3".to_string()), std::collections::HashMap::new(), passphrase).await.unwrap();
+        let key1 = service.create_key("ed25519".to_string(), Some("Key 1".to_string()), std::collections::HashMap::new(), passphrase, None).await.unwrap();
+        let key2 = service.create_key("ed25519".to_string(), Some("Key 2".to_string()), std::collections::HashMap::new(), passphrase, None).await.unwrap();
+        let key3 = service.create_key("p256".to_string(), Some("Key 3".to_string()), std::collections::HashMap::new(), passphrase, None).await.unwrap();
 
         // All should sign with same passphrase
         for key in [&key1, &key2, &key3] {
-            let sig = service.sign(key.id, b"test", passphrase).await;
+            let sig = service.sign(key.id, b"test", passphrase, None).await;
             assert!(sig.is_ok(), "Failed to sign with key {}", key.id);
         }
     }
@@ -419,11 +425,11 @@ mod passphrase_tests {
         ).await.unwrap();
 
         // Sign derived key
-        let sig = service.sign(derived.id, b"test", passphrase).await;
+        let sig = service.sign(derived.id, b"test", passphrase, None).await;
         assert!(sig.is_ok());
 
         // Wrong passphrase should fail
-        let wrong_result = service.sign(derived.id, b"test", "wrong_pass").await;
+        let wrong_result = service.sign(derived.id, b"test", "wrong_pass", None).await;
         assert!(wrong_result.is_err());
     }
 
@@ -439,6 +445,7 @@ mod passphrase_tests {
             None,
             std::collections::HashMap::new(),
             "",
+            None,
         ).await;
 
         // The security manager should handle empty passphrases
@@ -458,10 +465,11 @@ mod passphrase_tests {
             None,
             std::collections::HashMap::new(),
             passphrase,
+            None,
         ).await.unwrap();
 
         // Sign with same special chars
-        let sig = service.sign(metadata.id, b"test", passphrase).await;
+        let sig = service.sign(metadata.id, b"test", passphrase, None).await;
         assert!(sig.is_ok());
     }
 }
@@ -525,7 +533,7 @@ mod integration_tests {
 
         // Step 3: Sign WebAuthn challenge
         let challenge = b"webauthn_challenge_data";
-        let signature = service.sign(github_key.id, challenge, passphrase).await.unwrap();
+        let signature = service.sign(github_key.id, challenge, passphrase, None).await.unwrap();
 
         assert_eq!(signature.algorithm, "p256");
         assert_eq!(signature.bytes.len(), 64);
@@ -543,7 +551,7 @@ mod integration_tests {
         assert_ne!(github_key.id, google_key.id);
 
         // Step 5: Sign with Google key
-        let google_sig = service.sign(google_key.id, challenge, passphrase).await.unwrap();
+        let google_sig = service.sign(google_key.id, challenge, passphrase, None).await.unwrap();
         assert_eq!(google_sig.algorithm, "p256");
 
         // Verify we have 3 keys: 1 seed + 2 derived
@@ -563,6 +571,7 @@ mod integration_tests {
             Some("Ed25519 Key".to_string()),
             std::collections::HashMap::new(),
             passphrase,
+            None,
         ).await.unwrap();
 
         let p256_key = service.create_key(
@@ -570,6 +579,7 @@ mod integration_tests {
             Some("P-256 Key".to_string()),
             std::collections::HashMap::new(),
             passphrase,
+            None,
         ).await.unwrap();
 
         // Import seed and derive P-256
@@ -588,9 +598,9 @@ mod integration_tests {
         // Sign with all keys
         let data = b"Multi-algorithm test";
         
-        let ed25519_sig = service.sign(ed25519_key.id, data, passphrase).await.unwrap();
-        let p256_sig = service.sign(p256_key.id, data, passphrase).await.unwrap();
-        let derived_sig = service.sign(derived_p256.id, data, passphrase).await.unwrap();
+        let ed25519_sig = service.sign(ed25519_key.id, data, passphrase, None).await.unwrap();
+        let p256_sig = service.sign(p256_key.id, data, passphrase, None).await.unwrap();
+        let derived_sig = service.sign(derived_p256.id, data, passphrase, None).await.unwrap();
 
         assert_eq!(ed25519_sig.algorithm, "ed25519");
         assert_eq!(p256_sig.algorithm, "p256");
@@ -613,6 +623,7 @@ mod integration_tests {
             Some("Lifecycle Test".to_string()),
             std::collections::HashMap::new(),
             passphrase,
+            None,
         ).await.unwrap();
 
         // Read (get info)
@@ -621,8 +632,8 @@ mod integration_tests {
         assert_eq!(retrieved.unwrap().label, Some("Lifecycle Test".to_string()));
 
         // Update (sign = use)
-        let sig1 = service.sign(key.id, b"message1", passphrase).await.unwrap();
-        let sig2 = service.sign(key.id, b"message2", passphrase).await.unwrap();
+        let sig1 = service.sign(key.id, b"message1", passphrase, None).await.unwrap();
+        let sig2 = service.sign(key.id, b"message2", passphrase, None).await.unwrap();
         assert_ne!(sig1.bytes, sig2.bytes); // Different signatures
 
         // Delete
@@ -633,7 +644,7 @@ mod integration_tests {
         assert!(after_delete.is_none());
 
         // Verify can't use deleted key
-        let result = service.sign(key.id, b"test", passphrase).await;
+        let result = service.sign(key.id, b"test", passphrase, None).await;
         assert!(result.is_err());
     }
 }

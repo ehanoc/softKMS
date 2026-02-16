@@ -131,6 +131,7 @@ mod tests {
             created_at: Utc::now(),
             attributes: HashMap::new(),
             public_key: Vec::new(),
+            owner_identity: None,
         }
     }
 

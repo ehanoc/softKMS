@@ -48,6 +48,7 @@ async fn main() {
         created_at: chrono::Utc::now(),
         attributes: std::collections::HashMap::new(),
         public_key: vec![],
+        owner_identity: None,  // Admin-owned for demo
     };
     
     // This will prompt: "Enter passphrase: "

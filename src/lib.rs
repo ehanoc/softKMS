@@ -10,9 +10,11 @@
 #![warn(missing_docs)]
 
 pub mod api;
+pub mod audit;
 pub mod crypto;
 pub mod daemon;
 pub mod hd_wallet;
+pub mod identity;
 pub mod ipc;
 pub mod key_service;
 
@@ -90,6 +92,33 @@ pub struct KeyMetadata {
     pub attributes: std::collections::HashMap<String, String>,
     /// Public key (optional, for verification)
     pub public_key: Vec<u8>,
+    /// Owner identity public key (None = admin-owned)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_identity: Option<String>,
+}
+
+impl KeyMetadata {
+    /// Create new KeyMetadata with optional owner_identity
+    pub fn new(
+        id: KeyId,
+        label: Option<String>,
+        algorithm: String,
+        key_type: KeyType,
+        created_at: chrono::DateTime<chrono::Utc>,
+        attributes: std::collections::HashMap<String, String>,
+        public_key: Vec<u8>,
+    ) -> Self {
+        Self {
+            id,
+            label,
+            algorithm,
+            key_type,
+            created_at,
+            attributes,
+            public_key,
+            owner_identity: None,
+        }
+    }
 }
 
 /// Key types

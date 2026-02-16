@@ -45,6 +45,7 @@ async fn test_create_key_returns_metadata() {
         Some("Test Key".to_string()),
         std::collections::HashMap::new(),
         passphrase,
+        None,
     ).await.unwrap();
 
     // Verify UUID format
@@ -68,10 +69,10 @@ async fn test_list_keys_returns_all_keys() {
     let keys = service.list_keys().await.unwrap();
     assert_eq!(keys.len(), 0);
 
-    // Create some keys
-    service.create_key("ed25519".to_string(), None, std::collections::HashMap::new(), passphrase).await.unwrap();
-    service.create_key("ed25519".to_string(), Some("Labeled".to_string()), std::collections::HashMap::new(), passphrase).await.unwrap();
-    service.create_key("ed25519".to_string(), None, std::collections::HashMap::new(), passphrase).await.unwrap();
+    // Create some keys (admin-owned)
+    service.create_key("ed25519".to_string(), None, std::collections::HashMap::new(), passphrase, None).await.unwrap();
+    service.create_key("ed25519".to_string(), Some("Labeled".to_string()), std::collections::HashMap::new(), passphrase, None).await.unwrap();
+    service.create_key("ed25519".to_string(), None, std::collections::HashMap::new(), passphrase, None).await.unwrap();
 
     let keys = service.list_keys().await.unwrap();
     assert_eq!(keys.len(), 3);
@@ -89,15 +90,16 @@ async fn test_get_key_returns_correct_key() {
 
     let metadata = service.create_key(
         "ed25519".to_string(),
-        Some("Find Me".to_string()),
+        Some("Test Key".to_string()),
         std::collections::HashMap::new(),
         passphrase,
+        None,
     ).await.unwrap();
 
     let found = service.get_key(metadata.id).await.unwrap();
     assert!(found.is_some());
     let found = found.unwrap();
-    assert_eq!(found.label, Some("Find Me".to_string()));
+    assert_eq!(found.label, Some("Test Key".to_string()));
 
     // Non-existent key
     let not_found = service.get_key(KeyId::new_v4()).await.unwrap();
@@ -110,7 +112,7 @@ async fn test_sign_with_wrong_key_id_fails() {
     let (service, _temp) = setup_test_env().await;
     let passphrase = "test_passphrase";
 
-    let result = service.sign(KeyId::new_v4(), b"test", passphrase).await;
+    let result = service.sign(KeyId::new_v4(), b"test", passphrase, None).await;
     assert!(result.is_err());
     
     if let Err(Error::KeyNotFound(_)) = result {
@@ -131,6 +133,7 @@ async fn test_delete_key_removes_key() {
         None,
         std::collections::HashMap::new(),
         passphrase,
+        None,
     ).await.unwrap();
 
     // Key exists
@@ -143,7 +146,7 @@ async fn test_delete_key_removes_key() {
     assert!(service.get_key(metadata.id).await.unwrap().is_none());
     
     // Trying to sign should fail
-    let result = service.sign(metadata.id, b"test", passphrase).await;
+    let result = service.sign(metadata.id, b"test", passphrase, None).await;
     assert!(result.is_err());
 }
 
@@ -163,10 +166,11 @@ async fn test_passphrase_caching() {
         None,
         std::collections::HashMap::new(),
         passphrase,
+        None,
     ).await.unwrap();
 
     // Subsequent operations use cached master key
-    let result = service1.sign(metadata.id, b"test", passphrase).await;
+    let result = service1.sign(metadata.id, b"test", passphrase, None).await;
     assert!(result.is_ok());
     
     // Create fresh service (empty cache)
@@ -176,6 +180,7 @@ async fn test_passphrase_caching() {
         None,
         std::collections::HashMap::new(),
         passphrase,
+        None,
     ).await.unwrap();
     
     // Both keys should exist
@@ -190,19 +195,19 @@ async fn test_same_passphrase_multiple_operations() {
     let passphrase = "test_passphrase";
 
     // Create multiple keys
-    let key1 = service.create_key("ed25519".to_string(), Some("Key 1".to_string()), std::collections::HashMap::new(), passphrase).await.unwrap();
-    let key2 = service.create_key("ed25519".to_string(), Some("Key 2".to_string()), std::collections::HashMap::new(), passphrase).await.unwrap();
-    let key3 = service.create_key("ed25519".to_string(), Some("Key 3".to_string()), std::collections::HashMap::new(), passphrase).await.unwrap();
+    let key1 = service.create_key("ed25519".to_string(), Some("Key 1".to_string()), std::collections::HashMap::new(), passphrase, None).await.unwrap();
+    let key2 = service.create_key("ed25519".to_string(), Some("Key 2".to_string()), std::collections::HashMap::new(), passphrase, None).await.unwrap();
+    let key3 = service.create_key("ed25519".to_string(), Some("Key 3".to_string()), std::collections::HashMap::new(), passphrase, None).await.unwrap();
 
     // Import seed
     let seed = vec![0u8; 32];
     let _ = service.import_seed(seed, Some("Seed".to_string()), passphrase).await.unwrap();
 
-    // Sign with all keys using same passphrase
+    // Sign with all keys using same passphrase (admin requests)
     let data = b"test data";
-    service.sign(key1.id, data, passphrase).await.unwrap();
-    service.sign(key2.id, data, passphrase).await.unwrap();
-    service.sign(key3.id, data, passphrase).await.unwrap();
+    service.sign(key1.id, data, passphrase, None).await.unwrap();
+    service.sign(key2.id, data, passphrase, None).await.unwrap();
+    service.sign(key3.id, data, passphrase, None).await.unwrap();
 
     // All operations succeeded
     let keys = service.list_keys().await.unwrap();
@@ -220,12 +225,13 @@ async fn test_signature_deterministic() {
         None,
         std::collections::HashMap::new(),
         passphrase,
+        None,
     ).await.unwrap();
 
-    // Sign same data twice
+    // Sign same data twice (admin requests)
     let data = b"deterministic test";
-    let sig1 = service.sign(metadata.id, data, passphrase).await.unwrap();
-    let sig2 = service.sign(metadata.id, data, passphrase).await.unwrap();
+    let sig1 = service.sign(metadata.id, data, passphrase, None).await.unwrap();
+    let sig2 = service.sign(metadata.id, data, passphrase, None).await.unwrap();
 
     // Signatures should be identical (Ed25519 is deterministic)
     assert_eq!(sig1.bytes, sig2.bytes);
@@ -243,10 +249,11 @@ async fn test_different_data_different_signatures() {
         None,
         std::collections::HashMap::new(),
         passphrase,
+        None,
     ).await.unwrap();
 
-    let sig1 = service.sign(metadata.id, b"data 1", passphrase).await.unwrap();
-    let sig2 = service.sign(metadata.id, b"data 2", passphrase).await.unwrap();
+    let sig1 = service.sign(metadata.id, b"data 1", passphrase, None).await.unwrap();
+    let sig2 = service.sign(metadata.id, b"data 2", passphrase, None).await.unwrap();
 
     // Different data should produce different signatures
     assert_ne!(sig1.bytes, sig2.bytes);
@@ -285,16 +292,17 @@ async fn test_storage_persistence() {
 
         let service = KeyService::new(storage, security_manager, config);
 
-        // Create key
+        // Create key (admin-owned)
         let metadata = service.create_key(
             "ed25519".to_string(),
             Some("Persistent".to_string()),
             std::collections::HashMap::new(),
             passphrase,
+            None,
         ).await.unwrap();
 
-        // Sign to verify it works
-        let _ = service.sign(metadata.id, b"test", passphrase).await.unwrap();
+        // Sign to verify it works (admin request)
+        let _ = service.sign(metadata.id, b"test", passphrase, None).await.unwrap();
     }
 
     // Create second service instance (same storage)
@@ -325,7 +333,7 @@ async fn test_storage_persistence() {
         // This will fail because SecurityManager generates new random salt
         // and derives different master key from same passphrase
         let key_id = keys[0].id;
-        let _sig = service.sign(key_id, b"test again", passphrase).await.unwrap();
+        let _sig = service.sign(key_id, b"test again", passphrase, None).await.unwrap();
         assert_eq!("ed25519", "ed25519");
     }
 }

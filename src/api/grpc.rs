@@ -144,7 +144,7 @@ impl KeyStore for GrpcKeyStore {
         let req = request.into_inner();
         
         let metadata = self.key_service
-            .create_key(req.algorithm, req.label, req.attributes, &req.passphrase)
+            .create_key(req.algorithm, req.label, req.attributes, &req.passphrase, None)
             .await
             .map_err(map_error)?;
         
@@ -244,7 +244,7 @@ impl KeyStore for GrpcKeyStore {
             .map_err(|_| Status::invalid_argument("Invalid key ID"))?;
         
         let signature = self.key_service
-            .sign(key_id, &req.data, &req.passphrase)
+            .sign(key_id, &req.data, &req.passphrase, None)
             .await
             .map_err(map_error)?;
         

@@ -74,6 +74,7 @@ impl KeyService {
         label: Option<String>,
         attributes: HashMap<String, String>,
         passphrase: &str,
+        owner_identity: Option<String>,
     ) -> Result<KeyMetadata> {
         info!("Creating new {} key", algorithm);
 
@@ -92,6 +93,7 @@ impl KeyService {
                     created_at,
                     attributes: attributes.clone(),
                     public_key: Vec::new(),
+                    owner_identity: None,
                 };
                 let (secret, public_key, _metadata) = Ed25519Engine::generate_key(temp_metadata)?;
                 let public_key_bytes = public_key.to_vec();
@@ -113,7 +115,7 @@ impl KeyService {
             }
         };
 
-        // Create metadata with public key
+        // Create metadata with public key and owner
         let metadata = KeyMetadata {
             id: key_id,
             label: label.clone(),
@@ -122,6 +124,7 @@ impl KeyService {
             created_at,
             attributes: attributes.clone(),
             public_key: public_key_bytes.clone(),
+            owner_identity: owner_identity.clone(),
         };
 
         debug!("Key generated in memory, now wrapping for storage");
@@ -150,13 +153,28 @@ impl KeyService {
         Ok(metadata)
     }
 
-    pub async fn sign(&self, key_id: KeyId, data: &[u8], passphrase: &str) -> Result<Signature> {
+    pub async fn sign(
+        &self,
+        key_id: KeyId,
+        data: &[u8],
+        passphrase: &str,
+        requesting_identity: Option<&str>,
+    ) -> Result<Signature> {
         debug!("Signing data with key {}", key_id);
 
         let result = self.storage.retrieve_key(key_id).await?;
 
         let (metadata, encrypted_data) = result
             .ok_or_else(|| Error::KeyNotFound(key_id.to_string()))?;
+
+        // Check ownership for non-admin requests
+        if let Some(identity) = requesting_identity {
+            if let Some(ref owner) = metadata.owner_identity {
+                if owner != identity {
+                    return Err(Error::AccessDenied);
+                }
+            }
+        }
 
         let master_key = self.security_manager
             .derive_master_key(passphrase)
@@ -257,6 +275,7 @@ impl KeyService {
             created_at,
             attributes: HashMap::new(),
             public_key: Vec::new(),
+                    owner_identity: None,
         };
 
         let master_key = self.security_manager
@@ -390,6 +409,7 @@ impl KeyService {
             created_at,
             attributes,
             public_key: p256_public_key.clone(),
+            owner_identity: None,
         };
 
         // Wrap P-256 key
@@ -522,6 +542,7 @@ impl KeyService {
             created_at,
             attributes,
             public_key: derived.public_key.to_vec(),
+            owner_identity: None,
         };
 
         if store {
@@ -599,6 +620,7 @@ impl KeyService {
             created_at,
             attributes,
             public_key: public_key.clone(),
+            owner_identity: None,
         };
 
         // Get master key
@@ -753,6 +775,7 @@ mod tests {
             Some("Test Key".to_string()),
             std::collections::HashMap::new(),
             passphrase,
+            None,
         ).await.unwrap();
 
         assert_eq!(metadata.algorithm, "ed25519");
@@ -774,10 +797,11 @@ mod tests {
             Some("Signing Key".to_string()),
             std::collections::HashMap::new(),
             passphrase,
+            None,
         ).await.unwrap();
 
         let data = b"Hello, World!";
-        let signature = service.sign(metadata.id, data, passphrase).await.unwrap();
+        let signature = service.sign(metadata.id, data, passphrase, None).await.unwrap();
 
         assert_eq!(signature.algorithm, "ed25519");
         assert_eq!(signature.bytes.len(), 64);
@@ -813,6 +837,7 @@ mod tests {
             None,
             std::collections::HashMap::new(),
             passphrase,
+            None,
         ).await.unwrap();
 
         service.delete_key(metadata.id).await.unwrap();
@@ -832,6 +857,7 @@ mod tests {
             Some("Key 1".to_string()),
             std::collections::HashMap::new(),
             passphrase,
+            None,
         ).await.unwrap();
 
         let key2 = service.create_key(
@@ -839,14 +865,15 @@ mod tests {
             Some("Key 2".to_string()),
             std::collections::HashMap::new(),
             passphrase,
+            None,
         ).await.unwrap();
 
         let keys = service.list_keys().await.unwrap();
         assert_eq!(keys.len(), 2);
 
         let data = b"test data";
-        let sig1 = service.sign(key1.id, data, passphrase).await.unwrap();
-        let sig2 = service.sign(key2.id, data, passphrase).await.unwrap();
+        let sig1 = service.sign(key1.id, data, passphrase, None).await.unwrap();
+        let sig2 = service.sign(key2.id, data, passphrase, None).await.unwrap();
 
         assert_ne!(sig1.bytes, sig2.bytes);
     }
@@ -893,7 +920,7 @@ mod tests {
 
         // Step 3: Retrieve and use the derived key for signing
         let test_data = b"test message for P-256 signing";
-        let signature = service.sign(p256_metadata.id, test_data, passphrase).await.unwrap();
+        let signature = service.sign(p256_metadata.id, test_data, passphrase, None).await.unwrap();
 
         assert_eq!(signature.algorithm, "p256");
         // P-256 signatures are typically 64 bytes (r || s)
@@ -930,8 +957,8 @@ mod tests {
 
         // Sign with both keys and verify they produce different signatures
         let test_data_2 = b"another test message";
-        let sig1 = service.sign(p256_metadata.id, test_data_2, passphrase).await.unwrap();
-        let sig2 = service.sign(p256_metadata_3.id, test_data_2, passphrase).await.unwrap();
+        let sig1 = service.sign(p256_metadata.id, test_data_2, passphrase, None).await.unwrap();
+        let sig2 = service.sign(p256_metadata_3.id, test_data_2, passphrase, None).await.unwrap();
 
         assert_ne!(sig1.bytes, sig2.bytes);
 
@@ -978,7 +1005,7 @@ mod tests {
 
         // Step 3: Sign data with the derived key
         let test_data = b"hello";
-        let signature = service.sign(derived_metadata.id, test_data, passphrase).await.unwrap();
+        let signature = service.sign(derived_metadata.id, test_data, passphrase, None).await.unwrap();
 
         assert_eq!(signature.algorithm, "ed25519");
         assert_eq!(signature.bytes.len(), 64);

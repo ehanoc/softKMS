@@ -2,7 +2,7 @@
 
 ## Overview
 
-softKMS implements a defense-in-depth security model where cryptographic keys are **NEVER stored or transmitted in plaintext**. This document describes the security architecture, threat model, and guarantees.
+softKMS implements a defense-in-depth security model with **identity-based access control**, where cryptographic keys are **NEVER stored or transmitted in plaintext**, and **each client has isolated access** to their own keys.
 
 ## Core Security Principles
 
@@ -13,7 +13,21 @@ All keys are encrypted before storage using:
 - **Master key** derived via PBKDF2-HMAC-SHA256 (210,000 iterations)
 - **Authenticated encryption** with AAD binding key to metadata
 
-### 2. Keys Only Unwrapped in Memory When Needed
+### 2. Identity Isolation
+
+- **Each identity** (client) has isolated access to their own keys
+- **Namespace separation**: Keys stored under identity's public key path
+- **No cross-access**: Identity A cannot see or modify Identity B's keys
+- **Admin oversight**: Admin can view all keys (for management)
+
+### 3. Token-Based Authentication
+
+- **Simple bearer tokens**: `base64(key_type:pubkey:secret)`
+- **One-time display**: Token shown once at identity creation
+- **Hash storage**: Server stores `SHA256(secret)`, not plaintext
+- **No replay**: Each token bound to specific identity
+
+### 4. Keys Only Unwrapped in Memory When Needed
 
 ```
 Encrypted Storage → Memory (unwrapped) → Use → Zeroize → Back to encrypted
@@ -21,14 +35,14 @@ Encrypted Storage → Memory (unwrapped) → Use → Zeroize → Back to encrypt
 
 Keys are immediately cleared from memory after use using `zeroize`.
 
-### 3. Client-Daemon Isolation
+### 5. Client-Daemon Isolation
 
 - **Daemon** holds all key material in isolated process
 - **CLI Client** only sends requests, receives signatures
 - **Keys NEVER leave the daemon** - only signatures and metadata
-- Communication via gRPC over localhost only
+- **Communication** via gRPC over localhost only
 
-### 4. Memory Protection
+### 6. Memory Protection
 
 - Secrets use `secrecy::Secret<T>` wrapper
 - Automatic zeroization on drop
@@ -39,9 +53,15 @@ Keys are immediately cleared from memory after use using `zeroize`.
 
 ```mermaid
 flowchart LR
-    subgraph "Untrusted Zone"
-        CLI[CLI Client]
-        PKCS[PKCS#11 Client]
+    subgraph "Client Layer"
+        A[Identity A]
+        B[Identity B]
+        AD[Admin]
+    end
+    
+    subgraph "Auth Layer"
+        AUTH[Token Validation]
+        POL[Policy Check]
     end
     
     subgraph "Trusted Zone"
@@ -49,73 +69,200 @@ flowchart LR
             API[gRPC API]
             KS[Key Service]
             SEC[Security Manager]
-            MEM[Memory Cache]
+            ID[Identity Service]
         end
     end
     
     subgraph "Storage"
-        ENC[Encrypted Files]
+        ENC[Encrypted Keys]
+        IDSTORE[Identity Store]
+        AUDIT[Audit Log]
     end
     
-    CLI --> API
-    PKCS --> API
-    API --> KS
+    A -->|Token A| AUTH
+    B -->|Token B| AUTH
+    AD -->|Passphrase| AUTH
+    
+    AUTH -->|Validate| ID
+    ID -->|Load Policy| POL
+    POL -->|Check Access| KS
+    
     KS --> SEC
-    KS --> MEM
     SEC --> ENC
+    ID --> IDSTORE
+    KS --> AUDIT
 ```
 
-## Key Lifecycle
+## Identity Security Model
 
-### Generation
-
-```mermaid
-sequenceDiagram
-    participant KS as Key Service
-    participant SEC as Security Manager
-    participant ENG as Crypto Engine
-    participant ST as Storage
-    
-    KS->>ENG: generate_key()
-    ENG-->>KS: (secret, public)
-    
-    KS->>SEC: derive_master_key(passphrase)
-    Note right of SEC: PBKDF2(210k iterations)
-    SEC-->>KS: master_key
-    
-    KS->>SEC: wrap(secret, aad)
-    Note right of SEC: AES-256-GCM + nonce
-    SEC-->>KS: wrapped_key
-    
-    KS->>ST: store(metadata, wrapped_key)
-    Note over KS: zeroize(secret)
-```
-
-### Signing
+### Authentication Flow
 
 ```mermaid
 sequenceDiagram
     participant CLI as Client
+    participant AUTH as Auth Interceptor
+    participant ID as Identity Service
+    participant POL as Policy Evaluator
+    participant KS as Key Service
+    
+    CLI->>AUTH: Request + Token
+    AUTH->>AUTH: Decode token
+    AUTH->>ID: Validate token hash
+    ID-->>AUTH: Identity + Role
+    AUTH->>POL: Check permissions
+    POL->>POL: Match resource to identity
+    POL-->>AUTH: Access decision
+    
+    alt Access Denied
+        AUTH-->>CLI: PermissionDenied
+    else Access Granted
+        AUTH->>KS: Forward request
+        KS-->>CLI: Result
+    end
+```
+
+### Identity Types
+
+| Identity | Auth | Access | Storage |
+|----------|------|--------|---------|
+| **Admin** | Passphrase | All keys | `~/.softKMS/keys/admin/` |
+| **Client** | Token | Own keys only | `~/.softKMS/keys/{pubkey}/keys/` |
+
+### Access Control Matrix
+
+| Operation | Admin | Identity A | Identity B |
+|-----------|-------|------------|------------|
+| List keys | ✅ All | ✅ Own only | ✅ Own only |
+| Create key | ✅ | ✅ Own only | ✅ Own only |
+| Sign | ✅ All | ✅ Own only | ✅ Own only |
+| Delete key | ✅ All | ✅ Own only | ❌ |
+| Access A's keys | ✅ | ✅ | ❌ |
+| Access B's keys | ✅ | ❌ | ✅ |
+| Create identity | ✅ | ❌ | ❌ |
+| View audit logs | ✅ | ❌ | ❌ |
+
+## Token Security
+
+### Token Format
+
+```
+token = base64(key_type:pubkey:secret)
+
+Example:
+Raw: ed25519:MCowBQY...:MTIzNDQ0NTU2Njc3
+Base64: ZWQyNTUxOTpNQ293QlFZREsyVndBeUU...
+```
+
+### Security Properties
+
+1. **Entropy**: 256-bit random secret
+2. **Binding**: Token bound to specific public key
+3. **One-way**: Server stores hash, cannot retrieve original
+4. **Revocable**: Identity can be disabled without affecting other identities
+5. **Isolated**: Each identity's token grants access only to their namespace
+
+### Token Validation
+
+```rust
+// 1. Decode token
+let parts = base64_decode(token)?.split(':');
+let key_type = parts[0];
+let pubkey = parts[1];
+let secret = parts[2];
+
+// 2. Hash secret
+let provided_hash = sha256(secret);
+
+// 3. Look up stored hash
+let stored_hash = get_stored_hash(pubkey)?;
+
+// 4. Compare
+if provided_hash != stored_hash {
+    return Err(InvalidToken);
+}
+
+// 5. Check if active
+let identity = get_identity(pubkey)?;
+if !identity.is_active {
+    return Err(RevokedIdentity);
+}
+```
+
+### Token Storage Security
+
+**Client Side:**
+- ✅ Environment variables (process-local)
+- ✅ Secret managers (Kubernetes secrets, AWS Secrets Manager)
+- ✅ Files with 0600 permissions
+- ❌ Hardcoded in scripts
+- ❌ Committed to version control
+- ❌ Shared via chat/email
+
+**Server Side:**
+- Only stores `SHA256(secret)`
+- No way to recover original token
+- Identity metadata stored separately
+- Token shown once at creation, never again
+
+## Key Lifecycle
+
+### Generation with Identity
+
+```mermaid
+sequenceDiagram
+    participant ID as Identity
     participant KS as Key Service
     participant SEC as Security Manager
     participant ST as Storage
     
-    CLI->>KS: sign(key_id, data)
-    
+    ID->>KS: create_key(identity)
     KS->>SEC: get_master_key()
     SEC-->>KS: master_key
     
-    KS->>ST: retrieve(key_id)
-    ST-->>KS: wrapped_key
+    KS->>Crypto: generate_key()
+    Crypto-->>KS: (secret, public)
     
-    KS->>SEC: unwrap(wrapped_key, master_key)
-    SEC-->>KS: secret_key
+    KS->>SEC: wrap(secret, master_key)
+    SEC-->>KS: wrapped_key
     
-    KS->>Crypto: sign(data, secret_key)
-    Crypto-->>KS: signature
+    KS->>ST: store_key(
+        owner=identity.pubkey,
+        wrapped_key
+    )
+    Note over ST: Path: {pubkey}/keys/{key_id}
+```
+
+### Access Control Check
+
+```mermaid
+sequenceDiagram
+    participant CLI as Client
+    participant AUTH as Auth
+    participant ID as Identity Service
+    participant KS as Key Service
+    participant ST as Storage
     
-    Note over KS: zeroize(secret_key)
-    KS-->>CLI: signature
+    CLI->>AUTH: sign(token, key_id)
+    AUTH->>ID: validate_token(token)
+    ID-->>AUTH: identity
+    
+    AUTH->>KS: sign(identity, key_id)
+    KS->>ST: get_key(key_id)
+    ST-->>KS: key_metadata
+    
+    KS->>KS: check_owner(
+        identity.pubkey == key_metadata.owner
+    )
+    
+    alt Owner Match
+        KS->>SEC: unwrap_key()
+        SEC-->>KS: secret_key
+        KS->>Crypto: sign(data, secret_key)
+        Crypto-->>KS: signature
+        KS-->>CLI: signature
+    else Owner Mismatch
+        KS-->>CLI: AccessDenied
+    end
 ```
 
 ## Encryption Details
@@ -132,17 +279,14 @@ master_key = PBKDF2-HMAC-SHA256(
 )
 ```
 
-**Why fixed salt?**
-- Enables passphrase verification across daemon restarts
-- Salt is stored alongside verification hash
-- Still provides brute-force resistance via high iteration count
+**Note:** Master key derived from admin passphrase, not identity tokens. Tokens provide access control, not key encryption.
 
 ### Key Wrapping
 
 ```rust
 // Per-key encryption
 nonce = random(12 bytes)
-aad = metadata_json  // Binds key to its metadata
+aad = metadata_json + owner_pubkey  // Binds key to owner
 
 ciphertext = AES-256-GCM(
     key: master_key,
@@ -158,26 +302,84 @@ ciphertext = AES-256-GCM(
 **AAD (Additional Authenticated Data)** prevents:
 - Key substitution attacks
 - Metadata tampering
-- Cross-key attacks
+- Cross-identity key movement
 
 ### Storage Format
 
 ```
 ~/.softKMS/
 ├── keys/
-│   ├── <key-id>.json       # Metadata (unencrypted)
-│   │   {
-│   │     "id": "uuid",
-│   │     "algorithm": "ed25519",
-│   │     "label": "mykey",
-│   │     "created_at": "2026-01-...",
-│   │     "public_key": "base64..."
-│   │   }
-│   └── <key-id>.enc        # Encrypted key material
-│       [version][nonce][ciphertext][tag]
-├── .salt                     # PBKDF2 salt (32 bytes)
-└── .verification_hash        # Passphrase verification
+│   ├── admin/                      # Admin keys
+│   │   └── {key_id}.enc
+│   ├── ed25519_AAA.../             # Identity A (isolated)
+│   │   └── keys/
+│   │       ├── {key_id}.json       # Metadata + owner
+│   │       └── {key_id}.enc        # Encrypted key
+│   └── ed25519_BBB.../             # Identity B (isolated)
+│       └── keys/
+│           ├── {key_id}.json
+│           └── {key_id}.enc
+├── identities/
+│   ├── ed25519_AAA...json          # Identity record
+│   └── index.json                   # Quick lookup
+├── audit/
+│   └── audit.log                    # JSON Lines
+├── .salt                            # PBKDF2 salt
+└── .verification_hash               # Passphrase verification
 ```
+
+**Key Metadata:**
+```json
+{
+  "id": "key_abc123",
+  "algorithm": "ed25519",
+  "label": "mykey",
+  "owner": "ed25519:MCowBQY...",
+  "created_at": "2026-02-16T14:30:00Z"
+}
+```
+
+## Audit Logging
+
+### Audit Log Structure
+
+**Format**: JSON Lines (append-only)
+
+**Location**: `~/.softKMS/audit/audit.log`
+
+**Entry Schema:**
+```json
+{
+  "sequence": 12345,
+  "timestamp": "2026-02-16T14:30:00Z",
+  "identity_pubkey": "ed25519:MCowBQY...",
+  "identity_type": "client",
+  "action": "Sign",
+  "resource": "ed25519:MCowBQY.../keys/key_001",
+  "allowed": true,
+  "reason": null,
+  "source_ip": "127.0.0.1"
+}
+```
+
+### Logged Events
+
+| Event | Identity Logged | Resource | Result |
+|-------|----------------|----------|--------|
+| Identity created | Admin | New identity | ✅ |
+| Identity revoked | Admin | Revoked identity | ✅ |
+| Key created | Creator | New key | ✅ |
+| Key deleted | Requester | Deleted key | ✅/❌ |
+| Sign | Requester | Key used | ✅/❌ |
+| Access denied | Requester | Attempted resource | ❌ |
+| Auth failure | Attempted | - | ❌ |
+
+### Log Security
+
+- **Append-only**: Cannot modify history
+- **Rotation**: Daily, 30-day retention
+- **Integrity**: Future - hash chain
+- **Export**: Can forward to SIEM
 
 ## Threat Model
 
@@ -188,126 +390,106 @@ ciphertext = AES-256-GCM(
 | **Storage theft** | AES-256-GCM encryption |
 | **Passphrase brute-force** | PBKDF2 with 210k iterations |
 | **Memory dumps** | `zeroize` + `secrecy` crate |
-| **Key substitution** | AAD binds key to metadata |
+| **Key substitution** | AAD binds key to owner |
 | **Network sniffing** | gRPC over localhost only |
-| **Weak passphrases** | Verification hash prevents guess-check |
+| **Weak passphrases** | Verification hash |
+| **Cross-identity access** | Namespace isolation |
+| **Token replay** | Bound to specific identity |
+| **Token interception** | TLS (future) + localhost only |
+| **Identity spoofing** | Cryptographic token validation |
+
+### Identity-Specific Threats
+
+| Threat | Risk | Mitigation |
+|--------|------|-----------|
+| **Token leak** | High | Revoke immediately, create new identity |
+| **Token sharing** | Medium | One identity per service, monitor audit logs |
+| **Privilege escalation** | Low | Admin operations require passphrase |
+| **Key enumeration** | Low | Can only list own keys |
+| **DoS via identity creation** | Low | Admin controls identity creation |
 
 ### Accepted Risks
 
-| Risk | Rationale |
-|------|-----------|
-| **Daemon compromise** | Process isolation, run as dedicated user |
-| **Physical memory access** | Protected by OS memory isolation |
-| **Side-channel attacks** | Rust + constant-time crypto primitives |
-| **Social engineering** | Out of scope - user education needed |
+| Risk | Rationale | Mitigation |
+|------|-----------|------------|
+| **Daemon compromise** | Process isolation | Run as dedicated user, systemd hardening |
+| **Physical memory access** | OS protection | mlock, encrypted swap |
+| **Side-channel attacks** | Constant-time crypto | Rust + ring crate |
+| **Social engineering** | Out of scope | User education, token security guidelines |
+| **Backup exposure** | User responsibility | Encrypted backups, separate passphrase storage |
 
-### Out of Scope
+## Security Best Practices
 
-- **Malware on client machine** - User's responsibility
-- **Hardware attacks** - TPM2 support planned
-- **Denial of service** - Not a security concern
-- **Backup security** - User manages backups
+### For Administrators
+
+1. **Strong passphrase**: 16+ chars, mixed case, symbols
+2. **Dedicated user**: Run daemon as non-root
+3. **File permissions**: `700` on data directory
+4. **Regular backups**: Encrypted, offline
+5. **Monitor audit logs**: Watch for anomalies
+6. **Revoke unused identities**: Minimize attack surface
+7. **Token rotation**: Periodic identity recreation
+
+### For Service Operators
+
+1. **One identity per service**: No sharing
+2. **Secure token storage**: Secret managers only
+3. **Environment isolation**: Dev/staging/prod identities
+4. **Key cleanup**: Delete temporary keys
+5. **Access monitoring**: Log analysis
+6. **Least privilege**: Minimal required operations
+
+### For Token Security
+
+```bash
+# ✅ Good: Kubernetes secret
+kubectl create secret generic softkms-token \
+  --from-literal=token="..."
+
+# ✅ Good: Docker secret
+echo "..." | docker secret create softkms_token -
+
+# ✅ Good: Environment file (secure)
+chmod 600 /etc/softkms/token.env
+source /etc/softkms/token.env
+
+# ❌ Bad: Hardcoded
+curl ... --token "ZGlkOmtleTp6..."
+
+# ❌ Bad: Process listing visible
+export SOFTKMS_TOKEN="..."  # In shared environment
+
+# ❌ Bad: Version control
+echo $SOFTKMS_TOKEN > config.txt  # Oops!
+```
 
 ## Security Guarantees
 
 ### Confidentiality
-- Keys are encrypted at rest with AES-256-GCM
-- Master key derived with 210k PBKDF2 iterations
-- Keys only in memory during operations
+- ✅ Keys encrypted at rest (AES-256-GCM)
+- ✅ Master key derived with 210k PBKDF2
+- ✅ Keys only unwrapped during operations
+- ✅ Identity isolation (no cross-access)
+- ✅ Token secrets hashed (SHA256)
 
 ### Integrity
-- AAD prevents key/metadata tampering
-- GCM authentication tags
-- Verification hash prevents passphrase guessing
+- ✅ AAD prevents key/metadata tampering
+- ✅ GCM authentication tags
+- ✅ Owner verification on all operations
+- ✅ Audit log of all access attempts
+- ✅ Passphrase verification hash
 
 ### Availability
-- No single point of failure (file storage)
-- No network dependencies
-- Graceful degradation on errors
+- ✅ Isolated failure domains per identity
+- ✅ No single point of failure
+- ✅ Graceful degradation
+- ✅ Audit logs for forensics
 
-## Security Best Practices
-
-### Passphrases
-
-**Requirements:**
-- Minimum 12 characters
-- Mix of uppercase, lowercase, numbers, symbols
-- Not dictionary words
-- Unique per keystore
-
-**Example strong passphrase:**
-```
-Tr0ub4dor&3!2026-KMS
-```
-
-### Daemon Security
-
-```bash
-# Run as dedicated user
-useradd -r softkms
-chown -R softkms:softkms /var/lib/softkms
-
-# Restrict permissions
-chmod 700 /var/lib/softkms
-chmod 600 /var/lib/softkms/.salt
-
-# Systemd hardening
-# See systemd service file for example
-```
-
-### Backup Security
-
-```bash
-# Backup encrypted keys
-tar czf softkms-backup.tar.gz ~/.softKMS/keys/
-
-# Store passphrase separately
-# Use password manager or hardware token
-```
-
-## Security Testing
-
-### Automated Tests
-
-The codebase includes security-focused tests:
-
-| Test | Purpose | Location |
-|------|---------|----------|
-| `test_wrong_passphrase` | Verify incorrect passphrase fails | `security/wrapper.rs` |
-| `test_passphrase_consistency` | Same passphrase works across operations | `integration_tests.rs` |
-| `test_wrapped_key_tampering` | Detect modified ciphertext | `security/wrapper.rs` |
-| `test_cache_expiration` | Verify master key cache TTL | `security/mod.rs` |
-| `test_encrypted_storage` | Verify keys encrypted at rest | `e2e/smoke_tests.rs` |
-
-### Manual Security Verification
-
-```bash
-# 1. Verify encrypted storage
-ls -la ~/.softKMS/keys/
-# Should see .enc files
-
-# 2. Check no plaintext keys
-strings ~/.softKMS/keys/*.enc | head
-# Should be garbage/random
-
-# 3. Verify passphrase required
-softkms list
-# Should prompt for passphrase (if not cached)
-
-# 4. Check daemon doesn't expose keys
-curl http://localhost:8080/keys
-# Should fail or not expose key material
-```
-
-### Penetration Testing Checklist
-
-- [ ] Verify encrypted files contain no plaintext
-- [ ] Test wrong passphrase rejection
-- [ ] Verify keys not in process memory after use
-- [ ] Check gRPC only binds to localhost
-- [ ] Verify cache expiration
-- [ ] Test key deletion removes files
-- [ ] Verify AAD prevents substitution
+### Access Control
+- ✅ Role-based (admin/client)
+- ✅ Identity isolation (namespace)
+- ✅ Resource-level permissions
+- ✅ Audit trail for all operations
 
 ## Compliance
 
@@ -317,16 +499,82 @@ curl http://localhost:8080/keys
 - **PBKDF2** - NIST SP 800-132
 - **Ed25519** - RFC 8032
 - **P-256** - NIST SP 800-186
+- **SHA-256** - FIPS 180-4
 
-### Audit Logging (Future)
+### Audit Requirements
 
-```rust
-// Planned: All security-relevant events logged
-key_created(user, key_id)
-key_accessed(user, key_id, operation)
-sign_attempt(user, key_id, success)
-passphrase_changed(user)
+- ✅ All operations logged
+- ✅ Identity context recorded
+- ✅ Success/failure tracked
+- ✅ Resource access documented
+- ✅ Immutable audit trail
+
+### Data Residency
+
+- Keys encrypted at rest
+- Identity metadata local
+- Audit logs configurable export
+- No external dependencies
+
+## Security Testing
+
+### Automated Tests
+
+| Test | Purpose | Location |
+|------|---------|----------|
+| `test_token_validation` | Valid/invalid tokens | `identity/mod.rs` |
+| `test_identity_isolation` | Cross-identity access denied | `identity/policy.rs` |
+| `test_revoked_identity` | Revoked token rejected | `identity/storage.rs` |
+| `test_wrong_passphrase` | Admin auth failure | `security/wrapper.rs` |
+| `test_access_denied_logged` | Audit log on denial | `audit/mod.rs` |
+| `test_owner_verification` | Key ownership check | `key_service.rs` |
+
+### Manual Security Verification
+
+```bash
+# 1. Verify identity isolation
+# Create two identities
+TOKEN_A=$(softkms identity create --type test | grep Token | cut -d' ' -f2)
+TOKEN_B=$(softkms identity create --type test | grep Token | cut -d' ' -f2)
+
+# A creates key
+softkms --token "$TOKEN_A" generate --label key-a
+
+# B tries to access A's key
+softkms --token "$TOKEN_B" sign --label key-a --data "test"
+# Should fail: Access denied
+
+# 2. Verify token not stored
+strings ~/.softKMS/identities/*.json | grep "token"
+# Should NOT show full token
+
+# 3. Verify audit log
+cat ~/.softKMS/audit/audit.log | jq '.[] | select(.allowed==false)'
+# Should show denied attempts
+
+# 4. Verify encrypted storage
+file ~/.softKMS/keys/*/*/*.enc
+# Should show: data (encrypted)
 ```
+
+### Penetration Testing Checklist
+
+Identity Security:
+- [ ] Create identity, save token, verify works
+- [ ] Try accessing another identity's keys (should fail)
+- [ ] Revoke identity, verify token rejected
+- [ ] Try guessing token (should fail)
+- [ ] Verify token not in process memory after use
+- [ ] Check audit log shows all operations
+- [ ] Verify admin can see all keys
+- [ ] Test token replay (should work, bound to identity)
+
+Key Security:
+- [ ] Verify encrypted files contain no plaintext
+- [ ] Test wrong passphrase rejection
+- [ ] Verify keys not in process memory after use
+- [ ] Check gRPC only binds to localhost
+- [ ] Verify cache expiration
 
 ## Security Vulnerabilities
 
@@ -342,16 +590,18 @@ Report security issues privately:
 
 1. **Fixed salt** - Trade-off for passphrase verification
 2. **Memory protection** - Best effort via Rust, not hardware
-3. **No audit log** - Not yet implemented
+3. **No token expiration** - Manual revocation only (for now)
 4. **No HSM support** - Planned for TPM2
+5. **No real-time audit streaming** - File-based only
 
 ## References
 
-- [Architecture](ARCHITECTURE.md) - System design
+- [Architecture](ARCHITECTURE.md) - System design with identity layer
+- [Identity Management](IDENTITIES.md) - Identity system details
 - [Usage Guide](USAGE.md) - Practical security practices
 - [API Reference](API.md) - Security-related API calls
 
 ---
 
 **Last Updated**: 2026-02-16
-**Version**: 0.2
+**Version**: 0.3

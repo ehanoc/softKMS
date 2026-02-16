@@ -2,6 +2,21 @@ syntax = "proto3";
 
 package softkms;
 
+// Identity service for managing client identities
+service IdentityService {
+  // Create a new identity (admin only)
+  rpc CreateIdentity(CreateIdentityRequest) returns (CreateIdentityResponse);
+
+  // List all identities (admin only)
+  rpc ListIdentities(ListIdentitiesRequest) returns (ListIdentitiesResponse);
+
+  // Get identity details
+  rpc GetIdentity(GetIdentityRequest) returns (GetIdentityResponse);
+
+  // Revoke an identity (admin only)
+  rpc RevokeIdentity(RevokeIdentityRequest) returns (RevokeIdentityResponse);
+}
+
 // Key service for managing cryptographic keys
 service KeyStore {
   // Initialize the daemon with a passphrase
@@ -281,6 +296,84 @@ message ChangePassphraseResponse {
   bool success = 1;
   int32 keys_updated = 2;  // Number of keys re-encrypted
   string message = 3;
+}
+
+// Identity client types
+enum ClientType {
+  CLIENT_TYPE_UNSPECIFIED = 0;
+  CLIENT_TYPE_AI_AGENT = 1;
+  CLIENT_TYPE_SERVICE = 2;
+  CLIENT_TYPE_USER = 3;
+  CLIENT_TYPE_PKCS11 = 4;
+}
+
+// Identity key types
+enum IdentityKeyType {
+  IDENTITY_KEY_TYPE_UNSPECIFIED = 0;
+  IDENTITY_KEY_TYPE_ED25519 = 1;
+  IDENTITY_KEY_TYPE_P256 = 2;
+}
+
+// Create identity request
+message CreateIdentityRequest {
+  string passphrase = 1;           // Admin passphrase
+  ClientType client_type = 2;
+  IdentityKeyType key_type = 3;
+  optional string description = 4;
+}
+
+// Create identity response
+message CreateIdentityResponse {
+  string token = 1;                // Bearer token (SHOW ONCE!)
+  string public_key = 2;           // "ed25519:..." or "p256:..."
+  string created_at = 3;
+}
+
+// List identities request
+message ListIdentitiesRequest {
+  string passphrase = 1;
+  bool include_inactive = 2;
+}
+
+// Identity info
+message IdentityInfo {
+  string public_key = 1;
+  IdentityKeyType key_type = 2;
+  ClientType client_type = 3;
+  string description = 4;
+  string created_at = 5;
+  string last_used = 6;
+  bool is_active = 7;
+  uint32 key_count = 8;
+}
+
+// List identities response
+message ListIdentitiesResponse {
+  repeated IdentityInfo identities = 1;
+}
+
+// Get identity request
+message GetIdentityRequest {
+  string token = 1;                // Token of requesting identity
+  string public_key = 2;           // Target identity (optional, admin can query any)
+}
+
+// Get identity response
+message GetIdentityResponse {
+  IdentityInfo identity = 1;
+}
+
+// Revoke identity request
+message RevokeIdentityRequest {
+  string passphrase = 1;
+  string public_key = 2;
+  bool force = 3;
+}
+
+// Revoke identity response
+message RevokeIdentityResponse {
+  bool success = 1;
+  string message = 2;
 }
 
 // Health request

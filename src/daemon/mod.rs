@@ -7,6 +7,8 @@
 //! 4. Manage PID file
 //! 5. Health checks
 
+use crate::audit::AuditLogger;
+use crate::identity::storage::IdentityStore;
 use crate::key_service::KeyService;
 use crate::security::{SecurityConfig, SecurityManager, create_cache};
 use crate::storage::file::FileStorage;
@@ -23,6 +25,8 @@ pub struct Daemon {
     storage: Arc<dyn StorageBackend>,
     security_manager: Arc<SecurityManager>,
     key_service: Arc<KeyService>,
+    identity_store: Arc<IdentityStore>,
+    audit_logger: Arc<AuditLogger>,
     pid_file: Option<PathBuf>,
 }
 
@@ -95,11 +99,23 @@ impl Daemon {
             config.clone(),
         ));
 
+        // Create identity store
+        let identity_store = Arc::new(IdentityStore::new(config.storage.path.clone()));
+        identity_store.init().await?;
+        info!("Initialized identity store");
+
+        // Create audit logger
+        let audit_path = config.storage.path.join("audit");
+        let audit_logger = Arc::new(AuditLogger::new(audit_path));
+        info!("Initialized audit logger");
+
         Ok(Self {
             config,
             storage,
             security_manager,
             key_service,
+            identity_store,
+            audit_logger,
             pid_file: None,
         })
     }

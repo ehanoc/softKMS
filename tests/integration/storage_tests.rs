@@ -48,6 +48,7 @@ async fn test_file_storage_store_and_retrieve() {
         created_at: chrono::Utc::now(),
         attributes: std::collections::HashMap::new(),
         public_key: vec![],
+        owner_identity: None,
     };
     let encrypted_data = vec![1, 2, 3, 4, 5]; // Fake encrypted data
     
@@ -107,6 +108,7 @@ async fn test_file_storage_exists() {
         created_at: chrono::Utc::now(),
         attributes: std::collections::HashMap::new(),
         public_key: vec![],
+        owner_identity: None,
     };
     storage.store_key(key_id, &metadata, b"test").await.unwrap();
     
@@ -139,6 +141,7 @@ async fn test_file_storage_list_keys() {
             created_at: chrono::Utc::now(),
             attributes: std::collections::HashMap::new(),
             public_key: vec![],
+            owner_identity: None,  // Admin-owned for test
         };
         storage.store_key(key_id, &metadata, b"test").await.unwrap();
     }
@@ -167,6 +170,7 @@ async fn test_file_storage_delete() {
         created_at: chrono::Utc::now(),
         attributes: std::collections::HashMap::new(),
         public_key: vec![],
+        owner_identity: None,
     };
     
     // Store and verify exists

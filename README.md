@@ -17,6 +17,7 @@ A secure, modern alternative to SoftHSM with HD wallet support, written in Rust.
 | **Crypto** | Fixed (RSA/ECC) | Pluggable (Ed25519, P-256) |
 | **APIs** | PKCS#11 only | PKCS#11 + gRPC + CLI |
 | **Deployment** | Manual | Docker + systemd |
+| **Identity** | Single user | Multi-identity with isolation |
 
 ## 60-Second Quick Start
 
@@ -27,19 +28,62 @@ cargo build --release
 # Start daemon
 ./target/release/softkms-daemon --foreground &
 
-# Initialize with passphrase
+# Initialize with passphrase (admin)
 ./target/release/softkms init
 
-# Generate a key
-./target/release/softkms generate --algorithm ed25519 --label mykey
+# Create a client identity (for services/agents)
+./target/release/softkms identity create --type ai-agent
+# Token: <SAVE THIS!>
+
+# Use token to generate keys (isolated to this identity)
+./target/release/softkms --token <token> generate --algorithm ed25519 --label mykey
 
 # Sign data
-./target/release/softkms sign --label mykey --data "Hello World"
+./target/release/softkms --token <token> sign --label mykey --data "Hello World"
 ```
+
+## Identity-Based Access Control
+
+softKMS uses ECC public keys for identity and provides **isolated access** between clients:
+
+- **Admin** (passphrase): Full access to all keys
+- **Clients** (token): Access only to keys they create
+- **Isolation**: Each identity's keys are namespace-isolated
+
+### Creating Identities
+
+```bash
+# Create Ed25519 identity (default, fast)
+$ softkms identity create --type ai-agent --description "Trading Bot"
+Public Key: ed25519:MCowBQYDK2VwAyE...
+Token: <SAVE THIS - never shown again!>
+
+# Create P-256 identity (for PKCS#11 compatibility)
+$ softkms identity create --type service --key-type p256
+Public Key: p256:BL5a5tD5x0vM...
+Token: <SAVE THIS>
+```
+
+### Using Tokens
+
+```bash
+# Set token environment variable
+export SOFTKMS_TOKEN="..."
+
+# Or pass directly
+softkms --token <token> list
+
+# PKCS#11 (use token as PIN)
+pkcs11-tool --module libsoftkms.so --login --pin "<token>" --list-keys
+```
+
+See [Identity Management](docs/IDENTITIES.md) for complete documentation.
 
 ## Key Features
 
 - **🔐 Secure Key Storage** - AES-256-GCM encrypted at rest with PBKDF2 key derivation
+- **👥 Identity Isolation** - Multi-tenant with ECC-based identities (Ed25519 default, P-256 optional)
+- **🎟️ Bearer Tokens** - Simple token-based auth with ownership isolation
 - **🌳 HD Wallet Support** - BIP32/BIP44 hierarchical deterministic keys (Ed25519)
 - **🔌 Multiple APIs** - PKCS#11, gRPC, and CLI interfaces
 - **🚀 Modern Architecture** - Async Rust with pluggable storage backends
@@ -50,10 +94,15 @@ cargo build --release
 
 ```mermaid
 flowchart TB
-    subgraph "API Layer"
+    subgraph "Client Layer"
         CLI[CLI Client]
         PKCS[PKCS#11]
         GRPC[gRPC]
+    end
+
+    subgraph "Identity Layer"
+        AUTH[Auth Interceptor]
+        ID[Identity Service]
     end
 
     subgraph "Core"
@@ -65,15 +114,19 @@ flowchart TB
 
     subgraph "Storage"
         FILE[Encrypted Files]
+        IDSTORE[Identity Store]
     end
 
     CLI --> GRPC
     PKCS --> GRPC
-    GRPC --> KEY
+    GRPC --> AUTH
+    AUTH --> ID
+    ID --> KEY
     KEY --> CRYPTO
     KEY --> HD
     KEY --> SEC
     SEC --> FILE
+    ID --> IDSTORE
 ```
 
 ## Installation
@@ -100,6 +153,7 @@ docker run -p 50051:50051 softkms
 ## Documentation
 
 - **[Usage Guide](docs/USAGE.md)** - Complete CLI, PKCS#11, and HD wallet usage
+- **[Identity Management](docs/IDENTITIES.md)** - Multi-identity authentication and access control
 - **[Architecture](docs/ARCHITECTURE.md)** - System design and components
 - **[Security Model](docs/SECURITY.md)** - Security features and threat model
 - **[API Reference](docs/API.md)** - gRPC API documentation
@@ -107,26 +161,28 @@ docker run -p 50051:50051 softkms
 ## Quick Commands
 
 ```bash
-# Initialize daemon
+# Initialize daemon (admin)
 softkms init
 
-# Generate keys
+# Generate keys as admin
 softkms generate --algorithm ed25519 --label mykey
-softkms generate --algorithm p256 --label mykey
+
+# Create client identity
+softkms identity create --type ai-agent
 
 # Import HD wallet seed
-softkms import-seed --mnemonic "word1 word2 ..." --label wallet
+softkms --token <token> import-seed --mnemonic "word1 word2 ..." --label wallet
 
 # Derive child keys
-softkms derive --seed wallet --path "m/44'/283'/0'/0/0" --label algo-key
+softkms --token <token> derive --seed wallet --path "m/44'/283'/0'/0/0" --label algo-key
 
 # Sign and verify
-softkms sign --label mykey --data "message"
-softkms verify --label mykey --data "message" --signature "..."
+softkms --token <token> sign --label mykey --data "message"
+softkms --token <token> verify --label mykey --data "message" --signature "..."
 
 # PKCS#11 usage
 pkcs11-tool --module libsoftkms.so --list-slots
-pkcs11-tool --module libsoftkms.so --keypairgen --key-type EC:prime256v1
+pkcs11-tool --module libsoftkms.so --login --pin "<token>" --keypairgen --key-type EC:prime256v1
 ```
 
 ## Development
@@ -153,6 +209,8 @@ cargo test --test pkcs11_e2e_tests
 - ✅ PKCS#11 compatibility layer
 - ✅ Encrypted file storage
 - ✅ CLI client
+- ✅ Multi-identity with token-based auth
+- ✅ Key ownership isolation
 
 **In Progress:**
 - 🚧 REST API (skeleton)
@@ -162,7 +220,7 @@ cargo test --test pkcs11_e2e_tests
 - TPM2 hardware integration
 - HashiCorp Vault backend
 - Prometheus metrics
-- RBAC and ephemeral tokens
+- Custom policies per identity
 
 ## Security
 
@@ -171,8 +229,10 @@ softKMS uses industry-standard security practices:
 - **AES-256-GCM** for key encryption at rest
 - **PBKDF2** with 210k iterations for master key derivation
 - **Ed25519** and **P-256** for cryptographic operations
+- **Identity Isolation** - Each client sees only their own keys
 - **Secure memory** handling with automatic zeroization
 - **No key export** - keys never leave the daemon
+- **Audit logging** - All operations logged with identity context
 
 See [SECURITY.md](docs/SECURITY.md) for details.
 

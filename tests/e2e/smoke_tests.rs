@@ -177,12 +177,13 @@ async fn test_key_lifecycle_with_passphrase() {
     let service = KeyService::new(storage, security_manager, config);
     let passphrase = "my_secure_passphrase_123";
 
-    // 1. Create key
+    // 1. Create key (admin-owned)
     let metadata = service.create_key(
         "ed25519".to_string(),
         Some("Test Key".to_string()),
         std::collections::HashMap::new(),
         passphrase,
+        None,
     ).await.unwrap();
 
     assert_eq!(metadata.algorithm, "ed25519");
@@ -197,29 +198,30 @@ async fn test_key_lifecycle_with_passphrase() {
     assert!(key_info.is_some());
     assert_eq!(key_info.unwrap().label, Some("Test Key".to_string()));
 
-    // 4. Sign data
+    // 4. Sign data (admin request)
     let data = b"Hello, World!";
-    let signature = service.sign(metadata.id, data, passphrase).await.unwrap();
+    let signature = service.sign(metadata.id, data, passphrase, None).await.unwrap();
     assert_eq!(signature.algorithm, "ed25519");
     assert_eq!(signature.bytes.len(), 64);
 
-    // 5. Create second key with same passphrase
+    // 5. Create second key with same passphrase (admin-owned)
     let metadata2 = service.create_key(
         "ed25519".to_string(),
         Some("Second Key".to_string()),
         std::collections::HashMap::new(),
         passphrase,
+        None,
     ).await.unwrap();
 
-    // 6. Verify both keys work
-    let sig1 = service.sign(metadata.id, data, passphrase).await.unwrap();
-    let sig2 = service.sign(metadata2.id, data, passphrase).await.unwrap();
+    // 6. Verify both keys work (admin requests)
+    let sig1 = service.sign(metadata.id, data, passphrase, None).await.unwrap();
+    let sig2 = service.sign(metadata2.id, data, passphrase, None).await.unwrap();
     assert_ne!(sig1.bytes, sig2.bytes); // Different keys, different signatures
 
     // 7. Wrong passphrase behavior
     // Note: Currently SecurityManager caches master key, so wrong passphrase
     // only fails if cache is empty. To properly test, we'd need a fresh instance.
-    let _wrong_result = service.sign(metadata.id, data, "wrong_passphrase").await;
+    let _wrong_result = service.sign(metadata.id, data, "wrong_passphrase", None).await;
     // Result depends on cache state - may succeed if cached, fail if not
 
     // 8. Delete key
@@ -303,12 +305,13 @@ async fn test_encrypted_storage_format() {
     let service = KeyService::new(storage, security_manager, config);
     let passphrase = "storage_test_passphrase";
 
-    // Create key
+    // Create key (admin-owned)
     let metadata = service.create_key(
         "ed25519".to_string(),
         None,
         std::collections::HashMap::new(),
         passphrase,
+        None,
     ).await.unwrap();
 
     // Verify encrypted file exists
