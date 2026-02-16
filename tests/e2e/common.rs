@@ -10,14 +10,28 @@ use tempfile::TempDir;
 static NEXT_PORT: AtomicU16 = AtomicU16::new(51000);
 
 fn find_available_port() -> u16 {
-    // Simple approach: try ports from 51000 upward
-    for port in (51000..52000).rev() {
-        if TcpListener::bind(format!("127.0.0.1:{}", port)).is_ok() {
-            return port;
+    // Atomic counter to avoid port conflicts between parallel tests
+    for _ in 0..200 {
+        let port = NEXT_PORT.fetch_add(1, Ordering::SeqCst);
+        let effective_port = if port >= 52000 {
+            // Wrap around to avoid running out of ports
+            51000 + (port - 52000)
+        } else {
+            port
+        };
+
+        if TcpListener::bind(format!("127.0.0.1:{}", effective_port)).is_ok() {
+            return effective_port;
         }
     }
-    // Fallback to random
-    0
+    // Fallback: let the OS assign a random available port
+    if let Ok(listener) = TcpListener::bind("127.0.0.1:0") {
+        if let Ok(addr) = listener.local_addr() {
+            return addr.port();
+        }
+    }
+    // Last resort
+    51000
 }
 
 /// RAII wrapper for softKMS daemon process
@@ -108,16 +122,22 @@ impl ServerGuard {
 
         while start.elapsed().as_secs() < timeout_secs {
             let output = Command::new("target/debug/softkms")
-                .args(&["--server", &addr, "list"])
+                .args(&["--server", &addr, "health"])
                 .output();
 
             if let Ok(output) = output {
                 if output.status.success() {
                     return true;
                 }
+                eprintln!(
+                    "Health check failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            } else {
+                eprintln!("Health check error: {:?}", output.err());
             }
 
-            std::thread::sleep(Duration::from_millis(200));
+            std::thread::sleep(Duration::from_millis(500));
         }
 
         false
@@ -145,17 +165,24 @@ impl ServerGuard {
         }
 
         // Give daemon time to fully initialize
-        std::thread::sleep(Duration::from_secs(2));
+        std::thread::sleep(Duration::from_secs(4));
 
-        // Verify daemon is still working
-        if !self.wait_ready(10) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Daemon not ready after init",
-            ));
+        // Verify daemon is still working with retries
+        let mut retries = 5;
+        while retries > 0 {
+            if self.wait_ready(10) {
+                return Ok(());
+            }
+            retries -= 1;
+            if retries > 0 {
+                std::thread::sleep(Duration::from_secs(1));
+            }
         }
 
-        Ok(())
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Daemon not ready after init",
+        ))
     }
 }
 
