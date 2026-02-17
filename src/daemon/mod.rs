@@ -220,10 +220,11 @@ impl Daemon {
         let config = self.config.clone();
         let key_service = self.key_service.clone();
         let security_manager = self.security_manager.clone();
+        let identity_store = self.identity_store.clone();
 
         let handle = tokio::spawn(async move {
             // Start gRPC server
-            if let Err(e) = crate::api::grpc::start(&config, key_service, security_manager).await {
+            if let Err(e) = crate::api::grpc::start(&config, key_service, security_manager, identity_store).await {
                 error!("gRPC server error: {}", e);
             }
         });

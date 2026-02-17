@@ -95,7 +95,8 @@ message CreateKeyRequest {
   string algorithm = 1;
   optional string label = 2;
   map<string, string> attributes = 3;
-  string passphrase = 4;  // Keystore passphrase for wrapping
+  string passphrase = 4;  // Keystore passphrase for wrapping (admin auth)
+  string auth_token = 5;  // Identity token for client auth (alternative to passphrase)
 }
 
 // Create key response
@@ -110,6 +111,7 @@ message CreateKeyResponse {
 // List keys request
 message ListKeysRequest {
   bool include_public_keys = 1;
+  string auth_token = 2;  // Identity token for client auth
 }
 
 // Key info
@@ -132,6 +134,7 @@ message ListKeysResponse {
 message GetKeyRequest {
   string key_id = 1;
   bool include_public_key = 2;
+  string auth_token = 3;  // Identity token for client auth
 }
 
 // Get key response
@@ -143,6 +146,7 @@ message GetKeyResponse {
 message DeleteKeyRequest {
   string key_id = 1;
   bool force = 2;
+  string auth_token = 3;  // Identity token for client auth
 }
 
 // Delete key response
@@ -154,7 +158,8 @@ message DeleteKeyResponse {
 message SignRequest {
   string key_id = 1;
   bytes data = 2;  // raw bytes to sign
-  string passphrase = 3;  // Keystore passphrase for unwrapping
+  string passphrase = 3;  // Keystore passphrase for unwrapping (admin auth)
+  string auth_token = 4;  // Identity token for client auth (alternative to passphrase)
 }
 
 // Sign response

@@ -20,7 +20,10 @@ use softkms::api::softkms::{
     ImportSeedRequest, ListKeysRequest, SignRequest,
     DeriveP256Request, DeriveEd25519Request, HealthRequest, InitRequest,
     VerifyRequest, DerivationScheme,
+    CreateIdentityRequest, ListIdentitiesRequest, RevokeIdentityRequest,
+    ClientType, IdentityKeyType,
 };
+use softkms::api::softkms::identity_service_client::IdentityServiceClient;
 
 #[derive(Parser)]
 #[command(name = "softkms")]
@@ -201,6 +204,44 @@ enum Commands {
         #[arg(long)]
         module: bool,
     },
+
+    /// Identity management commands
+    Identity {
+        #[command(subcommand)]
+        command: IdentityCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum IdentityCommands {
+    /// Create a new identity
+    Create {
+        /// Identity type: ai-agent, service, user, pkcs11
+        #[arg(short, long)]
+        r#type: String,
+
+        /// Description of the identity
+        #[arg(short, long)]
+        description: Option<String>,
+    },
+
+    /// List all identities
+    List {
+        /// Include inactive identities
+        #[arg(long)]
+        include_inactive: bool,
+    },
+
+    /// Revoke an identity
+    Revoke {
+        /// Public key of the identity to revoke
+        #[arg(short, long)]
+        public_key: String,
+
+        /// Force revocation without confirmation
+        #[arg(short, long)]
+        force: bool,
+    },
 }
 
 /// Lookup key ID by label
@@ -209,7 +250,8 @@ async fn lookup_key_by_label(
     label: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let list_request = tonic::Request::new(ListKeysRequest {
-        include_public_keys: false,
+            auth_token: String::new(),
+            include_public_keys: false,
     });
     
     let response = client.list_keys(list_request).await?;
@@ -348,6 +390,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     algorithm: algorithm.clone(),
                     label,
                     attributes: std::collections::HashMap::new(),
+                    auth_token: String::new(),
                     passphrase,
                 });
 
@@ -372,7 +415,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         
         Commands::List { detailed: _ } => {
             let request = tonic::Request::new(ListKeysRequest {
-                include_public_keys: false,
+                    auth_token: String::new(),
+                    include_public_keys: false,
             });
             
             match client.list_keys(request).await {
@@ -406,7 +450,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 kid
             } else if let Some(lbl) = label {
                 let list_request = tonic::Request::new(ListKeysRequest {
-                    include_public_keys: false,
+                        auth_token: String::new(),
+                        include_public_keys: false,
                 });
                 
                 match client.list_keys(list_request).await {
@@ -459,6 +504,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 key_id: key_id.clone(),
                 data: data_bytes,
                 passphrase,
+                auth_token: String::new(),
             });
             
             match client.sign(request).await {
@@ -688,6 +734,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let request = tonic::Request::new(DeleteKeyRequest {
                 key_id: key_id.clone(),
                 force: true,
+                auth_token: String::new(),
             });
             
             match client.delete_key(request).await {
@@ -721,6 +768,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let request = tonic::Request::new(GetKeyRequest {
                 key_id: key_id.clone(),
                 include_public_key: true,
+                auth_token: String::new(),
             });
             
             match client.get_key(request).await {
@@ -819,6 +867,118 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Pkcs11 { module } => {
             // Already handled above - this is a fallback
             unreachable!("PKCS#11 command should be handled before daemon connection");
+        }
+        
+        Commands::Identity { command } => {
+            let passphrase = match get_passphrase(cli.passphrase.clone()) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("{}", e);
+                    std::process::exit(1);
+                }
+            };
+            
+            let mut identity_client = IdentityServiceClient::connect(cli.server.clone()).await?;
+            
+            match command {
+                IdentityCommands::Create { r#type, description } => {
+                    let client_type = match r#type.as_str() {
+                        "ai-agent" => ClientType::AiAgent,
+                        "service" => ClientType::Service,
+                        "user" => ClientType::User,
+                        "pkcs11" => ClientType::Pkcs11,
+                        _ => {
+                            eprintln!("Unknown identity type: {}. Use 'ai-agent', 'service', 'user', or 'pkcs11'", r#type);
+                            std::process::exit(1);
+                        }
+                    };
+                    
+                    let request = tonic::Request::new(CreateIdentityRequest {
+                        passphrase,
+                        client_type: client_type as i32,
+                        key_type: IdentityKeyType::Ed25519 as i32,
+                        description,
+                    });
+                    
+                    match identity_client.create_identity(request).await {
+                        Ok(response) => {
+                            let resp = response.into_inner();
+                            println!("Identity created successfully:");
+                            println!("  Token: {}", resp.token);
+                            println!("  Public Key: {}", resp.public_key);
+                            println!("  Created At: {}", resp.created_at);
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to create identity: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                
+                IdentityCommands::List { include_inactive } => {
+                    let request = tonic::Request::new(ListIdentitiesRequest {
+                        passphrase,
+                        include_inactive,
+                    });
+                    
+                        match identity_client.list_identities(request).await {
+                        Ok(response) => {
+                            let resp = response.into_inner();
+                            let count = resp.identities.len();
+                            println!("Identities:");
+                            for identity in &resp.identities {
+                                let status = if identity.is_active { "active" } else { "inactive" };
+                                println!("  {}:", identity.public_key);
+                                println!("    Type: {:?}", identity.client_type);
+                                println!("    Status: {}", status);
+                                if !identity.description.is_empty() {
+                                    println!("    Description: {}", identity.description);
+                                }
+                                println!("    Created: {}", identity.created_at);
+                                println!("    Keys: {}", identity.key_count);
+                            }
+                            println!("");
+                            println!("Total: {} identities", count);
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to list identities: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                
+                IdentityCommands::Revoke { public_key, force } => {
+                    if !force {
+                        println!("Are you sure you want to revoke identity {}?", public_key);
+                        println!("This will disable all keys owned by this identity.");
+                        println!("Use --force to confirm revocation.");
+                        return Ok(());
+                    }
+                    
+                    let request = tonic::Request::new(RevokeIdentityRequest {
+                        passphrase,
+                        public_key,
+                        force: true,
+                    });
+                    
+                    match identity_client.revoke_identity(request).await {
+                        Ok(response) => {
+                            let resp = response.into_inner();
+                            if resp.success {
+                                println!("Identity revoked successfully.");
+                                println!("  {}", resp.message);
+                            } else {
+                                eprintln!("Failed to revoke identity: {}", resp.message);
+                                std::process::exit(1);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to revoke identity: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            }
         }
     }
     

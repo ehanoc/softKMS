@@ -12,9 +12,12 @@ pub struct CreateKeyRequest {
         ::prost::alloc::string::String,
         ::prost::alloc::string::String,
     >,
-    /// Keystore passphrase for wrapping
+    /// Keystore passphrase for wrapping (admin auth)
     #[prost(string, tag = "4")]
     pub passphrase: ::prost::alloc::string::String,
+    /// Identity token for client auth (alternative to passphrase)
+    #[prost(string, tag = "5")]
+    pub auth_token: ::prost::alloc::string::String,
 }
 /// Create key response
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -38,6 +41,9 @@ pub struct CreateKeyResponse {
 pub struct ListKeysRequest {
     #[prost(bool, tag = "1")]
     pub include_public_keys: bool,
+    /// Identity token for client auth
+    #[prost(string, tag = "2")]
+    pub auth_token: ::prost::alloc::string::String,
 }
 /// Key info
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -77,6 +83,9 @@ pub struct GetKeyRequest {
     pub key_id: ::prost::alloc::string::String,
     #[prost(bool, tag = "2")]
     pub include_public_key: bool,
+    /// Identity token for client auth
+    #[prost(string, tag = "3")]
+    pub auth_token: ::prost::alloc::string::String,
 }
 /// Get key response
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -93,6 +102,9 @@ pub struct DeleteKeyRequest {
     pub key_id: ::prost::alloc::string::String,
     #[prost(bool, tag = "2")]
     pub force: bool,
+    /// Identity token for client auth
+    #[prost(string, tag = "3")]
+    pub auth_token: ::prost::alloc::string::String,
 }
 /// Delete key response
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -110,9 +122,12 @@ pub struct SignRequest {
     /// raw bytes to sign
     #[prost(bytes = "vec", tag = "2")]
     pub data: ::prost::alloc::vec::Vec<u8>,
-    /// Keystore passphrase for unwrapping
+    /// Keystore passphrase for unwrapping (admin auth)
     #[prost(string, tag = "3")]
     pub passphrase: ::prost::alloc::string::String,
+    /// Identity token for client auth (alternative to passphrase)
+    #[prost(string, tag = "4")]
+    pub auth_token: ::prost::alloc::string::String,
 }
 /// Sign response
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -228,7 +243,7 @@ pub struct DeriveP256Response {
     #[prost(string, tag = "4")]
     pub created_at: ::prost::alloc::string::String,
 }
-/// Derive Ed25519 key request
+/// Derive Ed25519 key request (BIP32/BIP44)
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DeriveEd25519Request {
@@ -371,6 +386,108 @@ pub struct ChangePassphraseResponse {
     #[prost(string, tag = "3")]
     pub message: ::prost::alloc::string::String,
 }
+/// Create identity request
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CreateIdentityRequest {
+    /// Admin passphrase
+    #[prost(string, tag = "1")]
+    pub passphrase: ::prost::alloc::string::String,
+    #[prost(enumeration = "ClientType", tag = "2")]
+    pub client_type: i32,
+    #[prost(enumeration = "IdentityKeyType", tag = "3")]
+    pub key_type: i32,
+    #[prost(string, optional, tag = "4")]
+    pub description: ::core::option::Option<::prost::alloc::string::String>,
+}
+/// Create identity response
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CreateIdentityResponse {
+    /// Bearer token (SHOW ONCE!)
+    #[prost(string, tag = "1")]
+    pub token: ::prost::alloc::string::String,
+    /// "ed25519:..." or "p256:..."
+    #[prost(string, tag = "2")]
+    pub public_key: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub created_at: ::prost::alloc::string::String,
+}
+/// List identities request
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListIdentitiesRequest {
+    #[prost(string, tag = "1")]
+    pub passphrase: ::prost::alloc::string::String,
+    #[prost(bool, tag = "2")]
+    pub include_inactive: bool,
+}
+/// Identity info
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct IdentityInfo {
+    #[prost(string, tag = "1")]
+    pub public_key: ::prost::alloc::string::String,
+    #[prost(enumeration = "IdentityKeyType", tag = "2")]
+    pub key_type: i32,
+    #[prost(enumeration = "ClientType", tag = "3")]
+    pub client_type: i32,
+    #[prost(string, tag = "4")]
+    pub description: ::prost::alloc::string::String,
+    #[prost(string, tag = "5")]
+    pub created_at: ::prost::alloc::string::String,
+    #[prost(string, tag = "6")]
+    pub last_used: ::prost::alloc::string::String,
+    #[prost(bool, tag = "7")]
+    pub is_active: bool,
+    #[prost(uint32, tag = "8")]
+    pub key_count: u32,
+}
+/// List identities response
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListIdentitiesResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub identities: ::prost::alloc::vec::Vec<IdentityInfo>,
+}
+/// Get identity request
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetIdentityRequest {
+    /// Token of requesting identity
+    #[prost(string, tag = "1")]
+    pub token: ::prost::alloc::string::String,
+    /// Target identity (optional, admin can query any)
+    #[prost(string, tag = "2")]
+    pub public_key: ::prost::alloc::string::String,
+}
+/// Get identity response
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetIdentityResponse {
+    #[prost(message, optional, tag = "1")]
+    pub identity: ::core::option::Option<IdentityInfo>,
+}
+/// Revoke identity request
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RevokeIdentityRequest {
+    #[prost(string, tag = "1")]
+    pub passphrase: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub public_key: ::prost::alloc::string::String,
+    #[prost(bool, tag = "3")]
+    pub force: bool,
+}
+/// Revoke identity response
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RevokeIdentityResponse {
+    #[prost(bool, tag = "1")]
+    pub success: bool,
+    #[prost(string, tag = "2")]
+    pub message: ::prost::alloc::string::String,
+}
 /// Health request
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -427,31 +544,6 @@ impl Algorithm {
         }
     }
 }
-/// Derivation scheme for HD wallets
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
-#[repr(i32)]
-pub enum DerivationScheme {
-    Unspecified = 0,
-    Peikert = 1,
-    V2 = 2,
-}
-impl DerivationScheme {
-    pub fn as_str_name(&self) -> &'static str {
-        match self {
-            DerivationScheme::Unspecified => "DERIVATION_SCHEME_UNSPECIFIED",
-            DerivationScheme::Peikert => "DERIVATION_SCHEME_PEIKERT",
-            DerivationScheme::V2 => "DERIVATION_SCHEME_V2",
-        }
-    }
-    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
-        match value {
-            "DERIVATION_SCHEME_UNSPECIFIED" => Some(Self::Unspecified),
-            "DERIVATION_SCHEME_PEIKERT" => Some(Self::Peikert),
-            "DERIVATION_SCHEME_V2" => Some(Self::V2),
-            _ => None,
-        }
-    }
-}
 /// Key types
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
@@ -460,6 +552,7 @@ pub enum KeyType {
     Seed = 1,
     Derived = 2,
     Imported = 3,
+    /// xpub for watch-only derivation
     ExtendedPublic = 4,
 }
 impl KeyType {
@@ -485,6 +578,296 @@ impl KeyType {
             "KEY_TYPE_IMPORTED" => Some(Self::Imported),
             "KEY_TYPE_EXTENDED_PUBLIC" => Some(Self::ExtendedPublic),
             _ => None,
+        }
+    }
+}
+/// Derivation scheme for HD wallets
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum DerivationScheme {
+    Unspecified = 0,
+    /// Enhanced entropy (default)
+    Peikert = 1,
+    /// Original IEEE standard
+    V2 = 2,
+}
+impl DerivationScheme {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            DerivationScheme::Unspecified => "DERIVATION_SCHEME_UNSPECIFIED",
+            DerivationScheme::Peikert => "DERIVATION_SCHEME_PEIKERT",
+            DerivationScheme::V2 => "DERIVATION_SCHEME_V2",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "DERIVATION_SCHEME_UNSPECIFIED" => Some(Self::Unspecified),
+            "DERIVATION_SCHEME_PEIKERT" => Some(Self::Peikert),
+            "DERIVATION_SCHEME_V2" => Some(Self::V2),
+            _ => None,
+        }
+    }
+}
+/// Identity client types
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ClientType {
+    Unspecified = 0,
+    AiAgent = 1,
+    Service = 2,
+    User = 3,
+    Pkcs11 = 4,
+}
+impl ClientType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            ClientType::Unspecified => "CLIENT_TYPE_UNSPECIFIED",
+            ClientType::AiAgent => "CLIENT_TYPE_AI_AGENT",
+            ClientType::Service => "CLIENT_TYPE_SERVICE",
+            ClientType::User => "CLIENT_TYPE_USER",
+            ClientType::Pkcs11 => "CLIENT_TYPE_PKCS11",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "CLIENT_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "CLIENT_TYPE_AI_AGENT" => Some(Self::AiAgent),
+            "CLIENT_TYPE_SERVICE" => Some(Self::Service),
+            "CLIENT_TYPE_USER" => Some(Self::User),
+            "CLIENT_TYPE_PKCS11" => Some(Self::Pkcs11),
+            _ => None,
+        }
+    }
+}
+/// Identity key types
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum IdentityKeyType {
+    Unspecified = 0,
+    Ed25519 = 1,
+    P256 = 2,
+}
+impl IdentityKeyType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            IdentityKeyType::Unspecified => "IDENTITY_KEY_TYPE_UNSPECIFIED",
+            IdentityKeyType::Ed25519 => "IDENTITY_KEY_TYPE_ED25519",
+            IdentityKeyType::P256 => "IDENTITY_KEY_TYPE_P256",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "IDENTITY_KEY_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "IDENTITY_KEY_TYPE_ED25519" => Some(Self::Ed25519),
+            "IDENTITY_KEY_TYPE_P256" => Some(Self::P256),
+            _ => None,
+        }
+    }
+}
+/// Generated client implementations.
+pub mod identity_service_client {
+    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
+    /// Identity service for managing client identities
+    #[derive(Debug, Clone)]
+    pub struct IdentityServiceClient<T> {
+        inner: tonic::client::Grpc<T>,
+    }
+    impl IdentityServiceClient<tonic::transport::Channel> {
+        /// Attempt to create a new client by connecting to a given endpoint.
+        pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
+        where
+            D: TryInto<tonic::transport::Endpoint>,
+            D::Error: Into<StdError>,
+        {
+            let conn = tonic::transport::Endpoint::new(dst)?.connect().await?;
+            Ok(Self::new(conn))
+        }
+    }
+    impl<T> IdentityServiceClient<T>
+    where
+        T: tonic::client::GrpcService<tonic::body::BoxBody>,
+        T::Error: Into<StdError>,
+        T::ResponseBody: Body<Data = Bytes> + Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + Send,
+    {
+        pub fn new(inner: T) -> Self {
+            let inner = tonic::client::Grpc::new(inner);
+            Self { inner }
+        }
+        pub fn with_origin(inner: T, origin: Uri) -> Self {
+            let inner = tonic::client::Grpc::with_origin(inner, origin);
+            Self { inner }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> IdentityServiceClient<InterceptedService<T, F>>
+        where
+            F: tonic::service::Interceptor,
+            T::ResponseBody: Default,
+            T: tonic::codegen::Service<
+                http::Request<tonic::body::BoxBody>,
+                Response = http::Response<
+                    <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
+                >,
+            >,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::BoxBody>,
+            >>::Error: Into<StdError> + Send + Sync,
+        {
+            IdentityServiceClient::new(InterceptedService::new(inner, interceptor))
+        }
+        /// Compress requests with the given encoding.
+        ///
+        /// This requires the server to support it otherwise it might respond with an
+        /// error.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.send_compressed(encoding);
+            self
+        }
+        /// Enable decompressing responses.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.accept_compressed(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_decoding_message_size(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_encoding_message_size(limit);
+            self
+        }
+        /// Create a new identity (admin only)
+        pub async fn create_identity(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CreateIdentityRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateIdentityResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/softkms.IdentityService/CreateIdentity",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("softkms.IdentityService", "CreateIdentity"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// List all identities (admin only)
+        pub async fn list_identities(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ListIdentitiesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListIdentitiesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/softkms.IdentityService/ListIdentities",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("softkms.IdentityService", "ListIdentities"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Get identity details
+        pub async fn get_identity(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetIdentityRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetIdentityResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/softkms.IdentityService/GetIdentity",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("softkms.IdentityService", "GetIdentity"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Revoke an identity (admin only)
+        pub async fn revoke_identity(
+            &mut self,
+            request: impl tonic::IntoRequest<super::RevokeIdentityRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RevokeIdentityResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/softkms.IdentityService/RevokeIdentity",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("softkms.IdentityService", "RevokeIdentity"));
+            self.inner.unary(req, path, codec).await
         }
     }
 }
@@ -933,6 +1316,354 @@ pub mod key_store_client {
             req.extensions_mut().insert(GrpcMethod::new("softkms.KeyStore", "Health"));
             self.inner.unary(req, path, codec).await
         }
+    }
+}
+/// Generated server implementations.
+pub mod identity_service_server {
+    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    use tonic::codegen::*;
+    /// Generated trait containing gRPC methods that should be implemented for use with IdentityServiceServer.
+    #[async_trait]
+    pub trait IdentityService: Send + Sync + 'static {
+        /// Create a new identity (admin only)
+        async fn create_identity(
+            &self,
+            request: tonic::Request<super::CreateIdentityRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateIdentityResponse>,
+            tonic::Status,
+        >;
+        /// List all identities (admin only)
+        async fn list_identities(
+            &self,
+            request: tonic::Request<super::ListIdentitiesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListIdentitiesResponse>,
+            tonic::Status,
+        >;
+        /// Get identity details
+        async fn get_identity(
+            &self,
+            request: tonic::Request<super::GetIdentityRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetIdentityResponse>,
+            tonic::Status,
+        >;
+        /// Revoke an identity (admin only)
+        async fn revoke_identity(
+            &self,
+            request: tonic::Request<super::RevokeIdentityRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RevokeIdentityResponse>,
+            tonic::Status,
+        >;
+    }
+    /// Identity service for managing client identities
+    #[derive(Debug)]
+    pub struct IdentityServiceServer<T: IdentityService> {
+        inner: _Inner<T>,
+        accept_compression_encodings: EnabledCompressionEncodings,
+        send_compression_encodings: EnabledCompressionEncodings,
+        max_decoding_message_size: Option<usize>,
+        max_encoding_message_size: Option<usize>,
+    }
+    struct _Inner<T>(Arc<T>);
+    impl<T: IdentityService> IdentityServiceServer<T> {
+        pub fn new(inner: T) -> Self {
+            Self::from_arc(Arc::new(inner))
+        }
+        pub fn from_arc(inner: Arc<T>) -> Self {
+            let inner = _Inner(inner);
+            Self {
+                inner,
+                accept_compression_encodings: Default::default(),
+                send_compression_encodings: Default::default(),
+                max_decoding_message_size: None,
+                max_encoding_message_size: None,
+            }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
+        where
+            F: tonic::service::Interceptor,
+        {
+            InterceptedService::new(Self::new(inner), interceptor)
+        }
+        /// Enable decompressing requests with the given encoding.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.accept_compression_encodings.enable(encoding);
+            self
+        }
+        /// Compress responses with the given encoding, if the client supports it.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.send_compression_encodings.enable(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.max_decoding_message_size = Some(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.max_encoding_message_size = Some(limit);
+            self
+        }
+    }
+    impl<T, B> tonic::codegen::Service<http::Request<B>> for IdentityServiceServer<T>
+    where
+        T: IdentityService,
+        B: Body + Send + 'static,
+        B::Error: Into<StdError> + Send + 'static,
+    {
+        type Response = http::Response<tonic::body::BoxBody>;
+        type Error = std::convert::Infallible;
+        type Future = BoxFuture<Self::Response, Self::Error>;
+        fn poll_ready(
+            &mut self,
+            _cx: &mut Context<'_>,
+        ) -> Poll<std::result::Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+        fn call(&mut self, req: http::Request<B>) -> Self::Future {
+            let inner = self.inner.clone();
+            match req.uri().path() {
+                "/softkms.IdentityService/CreateIdentity" => {
+                    #[allow(non_camel_case_types)]
+                    struct CreateIdentitySvc<T: IdentityService>(pub Arc<T>);
+                    impl<
+                        T: IdentityService,
+                    > tonic::server::UnaryService<super::CreateIdentityRequest>
+                    for CreateIdentitySvc<T> {
+                        type Response = super::CreateIdentityResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CreateIdentityRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as IdentityService>::create_identity(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = CreateIdentitySvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/softkms.IdentityService/ListIdentities" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListIdentitiesSvc<T: IdentityService>(pub Arc<T>);
+                    impl<
+                        T: IdentityService,
+                    > tonic::server::UnaryService<super::ListIdentitiesRequest>
+                    for ListIdentitiesSvc<T> {
+                        type Response = super::ListIdentitiesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListIdentitiesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as IdentityService>::list_identities(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = ListIdentitiesSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/softkms.IdentityService/GetIdentity" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetIdentitySvc<T: IdentityService>(pub Arc<T>);
+                    impl<
+                        T: IdentityService,
+                    > tonic::server::UnaryService<super::GetIdentityRequest>
+                    for GetIdentitySvc<T> {
+                        type Response = super::GetIdentityResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetIdentityRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as IdentityService>::get_identity(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = GetIdentitySvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/softkms.IdentityService/RevokeIdentity" => {
+                    #[allow(non_camel_case_types)]
+                    struct RevokeIdentitySvc<T: IdentityService>(pub Arc<T>);
+                    impl<
+                        T: IdentityService,
+                    > tonic::server::UnaryService<super::RevokeIdentityRequest>
+                    for RevokeIdentitySvc<T> {
+                        type Response = super::RevokeIdentityResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::RevokeIdentityRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as IdentityService>::revoke_identity(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = RevokeIdentitySvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                _ => {
+                    Box::pin(async move {
+                        Ok(
+                            http::Response::builder()
+                                .status(200)
+                                .header("grpc-status", "12")
+                                .header("content-type", "application/grpc")
+                                .body(empty_body())
+                                .unwrap(),
+                        )
+                    })
+                }
+            }
+        }
+    }
+    impl<T: IdentityService> Clone for IdentityServiceServer<T> {
+        fn clone(&self) -> Self {
+            let inner = self.inner.clone();
+            Self {
+                inner,
+                accept_compression_encodings: self.accept_compression_encodings,
+                send_compression_encodings: self.send_compression_encodings,
+                max_decoding_message_size: self.max_decoding_message_size,
+                max_encoding_message_size: self.max_encoding_message_size,
+            }
+        }
+    }
+    impl<T: IdentityService> Clone for _Inner<T> {
+        fn clone(&self) -> Self {
+            Self(Arc::clone(&self.0))
+        }
+    }
+    impl<T: std::fmt::Debug> std::fmt::Debug for _Inner<T> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{:?}", self.0)
+        }
+    }
+    impl<T: IdentityService> tonic::server::NamedService for IdentityServiceServer<T> {
+        const NAME: &'static str = "softkms.IdentityService";
     }
 }
 /// Generated server implementations.
@@ -1578,52 +2309,6 @@ pub mod key_store_server {
                     };
                     Box::pin(fut)
                 }
-                "/softkms.KeyStore/ChangePassphrase" => {
-                    #[allow(non_camel_case_types)]
-                    struct ChangePassphraseSvc<T: KeyStore>(pub Arc<T>);
-                    impl<
-                        T: KeyStore,
-                    > tonic::server::UnaryService<super::ChangePassphraseRequest>
-                    for ChangePassphraseSvc<T> {
-                        type Response = super::ChangePassphraseResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::ChangePassphraseRequest>,
-                        ) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as KeyStore>::change_passphrase(&inner, request).await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let inner = inner.0;
-                        let method = ChangePassphraseSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
                 "/softkms.KeyStore/DeriveEd25519" => {
                     #[allow(non_camel_case_types)]
                     struct DeriveEd25519Svc<T: KeyStore>(pub Arc<T>);
@@ -1747,6 +2432,52 @@ pub mod key_store_server {
                     let fut = async move {
                         let inner = inner.0;
                         let method = DerivePublicSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/softkms.KeyStore/ChangePassphrase" => {
+                    #[allow(non_camel_case_types)]
+                    struct ChangePassphraseSvc<T: KeyStore>(pub Arc<T>);
+                    impl<
+                        T: KeyStore,
+                    > tonic::server::UnaryService<super::ChangePassphraseRequest>
+                    for ChangePassphraseSvc<T> {
+                        type Response = super::ChangePassphraseResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ChangePassphraseRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as KeyStore>::change_passphrase(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = ChangePassphraseSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

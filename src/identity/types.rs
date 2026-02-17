@@ -151,6 +151,9 @@ pub struct Identity {
 
     /// Is identity active
     pub is_active: bool,
+
+    /// Number of keys owned by this identity
+    pub key_count: u32,
 }
 
 impl Identity {
@@ -174,6 +177,7 @@ impl Identity {
             created_at: now,
             last_used: now,
             is_active: true,
+            key_count: 0,
         }
     }
 

@@ -165,17 +165,31 @@ impl SecurityManager {
     /// Derives the master key from the passphrase and checks if it matches
     /// the stored verification hash. Returns true if the passphrase is correct.
     pub fn verify_passphrase(&self, passphrase: &str) -> Result<bool> {
+        tracing::info!(
+            "verify_passphrase called, passphrase_len={}",
+            passphrase.len()
+        );
+
         // Check if we have a verification hash stored
         let expected_hash = {
             let guard = self
                 .verification_hash
                 .lock()
                 .map_err(|_| SecurityError::LockPoisoned)?;
+            tracing::info!("Memory hash is None: {}", guard.is_none());
             match *guard {
-                Some(hash) => hash,
+                Some(hash) => {
+                    tracing::info!("Using memory-cached verification hash");
+                    hash
+                }
                 None => {
                     // No verification hash yet - check if one exists on disk
+                    tracing::info!(
+                        "Checking disk for verification hash at: {:?}",
+                        self.verification_hash_path
+                    );
                     if self.verification_hash_path.exists() {
+                        tracing::info!("Verification hash file exists on disk");
                         let stored_hash =
                             std::fs::read(&self.verification_hash_path).map_err(|e| {
                                 SecurityError::Storage(format!(
@@ -183,14 +197,50 @@ impl SecurityManager {
                                     e
                                 ))
                             })?;
+                        tracing::info!(
+                            "Read {} bytes from verification hash file",
+                            stored_hash.len()
+                        );
                         if stored_hash.len() == 32 {
                             let mut hash = [0u8; 32];
                             hash.copy_from_slice(&stored_hash);
+                            tracing::info!("Using disk-loaded verification hash");
                             hash
                         } else {
                             return Err(SecurityError::Storage(
                                 "Invalid verification hash file".to_string(),
                             ));
+                        }
+                    } else {
+                        tracing::warn!("No verification hash found on disk");
+                        return Err(SecurityError::InvalidPassphrase(
+                            "Keystore not initialized".to_string(),
+                        ));
+                    }
+                }
+            }
+        };
+
+        // Derive key from passphrase using stored salt
+        tracing::info!("Deriving master key from passphrase with stored salt");
+
+        // Get stored salt or fail if keystore not initialized
+        let salt = {
+            let guard = self.salt.lock().map_err(|_| SecurityError::LockPoisoned)?;
+            match *guard {
+                Some(salt) => salt,
+                None => {
+                    // No in-memory salt - check if one exists on disk
+                    if self.salt_path.exists() {
+                        let stored_salt = std::fs::read(&self.salt_path).map_err(|e| {
+                            SecurityError::Storage(format!("Failed to read salt: {}", e))
+                        })?;
+                        if stored_salt.len() == 32 {
+                            let mut salt = [0u8; 32];
+                            salt.copy_from_slice(&stored_salt);
+                            salt
+                        } else {
+                            return Err(SecurityError::Storage("Invalid salt file".to_string()));
                         }
                     } else {
                         return Err(SecurityError::InvalidPassphrase(
@@ -201,12 +251,15 @@ impl SecurityManager {
             }
         };
 
-        // Derive key from passphrase
-        let master_key = MasterKey::derive(passphrase, self.config.pbkdf2_iterations)?;
+        let master_key =
+            MasterKey::derive_with_salt(passphrase, &salt, self.config.pbkdf2_iterations)?;
         let derived_hash = Self::compute_verification_hash(&master_key);
 
-        // Compare with expected hash
-        Ok(derived_hash == expected_hash)
+        tracing::info!("Comparing hashes: derived vs expected");
+        let matches = derived_hash == expected_hash;
+        tracing::info!("Hash comparison result: {}", matches);
+
+        Ok(matches)
     }
 
     /// Compute verification hash for master key
@@ -457,6 +510,19 @@ impl SecurityManager {
         if self.salt_path.exists() {
             // Keystore is already initialized - warn user
             tracing::warn!("Keystore already has a salt file. Re-initializing will make existing keys unreadable!");
+
+            // First verify that the provided passphrase is correct
+            match self.derive_master_key(passphrase) {
+                Ok(_) => {
+                    // Passphrase is valid, can proceed
+                }
+                Err(SecurityError::InvalidPassphrase(_)) => {
+                    return Err(SecurityError::InvalidPassphrase(
+                        "Invalid passphrase".to_string(),
+                    ));
+                }
+                Err(e) => return Err(e),
+            }
 
             // Check if there are any encrypted key files
             let has_keys: bool = std::fs::read_dir(storage_dir)

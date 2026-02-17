@@ -10,6 +10,6 @@ pub mod storage;
 pub mod types;
 pub mod validation;
 
-pub use types::{Identity, IdentityRole, ClientType, Token, IdentityError};
+pub use types::{Identity, IdentityRole, ClientType, IdentityKeyType, Token, IdentityError};
 pub use storage::IdentityStore;
 pub use validation::{validate_token, extract_token_from_request};

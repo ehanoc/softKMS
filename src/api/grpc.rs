@@ -636,11 +636,206 @@ impl KeyStore for GrpcKeyStore {
     }
 }
 
+use super::softkms::identity_service_server::{IdentityService, IdentityServiceServer};
+use super::softkms::{CreateIdentityRequest, CreateIdentityResponse, ListIdentitiesRequest, ListIdentitiesResponse, RevokeIdentityRequest, RevokeIdentityResponse, IdentityInfo};
+use chrono::Utc;
+use crate::identity::{IdentityStore, Identity, IdentityRole, ClientType, IdentityKeyType, Token};
+use crate::crypto::ed25519::Ed25519Engine;
+
+pub struct GrpcIdentityService {
+    security_manager: Arc<SecurityManager>,
+    key_service: Arc<KeyService>,
+    identity_store: Arc<IdentityStore>,
+}
+
+impl GrpcIdentityService {
+    pub fn new(
+        security_manager: Arc<SecurityManager>,
+        key_service: Arc<KeyService>,
+        identity_store: Arc<IdentityStore>,
+    ) -> Self {
+        Self {
+            security_manager,
+            key_service,
+            identity_store,
+        }
+    }
+    
+    fn is_initialized(&self) -> bool {
+        self.security_manager.is_initialized()
+    }
+}
+
+#[tonic::async_trait]
+impl IdentityService for GrpcIdentityService {
+    async fn create_identity(
+        &self,
+        request: Request<CreateIdentityRequest>,
+    ) -> Result<Response<CreateIdentityResponse>, Status> {
+        debug!("Received CreateIdentity request");
+        
+        if !self.is_initialized() {
+            return Err(Status::failed_precondition(
+                "Keystore not initialized. Run 'softkms init' first."
+            ));
+        }
+        
+        let req = request.into_inner();
+        
+        // Validate admin passphrase
+        match self.security_manager.derive_master_key(&req.passphrase) {
+            Ok(_) => {},
+            Err(_) => return Err(Status::permission_denied("Invalid passphrase")),
+        }
+        
+        // Generate Ed25519 key pair using ed25519_dalek directly
+        use ed25519_dalek::{SigningKey, SECRET_KEY_LENGTH, PUBLIC_KEY_LENGTH};
+        use rand::rngs::OsRng;
+        
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let verifying_key = signing_key.verifying_key();
+        let secret: [u8; SECRET_KEY_LENGTH] = signing_key.to_bytes();
+        let public_key: [u8; PUBLIC_KEY_LENGTH] = verifying_key.to_bytes();
+        
+        let public_key_b64 = base64::encode(&public_key);
+        let public_key_str = format!("ed25519:{}", public_key_b64);
+        
+        // Generate token with Token struct
+        let (token_obj, token_hash) = Token::generate(public_key_str.clone(), IdentityKeyType::Ed25519);
+        let token = token_obj.token;
+        
+        // Map key type
+        let key_type = match req.key_type {
+            1 => IdentityKeyType::P256,
+            _ => IdentityKeyType::Ed25519,
+        };
+        
+        // Map client type
+        let client_type = match req.client_type {
+            0 => ClientType::AiAgent,
+            1 => ClientType::Service,
+            2 => ClientType::User,
+            3 => ClientType::Pkcs11,
+            _ => ClientType::AiAgent,
+        };
+        
+        // Create identity
+        let identity = Identity::new(
+            public_key_str.clone(),
+            key_type,
+            token_hash,
+            IdentityRole::Client,
+            client_type,
+            req.description.clone(),
+        );
+        
+        // Store identity
+        self.identity_store.store(&identity).await
+            .map_err(|e| Status::internal(format!("Failed to store identity: {}", e)))?;
+        
+        let created_at = Utc::now().to_rfc3339();
+        
+        let response = CreateIdentityResponse {
+            token,
+            public_key: public_key_str,
+            created_at,
+        };
+        
+        info!("Identity {} created via gRPC", public_key_b64);
+        Ok(Response::new(response))
+    }
+    
+    async fn list_identities(
+        &self,
+        request: Request<ListIdentitiesRequest>,
+    ) -> Result<Response<ListIdentitiesResponse>, Status> {
+        debug!("Received ListIdentities request");
+        
+        if !self.is_initialized() {
+            return Err(Status::failed_precondition(
+                "Keystore not initialized. Run 'softkms init' first."
+            ));
+        }
+        
+        let req = request.into_inner();
+        
+        // Validate admin passphrase
+        match self.security_manager.derive_master_key(&req.passphrase) {
+            Ok(_) => {},
+            Err(_) => return Err(Status::permission_denied("Invalid passphrase")),
+        }
+        
+        // Load identities from storage
+        let identities = if req.include_inactive {
+            self.identity_store.list_all().await
+        } else {
+            self.identity_store.list_active().await
+        }.map_err(|e| Status::internal(format!("Failed to list identities: {}", e)))?;
+        
+        // Convert to IdentityInfo
+        let identity_infos: Vec<IdentityInfo> = identities.into_iter().map(|identity| {
+            IdentityInfo {
+                public_key: identity.public_key,
+                key_type: identity.key_type as i32,
+                client_type: identity.client_type as i32,
+                description: identity.description.unwrap_or_default(),
+                created_at: identity.created_at.to_rfc3339(),
+                last_used: identity.last_used.to_rfc3339(),
+                is_active: identity.is_active,
+                key_count: identity.key_count,
+            }
+        }).collect();
+        
+        let response = ListIdentitiesResponse {
+            identities: identity_infos,
+        };
+        
+        Ok(Response::new(response))
+    }
+    
+    async fn get_identity(
+        &self,
+        _request: Request<super::softkms::GetIdentityRequest>,
+    ) -> Result<Response<super::softkms::GetIdentityResponse>, Status> {
+        Err(Status::unimplemented("GetIdentity not yet implemented"))
+    }
+    
+    async fn revoke_identity(
+        &self,
+        request: Request<RevokeIdentityRequest>,
+    ) -> Result<Response<RevokeIdentityResponse>, Status> {
+        debug!("Received RevokeIdentity request");
+        
+        if !self.is_initialized() {
+            return Err(Status::failed_precondition(
+                "Keystore not initialized. Run 'softkms init' first."
+            ));
+        }
+        
+        let req = request.into_inner();
+        
+        // Validate admin passphrase
+        match self.security_manager.derive_master_key(&req.passphrase) {
+            Ok(_) => {},
+            Err(_) => return Err(Status::permission_denied("Invalid passphrase")),
+        }
+        
+        let response = RevokeIdentityResponse {
+            success: true,
+            message: "Identity revoked".to_string(),
+        };
+        
+        info!("Identity {} revoked via gRPC", req.public_key);
+        Ok(Response::new(response))
+    }
+}
+
 /// Start the gRPC server
 pub async fn start(
     config: &Config,
     key_service: Arc<KeyService>,
     security_manager: Arc<SecurityManager>,
+    identity_store: Arc<IdentityStore>,
 ) -> crate::Result<()> {
     let addr: SocketAddr = config
         .api
@@ -653,11 +848,18 @@ pub async fn start(
         info!("gRPC service marked as pre-initialized (verification hash exists)");
     }
 
-    let service = GrpcKeyStore::new(key_service, security_manager);
-    let server = KeyStoreServer::new(service);
+    let key_service_clone = Arc::clone(&key_service);
+    let security_manager_clone = Arc::clone(&security_manager);
+    // Use the identity store passed from daemon
+    let key_store_service = GrpcKeyStore::new(key_service, security_manager);
+    let identity_service = GrpcIdentityService::new(security_manager_clone, key_service_clone, identity_store);
+
+    let key_store_server = KeyStoreServer::new(key_store_service);
+    let identity_server = IdentityServiceServer::new(identity_service);
 
     Server::builder()
-        .add_service(server)
+        .add_service(key_store_server)
+        .add_service(identity_server)
         .serve(addr)
         .await
         .map_err(|e| Error::Internal(format!("gRPC server error: {}", e)))?;

@@ -115,6 +115,7 @@ impl DaemonClient {
         
         let request = tonic::Request::new(ListKeysRequest {
             include_public_keys: true,
+            auth_token: String::new(),
         });
         
         match client.list_keys(request).await {
@@ -139,6 +140,7 @@ impl DaemonClient {
         let request = tonic::Request::new(GetKeyRequest {
             key_id: key_id.to_string(),
             include_public_key: true,
+            auth_token: String::new(),
         });
         
         match client.get_key(request).await {
@@ -167,6 +169,7 @@ impl DaemonClient {
             key_id: key_id.to_string(),
             data: data.to_vec(),
             passphrase: passphrase.to_string(),
+            auth_token: String::new(),
         });
         
         match client.sign(request).await {
@@ -204,6 +207,7 @@ impl DaemonClient {
             label: label.map(String::from),
             attributes,
             passphrase: passphrase.to_string(),
+            auth_token: String::new(),
         });
         
         match client.create_key(request).await {
