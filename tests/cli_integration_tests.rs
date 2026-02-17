@@ -434,7 +434,7 @@ fn test_cli_list_keys() {
         "Key2",
     ]);
 
-    let list_output = test.run_cli(&["list"]);
+    let list_output = test.run_cli(&["--passphrase", "test123", "list"]);
     let list_stdout = String::from_utf8_lossy(&list_output.stdout);
 
     println!("List stdout: {}", list_stdout);

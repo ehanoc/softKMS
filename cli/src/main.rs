@@ -414,8 +414,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         
         Commands::List { detailed: _ } => {
+            let passphrase = match get_passphrase(cli.passphrase.clone()) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("{}", e);
+                    std::process::exit(1);
+                }
+            };
+            
             let request = tonic::Request::new(ListKeysRequest {
-                    auth_token: String::new(),
+                    auth_token: passphrase,
                     include_public_keys: false,
             });
             

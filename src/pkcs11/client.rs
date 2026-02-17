@@ -136,6 +136,30 @@ impl DaemonClient {
         }
     }
     
+    /// List keys filtered by identity token (returns only keys owned by that identity)
+    pub async fn list_keys_with_identity(&mut self, identity_token: &str) -> DaemonResult<Vec<KeyInfo>> {
+        let client = self.client.as_mut()
+            .ok_or(DaemonError::Connection("Not connected".to_string()))?;
+        
+        let request = tonic::Request::new(ListKeysRequest {
+            include_public_keys: true,
+            auth_token: identity_token.to_string(),
+        });
+        
+        match client.list_keys(request).await {
+            Ok(response) => {
+                let keys = response.into_inner().keys;
+                Ok(keys.into_iter().map(|k| KeyInfo {
+                    id: k.key_id,
+                    label: k.label.unwrap_or_default(),
+                    algorithm: k.algorithm,
+                    created_at: k.created_at,
+                }).collect())
+            }
+            Err(e) => Err(DaemonError::Rpc(e.to_string())),
+        }
+    }
+    
     /// Get key info
     pub async fn get_key(&mut self, key_id: &str) -> DaemonResult<KeyInfo> {
         let client = self.client.as_mut()

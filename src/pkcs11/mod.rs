@@ -31,6 +31,9 @@ static SESSIONS: Lazy<Mutex<HashMap<u64, SessionState>>> = Lazy::new(|| Mutex::n
 // Object store for key handles - maps handle to key_id
 static OBJECTS: Lazy<Mutex<HashMap<u64, String>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
+// Global handle counter for sequential handle assignment
+static NEXT_HANDLE: Lazy<Mutex<u64>> = Lazy::new(|| Mutex::new(1));
+
 // Daemon client - uses blocking runtime for sync PKCS#11 calls
 static DAEMON_CLIENT: Lazy<Mutex<Option<(DaemonClient, tokio::runtime::Runtime)>>> = 
     Lazy::new(|| Mutex::new(None));
@@ -59,6 +62,7 @@ const CKR_NOT_SUPPORTED: u32 = 84;
 const CKR_DEVICE_ERROR: u32 = 0x30;  // 48 per PKCS#11 spec
 const CKR_FUNCTION_NOT_SUPPORTED: u32 = 0x54;
 const CKR_KEY_HANDLE_INVALID: u32 = 0xA0;  // 160, not 0x60!
+const CKR_SIGNATURE_INVALID: u32 = 0xC0;  // 192, signature verification failed
 const CKR_OBJECT_HANDLE_INVALID: u32 = 0x82;
 const CKR_USER_NOT_LOGGED_IN: u32 = 0x101;
 const CKR_MECHANISM_INVALID: u32 = 0x70;
@@ -654,8 +658,8 @@ pub extern "C" fn C_FindObjectsInit(sess: CK_SESSION, _templ: *const u8, _count:
 
 #[no_mangle]
 pub extern "C" fn C_FindObjects(sess: CK_SESSION, objects: *mut u64, max_count: CK_ULONG, count: *mut CK_ULONG) -> CK_RV { 
-    // First, ensure daemon is connected and we have the identity's keys loaded
-    let identity_pubkey = {
+    // First, get both identity pubkey and token from session
+    let (identity_pubkey, identity_token) = {
         let sessions = match SESSIONS.lock() {
             Ok(s) => s,
             Err(_) => {
@@ -664,7 +668,7 @@ pub extern "C" fn C_FindObjects(sess: CK_SESSION, objects: *mut u64, max_count: 
             }
         };
         match sessions.get(&sess) {
-            Some(st) => st.identity_pubkey.clone(),
+            Some(st) => (st.identity_pubkey.clone(), st.identity_token.clone()),
             None => {
                 unsafe { *count = 0; }
                 return CKR_OK;
@@ -673,7 +677,7 @@ pub extern "C" fn C_FindObjects(sess: CK_SESSION, objects: *mut u64, max_count: 
     };
     
     // If we have an identity, query daemon for keys
-    if let Some(pubkey) = identity_pubkey {
+    if let (Some(_pubkey), Some(token)) = (identity_pubkey, identity_token) {
         let keys_result: Result<Vec<String>, String> = {
             let mut client_guard = match DAEMON_CLIENT.lock() {
                 Ok(c) => c,
@@ -685,8 +689,8 @@ pub extern "C" fn C_FindObjects(sess: CK_SESSION, objects: *mut u64, max_count: 
             
             if let Some((ref mut client, ref rt)) = *client_guard {
                 rt.block_on(async move {
-                    // For now, just get all keys - in future filter by owner
-                    match client.list_keys().await {
+                    // Query daemon filtering by identity token
+                    match client.list_keys_with_identity(&token).await {
                         Ok(keys) => Ok(keys.into_iter().map(|k| k.id).collect()),
                         Err(e) => Err(e.to_string()),
                     }
@@ -696,8 +700,8 @@ pub extern "C" fn C_FindObjects(sess: CK_SESSION, objects: *mut u64, max_count: 
             }
         };
         
-        if let Ok(key_ids) = keys_result {
-            // Store in OBJECTS
+        if let Ok(keys) = keys_result {
+            // Store in OBJECTS - merge with existing, don't clear
             let mut objects = match OBJECTS.lock() {
                 Ok(o) => o,
                 Err(_) => {
@@ -706,11 +710,32 @@ pub extern "C" fn C_FindObjects(sess: CK_SESSION, objects: *mut u64, max_count: 
                 }
             };
             
-            // Clear and repopulate with daemon keys
-            objects.clear();
-            for (i, key_id) in key_ids.iter().enumerate() {
-                let handle = (i + 1) as u64;
-                objects.insert(handle, key_id.clone());
+            let mut next_handle = match NEXT_HANDLE.lock() {
+                Ok(h) => *h,
+                Err(_) => {
+                    unsafe { *count = 0; }
+                    return CKR_OK;
+                }
+            };
+            
+            // Add new keys from daemon, preserving existing
+            // keys is Vec<String> containing key IDs
+            for key_id in keys.iter() {
+                // Check if key already has a handle
+                let existing_handle = objects.iter()
+                    .find(|(_, v)| **v == *key_id)
+                    .map(|(k, _)| *k);
+                
+                if existing_handle.is_none() {
+                    // New key - assign next available handle
+                    objects.insert(next_handle, key_id.clone());
+                    next_handle += 1;
+                }
+            }
+            
+            // Update next handle counter
+            if let Ok(mut h) = NEXT_HANDLE.lock() {
+                *h = next_handle;
             }
         }
     }
@@ -925,9 +950,39 @@ pub extern "C" fn C_GenerateKeyPair(
 
 // Signing
 #[no_mangle]
-pub extern "C" fn C_SignInit(sess: CK_SESSION, _mech: *const u8, _key: u64) -> CK_RV { 
-    info!("C_SignInit session: {}", sess); 
-    CKR_OK 
+pub extern "C" fn C_SignInit(sess: CK_SESSION, _mech: *const u8, key: u64) -> CK_RV { 
+    info!("C_SignInit session: {} key: {}", sess, key); 
+    
+    // Look up the key ID using the handle
+    let key_id = {
+        let objects = match OBJECTS.lock() {
+            Ok(o) => o,
+            Err(_) => return CKR_DEVICE_ERROR,
+        };
+        
+        match objects.get(&key) {
+            Some(id) => id.clone(),
+            None => {
+                error!("C_SignInit: Key handle {} not found in object store", key);
+                return CKR_KEY_HANDLE_INVALID;
+            }
+        }
+    };
+    
+    // Store the key handle and key ID in session state for C_Sign to use
+    let mut sessions = match SESSIONS.lock() {
+        Ok(s) => s,
+        Err(_) => return CKR_SESSION_INVALID,
+    };
+    
+    if let Some(st) = sessions.get_mut(&sess) {
+        st.active_key_handle = Some(key);
+        st.active_key_id = Some(key_id);
+        info!("C_SignInit: Stored key handle {} and key ID for session {}", key, sess);
+        CKR_OK
+    } else {
+        CKR_SESSION_INVALID
+    }
 }
 
 #[no_mangle]
@@ -944,19 +999,38 @@ pub extern "C" fn C_Sign(
         return CKR_SESSION_INVALID;
     }
     
-    // Get key from object store - find the most recently generated key
-    let key_id = {
-        let objects = match OBJECTS.lock() {
-            Ok(o) => o,
-            Err(_) => return CKR_DEVICE_ERROR,
+    // Get key from object store using the active key handle set by C_SignInit
+    // First get the key handle from session (avoids holding multiple locks)
+    let key_handle = {
+        let sessions = match SESSIONS.lock() {
+            Ok(s) => s,
+            Err(_) => return CKR_SESSION_INVALID,
         };
-        // Use the first available key (for now)
-        match objects.values().next() {
-            Some(id) => id.clone(),
-            None => {
-                error!("No keys available in object store");
-                return CKR_KEY_HANDLE_INVALID;
+        
+        match sessions.get(&session) {
+            Some(st) => st.active_key_handle,
+            None => return CKR_SESSION_INVALID,
+        }
+    };
+    
+    // Now look up the key ID using the handle
+    let key_id = match key_handle {
+        Some(handle) => {
+            let objects = match OBJECTS.lock() {
+                Ok(o) => o,
+                Err(_) => return CKR_DEVICE_ERROR,
+            };
+            match objects.get(&handle) {
+                Some(id) => id.clone(),
+                None => {
+                    error!("Key handle {} not found in object store", handle);
+                    return CKR_KEY_HANDLE_INVALID;
+                }
             }
+        }
+        None => {
+            error!("No active key handle set (C_SignInit not called)");
+            return CKR_KEY_HANDLE_INVALID;
         }
     };
     
@@ -1039,9 +1113,163 @@ pub extern "C" fn C_Sign(
 }
 
 #[no_mangle]
-pub extern "C" fn C_VerifyInit(_sess: CK_SESSION, _mech: *const u8, _key: u64) -> CK_RV { CKR_OK }
+pub extern "C" fn C_VerifyInit(sess: CK_SESSION, _mech: *const u8, key: u64) -> CK_RV {
+    info!("C_VerifyInit session: {} key: {}", sess, key);
+
+    // Look up the key ID using the handle (same logic as C_SignInit)
+    let key_id = {
+        let objects = match OBJECTS.lock() {
+            Ok(o) => o,
+            Err(_) => return CKR_DEVICE_ERROR,
+        };
+
+        match objects.get(&key) {
+            Some(id) => id.clone(),
+            None => {
+                error!("C_VerifyInit: Key handle {} not found in object store", key);
+                return CKR_KEY_HANDLE_INVALID;
+            }
+        }
+    };
+
+    // Store the key handle and key ID in session state for C_Verify to use
+    let mut sessions = match SESSIONS.lock() {
+        Ok(s) => s,
+        Err(_) => return CKR_SESSION_INVALID,
+    };
+
+    if let Some(st) = sessions.get_mut(&sess) {
+        st.active_key_handle = Some(key);
+        st.active_key_id = Some(key_id);
+        info!("C_VerifyInit: Stored key handle {} and key ID for session {}", key, sess);
+        CKR_OK
+    } else {
+        CKR_SESSION_INVALID
+    }
+}
+
 #[no_mangle]
-pub extern "C" fn C_Verify(_sess: CK_SESSION, _data: *const u8, _data_len: CK_ULONG, _sig: *const u8, _sig_len: CK_ULONG) -> CK_RV { CKR_OK }
+pub extern "C" fn C_Verify(
+    session: CK_SESSION,
+    data: *const u8,
+    data_len: CK_ULONG,
+    signature: *const u8,
+    sig_len: CK_ULONG
+) -> CK_RV {
+    info!("C_Verify called");
+
+    if session == 0 {
+        return CKR_SESSION_INVALID;
+    }
+
+    if data.is_null() || data_len == 0 {
+        return CKR_ARGUMENTS_BAD;
+    }
+
+    if signature.is_null() || sig_len == 0 {
+        return CKR_ARGUMENTS_BAD;
+    }
+
+    // Get the key ID from session (same pattern as C_Sign, avoiding nested locks)
+    let key_handle = {
+        let sessions = match SESSIONS.lock() {
+            Ok(s) => s,
+            Err(_) => return CKR_SESSION_INVALID,
+        };
+
+        match sessions.get(&session) {
+            Some(st) => st.active_key_handle,
+            None => return CKR_SESSION_INVALID,
+        }
+    };
+
+    let key_id = match key_handle {
+        Some(handle) => {
+            let objects = match OBJECTS.lock() {
+                Ok(o) => o,
+                Err(_) => return CKR_DEVICE_ERROR,
+            };
+            match objects.get(&handle) {
+                Some(id) => id.clone(),
+                None => {
+                    error!("Key handle {} not found in object store", handle);
+                    return CKR_KEY_HANDLE_INVALID;
+                }
+            }
+        }
+        None => {
+            error!("No active key handle set (C_VerifyInit not called)");
+            return CKR_KEY_HANDLE_INVALID;
+        }
+    };
+
+    // Get data and signature
+    let data_to_verify = unsafe {
+        std::slice::from_raw_parts(data, data_len as usize).to_vec()
+    };
+
+    let signature_bytes = unsafe {
+        std::slice::from_raw_parts(signature, sig_len as usize).to_vec()
+    };
+
+    // Get passphrase and identity token from session
+    let (passphrase, identity_token) = {
+        let sessions = match SESSIONS.lock() {
+            Ok(s) => s,
+            Err(_) => return CKR_SESSION_INVALID,
+        };
+        if let Some(st) = sessions.get(&session) {
+            (
+                st.passphrase.clone().unwrap_or_default(),
+                st.identity_token.clone()
+            )
+        } else {
+            return CKR_SESSION_INVALID;
+        }
+    };
+
+    // Connect to daemon
+    if let Err(e) = ensure_daemon_connected_with_passphrase(&passphrase) {
+        error!("Failed to connect: {}", e);
+        return CKR_DEVICE_ERROR;
+    }
+
+    // Verify via daemon with identity token
+    let verify_result: Result<bool, String> = {
+        let mut client_guard = match DAEMON_CLIENT.lock() {
+            Ok(c) => c,
+            Err(_) => return CKR_DEVICE_ERROR,
+        };
+
+        if let Some((ref mut client, ref rt)) = *client_guard {
+            let key_id_clone = key_id.clone();
+            let data_clone = data_to_verify.clone();
+            let sig_clone = signature_bytes.clone();
+            rt.block_on(async move {
+                client.verify(&key_id_clone, &data_clone, &sig_clone).await
+                    .map_err(|e| e.to_string())
+            })
+        } else {
+            Err("No client".to_string())
+        }
+    };
+
+    match verify_result {
+        Ok(valid) => {
+            if valid {
+                info!("Signature verified successfully with key {}", key_id);
+                CKR_OK
+            } else {
+                error!("Signature verification failed for key {}", key_id);
+                CKR_SIGNATURE_INVALID
+            }
+        }
+        Err(e) => {
+            error!("Verify failed: {}", e);
+            CKR_DEVICE_ERROR
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Pkcs11Info {

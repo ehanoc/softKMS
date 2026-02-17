@@ -37,7 +37,7 @@ fn test_pkcs11_e2e_smoke() {
     // ServerGuard automatically cleans up on drop
 }
 
-/// Test key generation flow
+/// Test key generation flow with identity token
 #[test]
 fn test_pkcs11_e2e_keygen() {
     let server = ServerGuard::new().expect("Failed to start daemon");
@@ -47,7 +47,35 @@ fn test_pkcs11_e2e_keygen() {
     // Wait for daemon to be fully ready after init
     std::thread::sleep(Duration::from_millis(500));
 
-    // Generate key with explicit mechanism
+    // Create a PKCS#11 identity first
+    let identity_output = Command::new("./target/debug/softkms")
+        .args(&[
+            "--server",
+            &server.grpc_addr(),
+            "-p",
+            "test",
+            "identity",
+            "create",
+            "--type",
+            "pkcs11",
+            "--description",
+            "E2E Test Identity",
+        ])
+        .output()
+        .expect("Failed to create identity");
+
+    assert!(identity_output.status.success(), "Identity creation failed");
+    let identity_stdout = String::from_utf8_lossy(&identity_output.stdout);
+
+    // Extract token from output
+    let token = identity_stdout
+        .lines()
+        .find(|l| l.contains("Token:"))
+        .and_then(|l| l.split("Token:").nth(1))
+        .map(|s| s.trim())
+        .expect("Could not extract token from identity output");
+
+    // Generate key with identity token as PIN
     let output = Command::new("pkcs11-tool")
         .args(&[
             "--module",
@@ -56,7 +84,7 @@ fn test_pkcs11_e2e_keygen() {
             "softKMS",
             "--login",
             "--pin",
-            "test",
+            token,
             "--keypairgen",
             "--key-type",
             "EC:prime256v1",
@@ -81,9 +109,9 @@ fn test_pkcs11_e2e_keygen() {
         stderr
     );
 
-    // Verify key exists via CLI
+    // Verify key exists via CLI (use identity token to list)
     let list_output = Command::new("./target/debug/softkms")
-        .args(&["--server", &server.grpc_addr(), "-p", "test", "list"])
+        .args(&["--server", &server.grpc_addr(), "-p", token, "list"])
         .output()
         .expect("CLI should work");
 
@@ -178,7 +206,7 @@ fn test_pkcs11_e2e_sign() {
     let _ = std::fs::remove_file("/tmp/e2e_test_sig.bin");
 }
 
-/// Test multiple keys can coexist
+/// Test multiple keys can coexist with identity token
 #[test]
 fn test_pkcs11_e2e_multiple_keys() {
     let server = ServerGuard::new().expect("Failed to start daemon");
@@ -187,7 +215,35 @@ fn test_pkcs11_e2e_multiple_keys() {
 
     std::thread::sleep(Duration::from_millis(500));
 
-    // Generate multiple keys
+    // Create a PKCS#11 identity first
+    let identity_output = Command::new("./target/debug/softkms")
+        .args(&[
+            "--server",
+            &server.grpc_addr(),
+            "-p",
+            "test",
+            "identity",
+            "create",
+            "--type",
+            "pkcs11",
+            "--description",
+            "E2E Multiple Keys Test",
+        ])
+        .output()
+        .expect("Failed to create identity");
+
+    assert!(identity_output.status.success(), "Identity creation failed");
+    let identity_stdout = String::from_utf8_lossy(&identity_output.stdout);
+
+    // Extract token from output
+    let token = identity_stdout
+        .lines()
+        .find(|l| l.contains("Token:"))
+        .and_then(|l| l.split("Token:").nth(1))
+        .map(|s| s.trim())
+        .expect("Could not extract token from identity output");
+
+    // Generate multiple keys with identity token
     for i in 0..3 {
         let output = Command::new("pkcs11-tool")
             .args(&[
@@ -197,7 +253,7 @@ fn test_pkcs11_e2e_multiple_keys() {
                 "softKMS",
                 "--login",
                 "--pin",
-                "test",
+                token,
                 "--keypairgen",
                 "--key-type",
                 "EC:prime256v1",
@@ -219,9 +275,9 @@ fn test_pkcs11_e2e_multiple_keys() {
         );
     }
 
-    // List all keys
+    // List all keys using identity token
     let output = Command::new("./target/debug/softkms")
-        .args(&["--server", &server.grpc_addr(), "-p", "test", "list"])
+        .args(&["--server", &server.grpc_addr(), "-p", token, "list"])
         .output()
         .expect("CLI should work");
 

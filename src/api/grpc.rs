@@ -192,16 +192,58 @@ impl KeyStore for GrpcKeyStore {
 
     async fn list_keys(
         &self,
-        _request: Request<ListKeysRequest>,
+        request: Request<ListKeysRequest>,
     ) -> Result<Response<ListKeysResponse>, Status> {
         debug!("Received ListKeys request");
+        
+        let req = request.into_inner();
+        let auth_token = req.auth_token;
         
         let metadatas = self.key_service
             .list_keys()
             .await
             .map_err(map_error)?;
         
-        let keys = metadatas.iter()
+        // Filter keys by owner if auth_token is provided
+        let filtered_keys: Vec<_> = if !auth_token.is_empty() {
+            // Try to parse as identity token first
+            match Token::parse(&auth_token) {
+                Ok(token) => {
+                    // It's a valid identity token format - verify and filter
+                    match self.identity_store.load(&token.public_key).await {
+                        Ok(identity) => {
+                            if token.verify(&identity.token_hash) && identity.is_active {
+                                // Filter to only return keys owned by this identity
+                                let owner_pubkey = token.public_key.clone();
+                                metadatas.into_iter()
+                                    .filter(|m| {
+                                        m.owner_identity.as_ref()
+                                            .map(|owner| owner == &owner_pubkey)
+                                            .unwrap_or(false)
+                                    })
+                                    .collect()
+                            } else {
+                                // Invalid or inactive token, return empty
+                                vec![]
+                            }
+                        }
+                        Err(_) => vec![], // Identity not found, return empty
+                    }
+                }
+                Err(_) => {
+                    // Not a valid token format - check if it's the admin passphrase
+                    // For admin passphrase, return all keys (no filtering)
+                    // We can't verify admin passphrase here without additional context,
+                    // so we just return all keys as before
+                    metadatas
+                }
+            }
+        } else {
+            // No auth_token, return all keys (legacy behavior)
+            metadatas
+        };
+        
+        let keys = filtered_keys.iter()
             .map(|m| metadata_to_key_info(m, false))
             .collect();
         
