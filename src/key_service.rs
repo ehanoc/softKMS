@@ -129,9 +129,19 @@ impl KeyService {
 
         debug!("Key generated in memory, now wrapping for storage");
 
-        let master_key = self.security_manager
-            .derive_master_key(passphrase)
-            .map_err(|e| Error::Crypto(format!("Failed to derive master key: {}", e)))?;
+        // For identity-based key creation, use cached master key
+        // For admin key creation (no owner), derive from passphrase
+        let master_key = if owner_identity.is_some() {
+            // Identity-based: use cached master key
+            self.security_manager
+                .get_cached_master_key()
+                .map_err(|e| Error::Crypto(format!("Keystore not initialized: {}", e)))?
+        } else {
+            // Admin-based: derive from passphrase
+            self.security_manager
+                .derive_master_key(passphrase)
+                .map_err(|e| Error::Crypto(format!("Failed to derive master key: {}", e)))?
+        };
 
         let wrapper = self.security_manager.create_wrapper(&master_key);
         let aad = Self::build_aad(&metadata);
@@ -176,9 +186,19 @@ impl KeyService {
             }
         }
 
-        let master_key = self.security_manager
-            .derive_master_key(passphrase)
-            .map_err(|e| Error::Crypto(format!("Failed to derive master key: {}", e)))?;
+        // For identity-based key operations, use cached master key
+        // For admin operations (no requesting_identity), derive from passphrase
+        let master_key = if requesting_identity.is_some() {
+            // Identity-based: use cached master key
+            self.security_manager
+                .get_cached_master_key()
+                .map_err(|e| Error::Crypto(format!("Keystore not initialized: {}", e)))?
+        } else {
+            // Admin-based: derive from passphrase
+            self.security_manager
+                .derive_master_key(passphrase)
+                .map_err(|e| Error::Crypto(format!("Failed to derive master key: {}", e)))?
+        };
 
         let wrapper = self.security_manager.create_wrapper(&master_key);
         let aad = Self::build_aad(&metadata);

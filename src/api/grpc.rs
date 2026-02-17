@@ -31,6 +31,7 @@ use super::softkms::key_store_server::{KeyStore, KeyStoreServer};
 pub struct GrpcKeyStore {
     key_service: Arc<KeyService>,
     security_manager: Arc<SecurityManager>,
+    identity_store: Arc<IdentityStore>,
 }
 
 impl GrpcKeyStore {
@@ -38,10 +39,12 @@ impl GrpcKeyStore {
     pub fn new(
         key_service: Arc<KeyService>,
         security_manager: Arc<SecurityManager>,
+        identity_store: Arc<IdentityStore>,
     ) -> Self {
         Self {
             key_service,
             security_manager,
+            identity_store,
         }
     }
 
@@ -143,8 +146,35 @@ impl KeyStore for GrpcKeyStore {
         
         let req = request.into_inner();
         
+        // Determine owner identity from auth_token if present
+        let owner_identity = if !req.auth_token.is_empty() {
+            // Validate the identity token and get the public key
+            match Token::parse(&req.auth_token) {
+                Ok(token) => {
+                    // Load identity to verify token is valid
+                    match self.identity_store.load(&token.public_key).await {
+                        Ok(identity) => {
+                            if token.verify(&identity.token_hash) && identity.is_active {
+                                Some(token.public_key)
+                            } else {
+                                return Err(Status::permission_denied("Invalid or inactive identity token"));
+                            }
+                        }
+                        Err(_) => {
+                            return Err(Status::permission_denied("Identity not found"));
+                        }
+                    }
+                }
+                Err(_) => {
+                    return Err(Status::permission_denied("Invalid identity token format"));
+                }
+            }
+        } else {
+            None // Admin creates keys without owner
+        };
+        
         let metadata = self.key_service
-            .create_key(req.algorithm, req.label, req.attributes, &req.passphrase, None)
+            .create_key(req.algorithm, req.label, req.attributes, &req.passphrase, owner_identity)
             .await
             .map_err(map_error)?;
         
@@ -232,27 +262,55 @@ impl KeyStore for GrpcKeyStore {
         request: Request<SignRequest>,
     ) -> Result<Response<SignResponse>, Status> {
         debug!("Received Sign request");
-        
+
         if !self.is_initialized() {
             return Err(Status::failed_precondition(
                 "Keystore not initialized. Run 'softkms init' first."
             ));
         }
-        
+
         let req = request.into_inner();
         let key_id = KeyId::parse_str(&req.key_id)
             .map_err(|_| Status::invalid_argument("Invalid key ID"))?;
-        
+
+        // Determine requesting identity from auth_token
+        let requesting_identity = if !req.auth_token.is_empty() {
+            // Validate the identity token
+            match Token::parse(&req.auth_token) {
+                Ok(token) => {
+                    // Load identity to verify token is valid
+                    match self.identity_store.load(&token.public_key).await {
+                        Ok(identity) => {
+                            if token.verify(&identity.token_hash) && identity.is_active {
+                                Some(token.public_key)
+                            } else {
+                                return Err(Status::permission_denied("Invalid or inactive identity token"));
+                            }
+                        }
+                        Err(_) => {
+                            return Err(Status::permission_denied("Identity not found"));
+                        }
+                    }
+                }
+                Err(_) => {
+                    return Err(Status::permission_denied("Invalid identity token format"));
+                }
+            }
+        } else {
+            None // Admin signs without identity restriction
+        };
+
+        // Pass identity for ownership check, use cached master key
         let signature = self.key_service
-            .sign(key_id, &req.data, &req.passphrase, None)
+            .sign(key_id, &req.data, &req.passphrase, requesting_identity.as_deref())
             .await
             .map_err(map_error)?;
-        
+
         let response = SignResponse {
             signature: signature.bytes,
             algorithm: signature.algorithm,
         };
-        
+
         debug!("Data signed with key {} via gRPC", req.key_id);
         Ok(Response::new(response))
     }
@@ -792,9 +850,66 @@ impl IdentityService for GrpcIdentityService {
     
     async fn get_identity(
         &self,
-        _request: Request<super::softkms::GetIdentityRequest>,
+        request: Request<super::softkms::GetIdentityRequest>,
     ) -> Result<Response<super::softkms::GetIdentityResponse>, Status> {
-        Err(Status::unimplemented("GetIdentity not yet implemented"))
+        debug!("Received GetIdentity request");
+        
+        if !self.is_initialized() {
+            return Err(Status::failed_precondition(
+                "Keystore not initialized. Run 'softkms init' first."
+            ));
+        }
+        
+        let req = request.into_inner();
+        
+        // Validate the token and get identity
+        let token_str = req.token;
+        let target_pubkey = req.public_key;
+        
+        // Parse the token to get the public key
+        let token = match Token::parse(&token_str) {
+            Ok(t) => t,
+            Err(e) => {
+                error!("Failed to parse identity token: {}", e);
+                return Err(Status::permission_denied("Invalid identity token format"));
+            }
+        };
+        
+        // Get the identity from storage
+        let identity = match self.identity_store.load(&token.public_key).await {
+            Ok(id) => id,
+            Err(_) => {
+                return Err(Status::not_found("Identity not found"));
+            }
+        };
+        
+        // Verify the token
+        if !token.verify(&identity.token_hash) {
+            return Err(Status::permission_denied("Invalid identity token"));
+        }
+        
+        // Update last used
+        let mut identity = identity;
+        identity.touch();
+        if let Err(e) = self.identity_store.update(&identity).await {
+            error!("Failed to update identity last_used: {}", e);
+        }
+        
+        let response = super::softkms::GetIdentityResponse {
+            identity: Some(super::softkms::IdentityInfo {
+                public_key: identity.public_key,
+                key_type: identity.key_type as i32,
+                client_type: identity.client_type as i32,
+                description: identity.description.unwrap_or_default(),
+                created_at: identity.created_at.to_rfc3339(),
+                last_used: identity.last_used.to_rfc3339(),
+                is_active: identity.is_active,
+                key_count: identity.key_count,
+            }),
+        };
+        
+        info!("Identity {} retrieved via gRPC", token.public_key);
+        Ok(Response::new(response))
     }
     
     async fn revoke_identity(
@@ -847,9 +962,10 @@ pub async fn start(
 
     let key_service_clone = Arc::clone(&key_service);
     let security_manager_clone = Arc::clone(&security_manager);
+    let identity_store_clone = Arc::clone(&identity_store);
     // Use the identity store passed from daemon
-    let key_store_service = GrpcKeyStore::new(key_service, security_manager);
-    let identity_service = GrpcIdentityService::new(security_manager_clone, key_service_clone, identity_store);
+    let key_store_service = GrpcKeyStore::new(key_service, security_manager, identity_store);
+    let identity_service = GrpcIdentityService::new(security_manager_clone, key_service_clone, identity_store_clone);
 
     let key_store_server = KeyStoreServer::new(key_store_service);
     let identity_server = IdentityServiceServer::new(identity_service);

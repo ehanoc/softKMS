@@ -19,6 +19,12 @@ pub struct SessionState {
     pub active_key_id: Option<String>,
     /// Algorithm for signing (e.g., "ed25519")
     pub signing_algorithm: Option<String>,
+    /// Identity token for PKCS#11 authentication
+    pub identity_token: Option<String>,
+    /// Identity public key for key ownership
+    pub identity_pubkey: Option<String>,
+    /// Whether this is an identity-based session (vs admin)
+    pub is_identity_session: bool,
 }
 
 impl SessionState {
@@ -32,6 +38,9 @@ impl SessionState {
             active_key_handle: None,
             active_key_id: None,
             signing_algorithm: None,
+            identity_token: None,
+            identity_pubkey: None,
+            is_identity_session: false,
         }
     }
 }

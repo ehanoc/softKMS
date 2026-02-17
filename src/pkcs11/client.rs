@@ -5,9 +5,10 @@
 use std::sync::Arc;
 use tonic::transport::Channel;
 use crate::api::softkms::key_store_client::KeyStoreClient;
+use crate::api::softkms::identity_service_client::IdentityServiceClient;
 use crate::api::softkms::{
     SignRequest, VerifyRequest, ListKeysRequest, GetKeyRequest,
-    CreateKeyRequest, DeleteKeyRequest,
+    CreateKeyRequest, DeleteKeyRequest, GetIdentityRequest,
 };
 use tracing::{info, warn, error};
 
@@ -66,13 +67,16 @@ impl DaemonClient {
     
     /// Connect to the daemon
     pub async fn connect(&mut self) -> DaemonResult<()> {
+        eprintln!("[PKCS11-CLIENT] Attempting to connect to daemon at: {}", self.server);
         match KeyStoreClient::connect(self.server.clone()).await {
             Ok(client) => {
                 self.client = Some(client);
+                eprintln!("[PKCS11-CLIENT] Successfully connected to daemon");
                 info!("Connected to daemon");
                 Ok(())
             }
             Err(e) => {
+                eprintln!("[PKCS11-CLIENT] Failed to connect to {}: {}", self.server, e);
                 error!("Failed to connect: {}", e);
                 Err(DaemonError::Connection(e.to_string()))
             }
@@ -159,7 +163,7 @@ impl DaemonClient {
     }
     
     /// Sign data
-    pub async fn sign(&mut self, key_id: &str, data: &[u8]) -> DaemonResult<Vec<u8>> {
+    pub async fn sign(&mut self, key_id: &str, data: &[u8], identity_token: Option<&str>) -> DaemonResult<Vec<u8>> {
         let client = self.client.as_mut()
             .ok_or(DaemonError::Connection("Not connected".to_string()))?;
         
@@ -169,7 +173,7 @@ impl DaemonClient {
             key_id: key_id.to_string(),
             data: data.to_vec(),
             passphrase: passphrase.to_string(),
-            auth_token: String::new(),
+            auth_token: identity_token.unwrap_or_default().to_string(),
         });
         
         match client.sign(request).await {
@@ -195,8 +199,8 @@ impl DaemonClient {
         }
     }
     
-    /// Create/generate a new key
-    pub async fn create_key(&mut self, algorithm: &str, label: Option<&str>, passphrase: &str) -> DaemonResult<String> {
+    /// Create/generate a new key with optional identity token
+    pub async fn create_key(&mut self, algorithm: &str, label: Option<&str>, passphrase: &str, identity_token: Option<&str>) -> DaemonResult<String> {
         let client = self.client.as_mut()
             .ok_or(DaemonError::Connection("Not connected".to_string()))?;
         
@@ -207,12 +211,46 @@ impl DaemonClient {
             label: label.map(String::from),
             attributes,
             passphrase: passphrase.to_string(),
-            auth_token: String::new(),
+            auth_token: identity_token.unwrap_or_default().to_string(),
         });
         
         match client.create_key(request).await {
             Ok(response) => Ok(response.into_inner().key_id),
             Err(e) => Err(DaemonError::Rpc(e.to_string())),
+        }
+    }
+    
+    /// Validate an identity token and return (public_key, identity_info)
+    pub async fn validate_identity_token(&mut self, token: &str) -> DaemonResult<(String, String)> {
+        // Create a separate IdentityServiceClient
+        let channel = match Channel::from_shared(self.server.clone()) {
+            Ok(c) => c.connect().await.map_err(|e| DaemonError::Connection(e.to_string()))?,
+            Err(e) => return Err(DaemonError::Connection(format!("Invalid server address: {}", e))),
+        };
+        
+        let mut identity_client = IdentityServiceClient::new(channel);
+        
+        let request = tonic::Request::new(GetIdentityRequest {
+            token: token.to_string(),
+            public_key: String::new(), // Empty means "get my own identity"
+        });
+        
+        match identity_client.get_identity(request).await {
+            Ok(response) => {
+                let resp = response.into_inner();
+                if let Some(identity) = resp.identity {
+                    let pubkey = identity.public_key.clone();
+                    let info = format!("Identity: {:?}, Active: {}", identity.client_type, identity.is_active);
+                    Ok((pubkey, info))
+                } else {
+                    Err(DaemonError::Auth("Identity not found".to_string()))
+                }
+            }
+            Err(e) => {
+                let msg = format!("Identity validation failed: {}", e);
+                error!("{}", msg);
+                Err(DaemonError::Auth(msg))
+            }
         }
     }
 }

@@ -266,6 +266,25 @@ else
 fi
 
 # Test 15: PKCS#11 library basic tests
+# First, create a dedicated identity for PKCS#11 testing
+echo ""
+echo "[SETUP] Creating identity for PKCS#11 testing..."
+IDENTITY_OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" identity create --type pkcs11 --description "PKCS#11 Test Client" 2>&1)
+echo "$IDENTITY_OUTPUT"
+
+# Extract identity token from output
+# Token format is typically: sk_token_ followed by hex chars, or base64 string
+PKCS11_TOKEN=$(echo "$IDENTITY_OUTPUT" | grep -i "token:" | awk '{print $2}' | head -1)
+
+if [ -z "$PKCS11_TOKEN" ]; then
+    echo -e "${YELLOW}[WARN]${NC} Could not extract identity token, using admin passphrase fallback"
+    PKCS11_PIN="$ADMIN_PASS"
+else
+    echo -e "${GREEN}[SETUP]${NC} Identity created, using token as PIN"
+    PKCS11_PIN="$PKCS11_TOKEN"
+    echo "Token: ${PKCS11_PIN:0:50}..."
+fi
+
 echo ""
 echo "[TEST 15/15] PKCS#11 library tests"
 echo ""
@@ -355,9 +374,9 @@ else
     # Test 15f: Generate key pair (uses explicit mechanism 0x1050)
     echo ""
     echo "  [TEST 15f] PKCS#11 generate EC key pair"
-    echo -e "${CYAN}[CMD]${NC} pkcs11-tool --module \"$PKCS11_LIB\" --login --pin \"$ADMIN_PASS\" --keypairgen --key-type EC:prime256v1 --label \"pkcs11-test-key\" -m 0x1050"
+    echo -e "${CYAN}[CMD]${NC} pkcs11-tool --module \"$PKCS11_LIB\" --login --pin \"$PKCS11_PIN\" --keypairgen --key-type EC:prime256v1 --label \"pkcs11-test-key\" -m 0x1050"
     OUTPUT=""
-    if OUTPUT=$(pkcs11-tool --module "$PKCS11_LIB" --login --pin "$ADMIN_PASS" --keypairgen --key-type EC:prime256v1 --label "pkcs11-test-key" -m 0x1050 2>&1); then
+    if OUTPUT=$(pkcs11-tool --module "$PKCS11_LIB" --login --pin "$PKCS11_PIN" --keypairgen --key-type EC:prime256v1 --label "pkcs11-test-key" -m 0x1050 2>&1); then
         echo -e "${GREEN}[OUTPUT]${NC}"
         echo "$OUTPUT" | sed 's/^/    /'
         pass_test "PKCS#11 generate EC key pair"
