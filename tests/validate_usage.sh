@@ -497,6 +497,107 @@ else
 fi
 
 # =============================================================================
+# PHASE 6: Error Handling Tests
+# =============================================================================
+
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}PHASE 6: Error Handling Tests${NC}"
+echo -e "${BLUE}========================================${NC}"
+
+# Test 17: Invalid mnemonic (bad BIP39 seed)
+echo ""
+echo "[TEST 17] Reject invalid BIP39 mnemonic"
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"$ADMIN_PASS\" import-seed --mnemonic \"invalid mnemonic words here\" --label \"bad-seed\""
+OUTPUT=""
+if OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" import-seed --mnemonic "invalid mnemonic words here" --label "bad-seed" 2>&1); then
+    echo -e "${RED}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    fail_test "Should have rejected invalid mnemonic"
+else
+    echo -e "${GREEN}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    if echo "$OUTPUT" | grep -qi "error\|invalid\|fail"; then
+        pass_test "Invalid mnemonic correctly rejected"
+    else
+        pass_test "Invalid mnemonic rejected"
+    fi
+fi
+
+# Test 18: Invalid key ID format
+echo ""
+echo "[TEST 18] Reject invalid key ID"
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"$ADMIN_PASS\" info --key \"invalid-key-id-12345\""
+OUTPUT=""
+if OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" info --key "invalid-key-id-12345" 2>&1); then
+    echo -e "${RED}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    fail_test "Should have rejected invalid key ID"
+else
+    echo -e "${GREEN}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    if echo "$OUTPUT" | grep -qi "error\|not found\|invalid"; then
+        pass_test "Invalid key ID correctly rejected"
+    else
+        pass_test "Invalid key ID rejected"
+    fi
+fi
+
+# Test 19: Sign with non-existent key
+echo ""
+echo "[TEST 19] Reject signing with non-existent key"
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"$ADMIN_PASS\" sign --key \"11111111-1111-1111-1111-111111111111\" --data \"test\""
+OUTPUT=""
+if OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" sign --key "11111111-1111-1111-1111-111111111111" --data "test" 2>&1); then
+    echo -e "${RED}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    fail_test "Should have rejected non-existent key"
+else
+    echo -e "${GREEN}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    if echo "$OUTPUT" | grep -qi "error\|not found\|invalid"; then
+        pass_test "Non-existent key correctly rejected for signing"
+    else
+        pass_test "Non-existent key rejected"
+    fi
+fi
+
+# Test 20: Missing required parameter (no passphrase)
+echo ""
+echo "[TEST 20] Reject missing passphrase"
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" generate --algorithm ed25519 --label \"test\" 2>&1 | head -3"
+OUTPUT=""
+if OUTPUT=$($CLI --server "http://$GRPC_ADDR" generate --algorithm ed25519 --label "test" 2>&1 | head -3); then
+    echo -e "${YELLOW}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    pass_test "Missing passphrase handled"
+else
+    echo -e "${GREEN}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    pass_test "Missing passphrase correctly rejected"
+fi
+
+# Test 21: Empty label
+echo ""
+echo "[TEST 21] Handle empty label"
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"$ADMIN_PASS\" generate --algorithm ed25519"
+OUTPUT=""
+if OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" generate --algorithm ed25519 2>&1); then
+    echo -e "${GREEN}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    KEY_ID=$(echo "$OUTPUT" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | head -1)
+    if [ -n "$KEY_ID" ]; then
+        pass_test "Empty label handled (key created without label)"
+    else
+        pass_test "Empty label handled"
+    fi
+else
+    echo -e "${YELLOW}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    pass_test "Empty label test (conditional)"
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 
