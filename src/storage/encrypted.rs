@@ -6,6 +6,7 @@
 use crate::storage::file::FileStorage;
 use crate::storage::StorageBackend;
 use crate::security::{KeyWrapper, MasterKey, SecurityError, SecurityManager, WrappedKey};
+use crate::key_service::KeyService;
 use crate::{Config, KeyId, KeyMetadata, Result, Error};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -31,18 +32,6 @@ impl EncryptedFileStorage {
             inner,
             security_manager,
         }
-    }
-    
-    /// Build AAD from key metadata for authentication
-    fn build_aad(metadata: &KeyMetadata) -> Vec<u8> {
-        // Include all metadata fields to prevent tampering
-        format!(
-            "key_id={}&algorithm={}&key_type={:?}&created_at={}",
-            metadata.id,
-            metadata.algorithm,
-            metadata.key_type,
-            metadata.created_at
-        ).into_bytes()
     }
 }
 
@@ -75,7 +64,7 @@ impl StorageBackend for EncryptedFileStorage {
             
             // Create wrapper and encrypt
             let wrapper = self.security_manager.create_wrapper(&master_key);
-            let aad = Self::build_aad(&metadata);
+                let aad = crate::key_service::KeyService::build_aad(&metadata);
             
             let wrapped = wrapper
                 .wrap(&plaintext_data, &aad)
@@ -111,7 +100,7 @@ impl StorageBackend for EncryptedFileStorage {
                 
                 // Decrypt
                 let wrapper = self.security_manager.create_wrapper(&master_key);
-                let aad = Self::build_aad(&metadata);
+            let aad = crate::key_service::KeyService::build_aad(&metadata);
                 
                 let plaintext = wrapper
                     .unwrap(&wrapped, &aad)

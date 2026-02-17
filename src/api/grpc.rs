@@ -446,16 +446,13 @@ impl KeyStore for GrpcKeyStore {
             .map_err(|e| Status::internal(format!("Failed to get master key: {}", e)))?;
 
         let wrapper = self.security_manager.create_wrapper(&master_key);
-        let aad = format!(
-            "softkms:key:{}:{}:{}",
-            metadata.id, metadata.algorithm, metadata.key_type
-        );
+        let aad = crate::key_service::KeyService::build_aad(&metadata);
 
         let wrapped = crate::security::WrappedKey::from_bytes(&encrypted_data)
             .map_err(|e| Status::internal(format!("Invalid wrapped key: {}", e)))?;
 
         let key_material = wrapper
-            .unwrap(&wrapped, &aad.into_bytes())
+            .unwrap(&wrapped, &aad)
             .map_err(|e| Status::internal(format!("Failed to unwrap key: {}", e)))?;
 
         use crate::crypto::p256::DeterministicP256;

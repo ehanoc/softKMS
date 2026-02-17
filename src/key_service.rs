@@ -721,7 +721,7 @@ impl KeyService {
         Ok(())
     }
 
-    fn build_aad(metadata: &KeyMetadata) -> Vec<u8> {
+    pub fn build_aad(metadata: &KeyMetadata) -> Vec<u8> {
         let aad = format!(
             "softkms:key:{}:{}:{}:{}",
             metadata.id, metadata.algorithm, metadata.key_type, metadata.created_at

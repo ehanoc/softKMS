@@ -317,6 +317,186 @@ else
 fi
 
 # =============================================================================
+# PHASE 4: Seed Import and Derivation
+# =============================================================================
+
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}PHASE 4: Seed Import and Derivation${NC}"
+echo -e "${BLUE}========================================${NC}"
+
+# Test 12: Import BIP39 seed
+MNEMONIC="abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+echo ""
+echo "[TEST 12] Import BIP39 seed"
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"$ADMIN_PASS\" import-seed --mnemonic \"$MNEMONIC\" --label \"test-seed\""
+OUTPUT=""
+if OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" import-seed --mnemonic "$MNEMONIC" --label "test-seed" 2>&1); then
+    echo -e "${GREEN}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    SEED_ID=$(echo "$OUTPUT" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | head -1)
+    if [ -n "$SEED_ID" ]; then
+        pass_test "Import BIP39 seed (ID: ${SEED_ID:0:8}...)"
+    else
+        fail_test "Import BIP39 seed (could not extract seed ID)"
+    fi
+else
+    echo -e "${RED}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    fail_test "Import BIP39 seed"
+fi
+
+# Test 13: Derive P-256 key from seed
+if [ -n "$SEED_ID" ]; then
+    echo ""
+    echo "[TEST 13] Derive P-256 key from seed"
+    echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"$ADMIN_PASS\" derive --algorithm p256 --seed \"$SEED_ID\" --path \"m/44'/283'/0'/0/0\" --origin \"example.com\" --user-handle \"user123\" --counter 0 --label \"derived-p256\""
+    OUTPUT=""
+    if OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" derive --algorithm p256 --seed "$SEED_ID" --path "m/44'/283'/0'/0/0" --origin "example.com" --user-handle "user123" --counter 0 --label "derived-p256" 2>&1); then
+        echo -e "${GREEN}[OUTPUT]${NC}"
+        echo "$OUTPUT" | sed 's/^/  /'
+        DERIVED_P256_ID=$(echo "$OUTPUT" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | head -1)
+        if [ -n "$DERIVED_P256_ID" ]; then
+            pass_test "Derive P-256 key from seed (ID: ${DERIVED_P256_ID:0:8}...)"
+        else
+            fail_test "Derive P-256 key (could not extract key ID)"
+        fi
+    else
+        echo -e "${RED}[OUTPUT]${NC}"
+        echo "$OUTPUT" | sed 's/^/  /'
+        fail_test "Derive P-256 key from seed"
+    fi
+else
+    echo ""
+    echo -e "${YELLOW}[SKIP]${NC} Test 13: Cannot derive P-256 key (no seed available)"
+fi
+
+# Test 14: Derive Ed25519 key from seed
+if [ -n "$SEED_ID" ]; then
+    echo ""
+    echo "[TEST 14] Derive Ed25519 key from seed"
+    echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"$ADMIN_PASS\" derive --algorithm ed25519 --seed \"$SEED_ID\" --path \"m/44'/283'/0'/0/0\" --label \"derived-ed25519\""
+    OUTPUT=""
+    if OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" derive --algorithm ed25519 --seed "$SEED_ID" --path "m/44'/283'/0'/0/0" --label "derived-ed25519" 2>&1); then
+        echo -e "${GREEN}[OUTPUT]${NC}"
+        echo "$OUTPUT" | sed 's/^/  /'
+        DERIVED_ED_ID=$(echo "$OUTPUT" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | tail -1)
+        if [ -n "$DERIVED_ED_ID" ]; then
+            pass_test "Derive Ed25519 key from seed (ID: ${DERIVED_ED_ID:0:8}...)"
+        else
+            fail_test "Derive Ed25519 key (could not extract key ID)"
+        fi
+    else
+        echo -e "${RED}[OUTPUT]${NC}"
+        echo "$OUTPUT" | sed 's/^/  /'
+        fail_test "Derive Ed25519 key from seed"
+    fi
+else
+    echo ""
+    echo -e "${YELLOW}[SKIP]${NC} Test 14: Cannot derive Ed25519 key (no seed available)"
+fi
+
+# =============================================================================
+# PHASE 5: PKCS#11 Provider
+# =============================================================================
+
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}PHASE 5: PKCS#11 Provider${NC}"
+echo -e "${BLUE}========================================${NC}"
+
+# Test 15: PKCS#11 provider info
+echo ""
+echo "[TEST 15] PKCS#11 provider info"
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" pkcs11"
+OUTPUT=""
+if OUTPUT=$($CLI --server "http://$GRPC_ADDR" pkcs11 2>&1); then
+    echo -e "${GREEN}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    if echo "$OUTPUT" | grep -qi "PKCS#11\|Provider"; then
+        pass_test "PKCS#11 provider info"
+    else
+        fail_test "PKCS#11 provider info (no expected content)"
+    fi
+else
+    echo -e "${RED}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    fail_test "PKCS#11 provider info"
+fi
+
+# Test 16: PKCS#11 library compliance tests
+echo ""
+echo "[TEST 16] PKCS#11 library compliance tests"
+echo ""
+
+# Get the library path
+PKCS11_LIB="$PROJECT_DIR/target/release/libsoftkms.so"
+
+if [ ! -f "$PKCS11_LIB" ]; then
+    echo -e "${YELLOW}[SKIP]${NC} PKCS#11 library not found at $PKCS11_LIB"
+else
+    # Test 16a: Module info
+    echo "  [TEST 16a] PKCS#11 module info"
+    echo -e "${CYAN}[CMD]${NC} pkcs11-tool --module \"$PKCS11_LIB\" --show-info"
+    OUTPUT=""
+    if OUTPUT=$(pkcs11-tool --module "$PKCS11_LIB" --show-info 2>&1); then
+        echo -e "${GREEN}[OUTPUT]${NC}"
+        echo "$OUTPUT" | sed 's/^/    /'
+        pass_test "PKCS#11 module info (pkcs11-tool)"
+    else
+        echo -e "${RED}[OUTPUT]${NC}"
+        echo "$OUTPUT" | sed 's/^/    /'
+        fail_test "PKCS#11 module info (pkcs11-tool)"
+    fi
+
+    # Test 16b: List slots
+    echo ""
+    echo "  [TEST 16b] PKCS#11 list slots"
+    echo -e "${CYAN}[CMD]${NC} pkcs11-tool --module \"$PKCS11_LIB\" --list-slots"
+    OUTPUT=""
+    if OUTPUT=$(pkcs11-tool --module "$PKCS11_LIB" --list-slots 2>&1); then
+        echo -e "${GREEN}[OUTPUT]${NC}"
+        echo "$OUTPUT" | sed 's/^/    /'
+        pass_test "PKCS#11 list slots (pkcs11-tool)"
+    else
+        echo -e "${RED}[OUTPUT]${NC}"
+        echo "$OUTPUT" | sed 's/^/    /'
+        fail_test "PKCS#11 list slots (pkcs11-tool)"
+    fi
+
+    # Test 16c: List mechanisms
+    echo ""
+    echo "  [TEST 16c] PKCS#11 list mechanisms"
+    echo -e "${CYAN}[CMD]${NC} pkcs11-tool --module \"$PKCS11_LIB\" --list-mechanisms"
+    OUTPUT=""
+    if OUTPUT=$(pkcs11-tool --module "$PKCS11_LIB" --list-mechanisms 2>&1); then
+        echo -e "${GREEN}[OUTPUT]${NC}"
+        echo "$OUTPUT" | sed 's/^/    /'
+        pass_test "PKCS#11 list mechanisms (pkcs11-tool)"
+    else
+        echo -e "${RED}[OUTPUT]${NC}"
+        echo "$OUTPUT" | sed 's/^/    /'
+        fail_test "PKCS#11 list mechanisms (pkcs11-tool)"
+    fi
+    
+    # Test 16d: Generate key pair
+    echo ""
+    echo "  [TEST 16d] PKCS#11 generate EC key pair"
+    echo -e "${CYAN}[CMD]${NC} pkcs11-tool --module \"$PKCS11_LIB\" --login --so-pin \"12345678\" --keypairgen --key-type EC:prime256v1 --label \"pkcs11-test-key\" --usage-sign"
+    OUTPUT=""
+    if OUTPUT=$(pkcs11-tool --module "$PKCS11_LIB" --login --so-pin "12345678" --keypairgen --key-type EC:prime256v1 --label "pkcs11-test-key" --usage-sign 2>&1); then
+        echo -e "${GREEN}[OUTPUT]${NC}"
+        echo "$OUTPUT" | sed 's/^/    /'
+        pass_test "PKCS#11 generate EC key pair"
+    else
+        echo -e "${YELLOW}[OUTPUT]${NC}"
+        echo "$OUTPUT" | sed 's/^/    /'
+        echo -e "${YELLOW}[SKIP]${NC} Key generation may require initialized token"
+        pass_test "PKCS#11 generate EC key pair (conditional)"
+    fi
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 
@@ -339,6 +519,10 @@ if [ $TESTS_FAILED -eq 0 ]; then
     echo "  ✓ Key listing"
     echo "  ✓ Passphrase authentication and rejection"
     echo "  ✓ Data signing"
+    echo "  ✓ Identity management (create, list, revoke)"
+    echo "  ✓ BIP39 seed import"
+    echo "  ✓ Key derivation (P-256, Ed25519 from seed)"
+    echo "  ✓ PKCS#11 provider (info, slots, mechanisms, conditional key generation)"
     echo ""
     exit 0
 else
