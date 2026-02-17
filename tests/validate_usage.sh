@@ -33,6 +33,9 @@ else
     exit 1
 fi
 
+# Export daemon address for PKCS#11 library
+export SOFTKMS_DAEMON_ADDR="$GRPC_ADDR"
+
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}   softKMS Usage Validation${NC}"
 echo -e "${BLUE}========================================${NC}"
@@ -425,6 +428,24 @@ else
 fi
 
 # Test 16: PKCS#11 library compliance tests
+# First, create a dedicated identity for PKCS#11 testing
+echo ""
+echo "[SETUP] Creating identity for PKCS#11 testing..."
+IDENTITY_OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" identity create --type pkcs11 --description "PKCS#11 Test Client" 2>&1)
+echo "$IDENTITY_OUTPUT"
+
+# Extract identity token from output
+PKCS11_TOKEN=$(echo "$IDENTITY_OUTPUT" | grep -i "token:" | awk '{print $2}' | head -1)
+
+if [ -z "$PKCS11_TOKEN" ]; then
+    echo -e "${YELLOW}[WARN]${NC} Could not extract identity token, using admin passphrase fallback"
+    PKCS11_PIN="$ADMIN_PASS"
+else
+    echo -e "${GREEN}[SETUP]${NC} Identity created, using token as PIN"
+    PKCS11_PIN="$PKCS11_TOKEN"
+    echo "Token: ${PKCS11_PIN:0:50}..."
+fi
+
 echo ""
 echo "[TEST 16] PKCS#11 library compliance tests"
 echo ""
@@ -482,9 +503,9 @@ else
     # Test 16d: Generate key pair
     echo ""
     echo "  [TEST 16d] PKCS#11 generate EC key pair"
-    echo -e "${CYAN}[CMD]${NC} pkcs11-tool --module \"$PKCS11_LIB\" --login --so-pin \"12345678\" --keypairgen --key-type EC:prime256v1 --label \"pkcs11-test-key\" --usage-sign"
+    echo -e "${CYAN}[CMD]${NC} pkcs11-tool --module \"$PKCS11_LIB\" --login --pin \"$PKCS11_PIN\" --keypairgen --key-type EC:prime256v1 --label \"pkcs11-test-key\" -m 0x1050"
     OUTPUT=""
-    if OUTPUT=$(pkcs11-tool --module "$PKCS11_LIB" --login --so-pin "12345678" --keypairgen --key-type EC:prime256v1 --label "pkcs11-test-key" --usage-sign 2>&1); then
+    if OUTPUT=$(pkcs11-tool --module "$PKCS11_LIB" --login --pin "$PKCS11_PIN" --keypairgen --key-type EC:prime256v1 --label "pkcs11-test-key" -m 0x1050 2>&1); then
         echo -e "${GREEN}[OUTPUT]${NC}"
         echo "$OUTPUT" | sed 's/^/    /'
         pass_test "PKCS#11 generate EC key pair"
@@ -565,9 +586,9 @@ fi
 # Test 20: Missing required parameter (no passphrase)
 echo ""
 echo "[TEST 20] Reject missing passphrase"
-echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" generate --algorithm ed25519 --label \"test\" 2>&1 | head -3"
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" generate --algorithm ed25519 --label \"test\" --pin \"\" 2>&1 | head -3"
 OUTPUT=""
-if OUTPUT=$($CLI --server "http://$GRPC_ADDR" generate --algorithm ed25519 --label "test" 2>&1 | head -3); then
+if OUTPUT=$($CLI --server "http://$GRPC_ADDR" generate --algorithm ed25519 --label "test" --pin "" 2>&1 | head -3); then
     echo -e "${YELLOW}[OUTPUT]${NC}"
     echo "$OUTPUT" | sed 's/^/  /'
     pass_test "Missing passphrase handled"
