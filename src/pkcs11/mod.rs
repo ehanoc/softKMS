@@ -49,7 +49,7 @@ const CKR_SLOT_INVALID: u32 = 3;
 const CKR_NOT_SUPPORTED: u32 = 84;
 const CKR_DEVICE_ERROR: u32 = 96;
 const CKR_FUNCTION_NOT_SUPPORTED: u32 = 0x54;
-const CKR_KEY_HANDLE_INVALID: u32 = 0xA0;  // 160, not 0x60!
+const CKR_KEY_HANDLE_INVALID: u32 = 0x60;  // 96 decimal, per PKCS#11 spec
 const CKR_OBJECT_HANDLE_INVALID: u32 = 0x82;
 const CKR_USER_NOT_LOGGED_IN: u32 = 0x101;
 const CKR_MECHANISM_INVALID: u32 = 0x70;
@@ -495,12 +495,14 @@ pub extern "C" fn C_GetMechanismInfo(_slot: CK_SLOT, mech: CK_ULONG, pInfo: *mut
     }
     
     // ECDH key derivation - for compatibility with tools that check it
+    // NOTE: pkcs11-tool filters out mechanisms with CKF_DERIVE for key generation
+    // So we advertise CKF_GENERATE_KEY_PAIR only, not CKF_DERIVE
     if mech == CKM_ECDH {
         unsafe {
             let info = &mut *pInfo;
             info.ulMinKeySize = 256;
             info.ulMaxKeySize = 521;
-            info.flags = CKF_DERIVE | CKF_GENERATE_KEY_PAIR;
+            info.flags = CKF_GENERATE_KEY_PAIR;  // Advertise for key gen, not derivation
         }
         return CKR_OK;
     }

@@ -352,12 +352,12 @@ else
         pass_test "PKCS#11 initialize token (skipped)"
     fi
     
-    # Test 15f: Generate key pair (now should work with mechanism fix)
+    # Test 15f: Generate key pair (uses explicit mechanism 0x1050)
     echo ""
     echo "  [TEST 15f] PKCS#11 generate EC key pair"
-    echo -e "${CYAN}[CMD]${NC} pkcs11-tool --module \"$PKCS11_LIB\" --login --pin \"$ADMIN_PASS\" --keypairgen --key-type EC:prime256v1 --label \"pkcs11-test-key\" --usage-sign"
+    echo -e "${CYAN}[CMD]${NC} pkcs11-tool --module \"$PKCS11_LIB\" --login --pin \"$ADMIN_PASS\" --keypairgen --key-type EC:prime256v1 --label \"pkcs11-test-key\" -m 0x1050"
     OUTPUT=""
-    if OUTPUT=$(pkcs11-tool --module "$PKCS11_LIB" --login --pin "$ADMIN_PASS" --keypairgen --key-type EC:prime256v1 --label "pkcs11-test-key" --usage-sign 2>&1); then
+    if OUTPUT=$(pkcs11-tool --module "$PKCS11_LIB" --login --pin "$ADMIN_PASS" --keypairgen --key-type EC:prime256v1 --label "pkcs11-test-key" -m 0x1050 2>&1); then
         echo -e "${GREEN}[OUTPUT]${NC}"
         echo "$OUTPUT" | sed 's/^/    /'
         pass_test "PKCS#11 generate EC key pair"
