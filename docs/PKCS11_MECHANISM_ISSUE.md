@@ -11,7 +11,8 @@ When using `pkcs11-tool` with softKMS, key generation fails unless an explicit m
 When you run:
 ```bash
 pkcs11-tool --module libsoftkms.so --keypairgen --key-type EC:prime256v1
-```n
+```
+
 pkcs11-tool sends **mechanism 0x1040 (4160) = CKM_ECDH** by default.
 
 However, the correct mechanism for EC key pair generation according to PKCS#11 spec is:
