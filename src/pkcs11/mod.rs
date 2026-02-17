@@ -655,6 +655,17 @@ pub extern "C" fn C_GenerateKeyPair(
     
     info!("C_GenerateKeyPair called with session: {}, mech: 0x{:x}", session, mech_type);
     
+    // Validate mechanism - accept both standard and commonly-used mechanisms
+    // CKM_EC_KEY_PAIR_GEN (0x1050) is the spec-compliant mechanism
+    // CKM_ECDH (0x1040) is commonly used by pkcs11-tool as default for EC key generation
+    // See docs/PKCS11_MECHANISM_ISSUE.md for details
+    if mech_type != CKM_EC_KEY_PAIR_GEN && mech_type != CKM_ECDH {
+        error!("Unsupported mechanism 0x{:x} for key generation. Use CKM_EC_KEY_PAIR_GEN (0x1050) or CKM_ECDH (0x1040)", mech_type);
+        return CKR_MECHANISM_INVALID;
+    }
+    
+    info!("Using mechanism 0x{:x} for key generation", mech_type);
+    
     if session == 0 {
         return CKR_SESSION_INVALID;
     }
