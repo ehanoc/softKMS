@@ -286,7 +286,7 @@ fn test_cli_p256_signature_openssl_verification() {
         .lines()
         .find(|l| l.contains("Public Key:"))
         .and_then(|l| l.split("Public Key:").nth(1))
-        .map(|s| s.trim().trim_end_matches("...").to_string())
+        .map(|s| s.trim().to_string())
     {
         Some(pk) => pk,
         None => {
@@ -307,8 +307,8 @@ fn test_cli_p256_signature_openssl_verification() {
     let test_file = "/tmp/cli_verify_data.txt";
     fs::write(test_file, test_data).expect("Failed to write test data");
 
-    let sig_file = "/tmp/cli_verify_sig.bin";
-    let _ = Command::new(cli)
+    // Sign data via CLI (outputs base64 signature to stdout)
+    let output = Command::new(cli)
         .args(&[
             "--server",
             &server.grpc_addr(),
@@ -319,11 +319,26 @@ fn test_cli_p256_signature_openssl_verification() {
             &key_id,
             "--data",
             test_data,
-            "--output",
-            sig_file,
         ])
         .output()
-        .expect("Failed to sign data");
+        .expect("Failed to run sign command");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "Signing failed: {}", stderr);
+
+    // Parse base64 signature from stdout
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let sig_b64 = stdout
+        .lines()
+        .find(|l| l.contains("Signature (base64):"))
+        .and_then(|l| l.split("Signature (base64):").nth(1))
+        .map(|s| s.trim().to_string())
+        .expect("Could not parse signature from output");
+
+    // Decode and write to file
+    let sig_bytes = base64::decode(&sig_b64).expect("Failed to decode base64 signature");
+    let sig_file = "/tmp/cli_verify_sig.bin";
+    fs::write(sig_file, &sig_bytes).expect("Failed to write signature file");
 
     // Convert signature to DER
     let sig_der_file = "/tmp/cli_verify_sig_der.bin";
@@ -418,7 +433,7 @@ fn test_cli_ed25519_signature_external_verification() {
         .lines()
         .find(|l| l.contains("Public Key:"))
         .and_then(|l| l.split("Public Key:").nth(1))
-        .map(|s| s.trim().trim_end_matches("...").to_string())
+        .map(|s| s.trim().to_string())
     {
         Some(pk) => pk,
         None => {
@@ -433,8 +448,8 @@ fn test_cli_ed25519_signature_external_verification() {
     let test_file = "/tmp/cli_ed25519_test_data.txt";
     fs::write(test_file, test_data).expect("Failed to write test data");
 
-    let sig_file = "/tmp/cli_ed25519_signature.bin";
-    let _ = Command::new(cli)
+    // Sign data via CLI (outputs base64 signature to stdout)
+    let output = Command::new(cli)
         .args(&[
             "--server",
             &server.grpc_addr(),
@@ -445,11 +460,26 @@ fn test_cli_ed25519_signature_external_verification() {
             &key_id,
             "--data",
             test_data,
-            "--output",
-            sig_file,
         ])
         .output()
-        .expect("Failed to sign data");
+        .expect("Failed to run sign command");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "Signing failed: {}", stderr);
+
+    // Parse base64 signature from stdout
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let sig_b64 = stdout
+        .lines()
+        .find(|l| l.contains("Signature (base64):"))
+        .and_then(|l| l.split("Signature (base64):").nth(1))
+        .map(|s| s.trim().to_string())
+        .expect("Could not parse signature from output");
+
+    // Decode and write to file
+    let sig_bytes = base64::decode(&sig_b64).expect("Failed to decode base64 signature");
+    let sig_file = "/tmp/cli_ed25519_signature.bin";
+    fs::write(sig_file, &sig_bytes).expect("Failed to write signature file");
 
     // Verify with Python
     let python_script = format!(

@@ -13,6 +13,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use tonic::{transport::Server, Request, Response, Status};
 use tracing::{error, info, debug};
 
@@ -97,8 +98,8 @@ fn metadata_to_key_info(metadata: &KeyMetadata, include_public_key: bool) -> Key
         label: metadata.label.clone(),
         attributes: metadata.attributes.clone(),
         public_key: if include_public_key {
-            // TODO: Store public key with metadata
-            None
+            // Convert public key bytes to base64 string
+            Some(BASE64.encode(&metadata.public_key))
         } else {
             None
         },
@@ -244,7 +245,7 @@ impl KeyStore for GrpcKeyStore {
         };
         
         let keys = filtered_keys.iter()
-            .map(|m| metadata_to_key_info(m, false))
+            .map(|m| metadata_to_key_info(m, req.include_public_keys))
             .collect();
         
         let response = ListKeysResponse { keys };

@@ -424,7 +424,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             
             let request = tonic::Request::new(ListKeysRequest {
                     auth_token: passphrase,
-                    include_public_keys: false,
+                    include_public_keys: true,
             });
             
             match client.list_keys(request).await {
@@ -440,6 +440,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             println!("    Type: {}", key.key_type);
                             if let Some(ref label) = key.label {
                                 println!("    Label: {}", label);
+                            }
+                            if let Some(ref pk) = key.public_key {
+                                println!("    Public Key: {}...", &pk[..50.min(pk.len())]);
                             }
                             println!("    Created: {}", key.created_at);
                         }
@@ -793,8 +796,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("  Created: {}", key_info.created_at);
                         println!("  Attributes: {:?}", key_info.attributes);
                         if let Some(ref pk) = key_info.public_key {
-                            let len: usize = pk.len();
-                            println!("  Public Key: {}...", &pk[..50.min(len)]);
+                            println!("  Public Key: {}", pk);
                         }
                     } else {
                         println!("Key {} not found.", key_id);
