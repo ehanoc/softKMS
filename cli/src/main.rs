@@ -525,8 +525,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
 
             match client.verify(request).await {
-                Ok(_) => {
-                    println!("Signature verified successfully");
+                Ok(response) => {
+                    let resp = response.into_inner();
+                    if resp.valid {
+                        println!("Signature verified successfully");
+                        println!("VALID");
+                        println!("Algorithm: {}", resp.algorithm);
+                    } else {
+                        println!("Signature is INVALID");
+                        println!("INVALID");
+                        std::process::exit(1);
+                    }
                 }
                 Err(e) => {
                     eprintln!("Signature verification failed: {}", e);
