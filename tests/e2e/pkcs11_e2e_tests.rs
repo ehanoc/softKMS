@@ -19,7 +19,7 @@ fn test_pkcs11_e2e_smoke() {
 
     // Simple list slots test
     let output = Command::new("pkcs11-tool")
-        .args(&["--module", "target/debug/libsoftkms.so", "--list-slots"])
+        .args(&["--module", "target/release/libsoftkms.so", "--list-slots"])
         .env("SOFTKMS_DAEMON_ADDR", server.grpc_addr())
         .output()
         .expect("pkcs11-tool should work");
@@ -48,7 +48,7 @@ fn test_pkcs11_e2e_keygen() {
     std::thread::sleep(Duration::from_millis(500));
 
     // Create a PKCS#11 identity first
-    let identity_output = Command::new("./target/debug/softkms")
+    let identity_output = Command::new("./target/release/softkms")
         .args(&[
             "--server",
             &server.grpc_addr(),
@@ -79,7 +79,7 @@ fn test_pkcs11_e2e_keygen() {
     let output = Command::new("pkcs11-tool")
         .args(&[
             "--module",
-            "target/debug/libsoftkms.so",
+            "target/release/libsoftkms.so",
             "--token-label",
             "softKMS",
             "--login",
@@ -91,7 +91,7 @@ fn test_pkcs11_e2e_keygen() {
             "--label",
             "e2e-test-key",
             "-m",
-            "0x1050",
+            "0x1040",
         ])
         .env("SOFTKMS_DAEMON_ADDR", server.grpc_addr())
         .output()
@@ -110,7 +110,7 @@ fn test_pkcs11_e2e_keygen() {
     );
 
     // Verify key exists via CLI (use identity token to list)
-    let list_output = Command::new("./target/debug/softkms")
+    let list_output = Command::new("./target/release/softkms")
         .args(&["--server", &server.grpc_addr(), "-p", token, "list"])
         .output()
         .expect("CLI should work");
@@ -140,7 +140,7 @@ fn test_pkcs11_e2e_sign() {
     let gen_output = Command::new("pkcs11-tool")
         .args(&[
             "--module",
-            "target/debug/libsoftkms.so",
+            "target/release/libsoftkms.so",
             "--token-label",
             "softKMS",
             "--login",
@@ -152,7 +152,7 @@ fn test_pkcs11_e2e_sign() {
             "--label",
             "sign-key",
             "-m",
-            "0x1050",
+            "0x1040",
         ])
         .env("SOFTKMS_DAEMON_ADDR", server.grpc_addr())
         .output()
@@ -173,7 +173,7 @@ fn test_pkcs11_e2e_sign() {
     let output = Command::new("pkcs11-tool")
         .args(&[
             "--module",
-            "target/debug/libsoftkms.so",
+            "target/release/libsoftkms.so",
             "--token-label",
             "softKMS",
             "--login",
@@ -216,7 +216,7 @@ fn test_pkcs11_e2e_multiple_keys() {
     std::thread::sleep(Duration::from_millis(500));
 
     // Create a PKCS#11 identity first
-    let identity_output = Command::new("./target/debug/softkms")
+    let identity_output = Command::new("./target/release/softkms")
         .args(&[
             "--server",
             &server.grpc_addr(),
@@ -248,7 +248,7 @@ fn test_pkcs11_e2e_multiple_keys() {
         let output = Command::new("pkcs11-tool")
             .args(&[
                 "--module",
-                "target/debug/libsoftkms.so",
+                "target/release/libsoftkms.so",
                 "--token-label",
                 "softKMS",
                 "--login",
@@ -260,7 +260,7 @@ fn test_pkcs11_e2e_multiple_keys() {
                 "--label",
                 &format!("key-{}", i),
                 "-m",
-                "0x1050",
+                "0x1040",
             ])
             .env("SOFTKMS_DAEMON_ADDR", server.grpc_addr())
             .output()
@@ -276,7 +276,7 @@ fn test_pkcs11_e2e_multiple_keys() {
     }
 
     // List all keys using identity token
-    let output = Command::new("./target/debug/softkms")
+    let output = Command::new("./target/release/softkms")
         .args(&["--server", &server.grpc_addr(), "-p", token, "list"])
         .output()
         .expect("CLI should work");

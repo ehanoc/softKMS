@@ -44,6 +44,10 @@ name = "pkcs11_e2e_tests"
 path = "tests/e2e/pkcs11_e2e_tests.rs"
 
 [[test]]
+name = "pkcs11_signing_tests"
+path = "tests/e2e/pkcs11_signing_tests.rs"
+
+[[test]]
 name = "cli_integration_tests"
 path = "tests/cli_integration_tests.rs"
 

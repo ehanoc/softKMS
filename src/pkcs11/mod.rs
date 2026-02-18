@@ -19,7 +19,7 @@ use once_cell::sync::Lazy;
 use tracing::{info, warn, error, debug};
 
 mod client;
-pub use client::DaemonClient;
+pub use client::{DaemonClient, KeyInfo};
 
 mod session;
 pub use session::SessionState;
@@ -31,12 +31,12 @@ static SESSIONS: Lazy<Mutex<HashMap<u64, SessionState>>> = Lazy::new(|| Mutex::n
 // Object store for key handles - maps handle to key_id
 static OBJECTS: Lazy<Mutex<HashMap<u64, String>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
+// Object attributes store - maps handle to attribute map
+// Attributes: CKA_CLASS, CKA_LABEL, CKA_KEY_TYPE, CKA_SIGN, etc.
+static OBJECT_ATTRIBUTES: Lazy<Mutex<HashMap<u64, HashMap<u64, Vec<u8>>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+
 // Global handle counter for sequential handle assignment
 static NEXT_HANDLE: Lazy<Mutex<u64>> = Lazy::new(|| Mutex::new(1));
-
-// Daemon client - uses blocking runtime for sync PKCS#11 calls
-static DAEMON_CLIENT: Lazy<Mutex<Option<(DaemonClient, tokio::runtime::Runtime)>>> = 
-    Lazy::new(|| Mutex::new(None));
 
 // Daemon server address - can be overridden via environment variable
 const DEFAULT_DAEMON_ADDR: &str = "http://127.0.0.1:50051";
@@ -67,6 +67,7 @@ const CKR_OBJECT_HANDLE_INVALID: u32 = 0x82;
 const CKR_USER_NOT_LOGGED_IN: u32 = 0x101;
 const CKR_MECHANISM_INVALID: u32 = 0x70;
 const CKR_PIN_INCORRECT: u32 = 0xA0;  // Same value as CKR_KEY_HANDLE_INVALID, but semantically correct for PIN errors
+const CKR_SESSION_HANDLE_INVALID: u32 = 0xB3;
 
 type CK_RV = u32;
 type CK_SLOT = u64;
@@ -122,13 +123,22 @@ struct CK_MECHANISM_INFO {
     flags: CK_ULONG,
 }
 
+// CK_ATTRIBUTE structure for GetAttributeValue
+#[repr(C)]
+struct CK_ATTRIBUTE {
+    attr_type: CK_ULONG,
+    pValue: *mut u8,
+    ulValueLen: CK_ULONG,
+}
+
 // Mechanism constants for ECDSA P-256
+// IMPORTANT: These values follow PKCS#11 specification and SoftHSM2 implementation
 const CKM_ECDSA: CK_ULONG = 0x1001;
-const CKM_EC_KEY_PAIR_GEN: CK_ULONG = 0x1050;
+const CKM_EC_KEY_PAIR_GEN: CK_ULONG = 0x1040;  // EC key pair generation (was incorrectly 0x1050)
 const CKM_ECDSA_SHA256: CK_ULONG = 0x1041;
 const CKM_ECDSA_SHA384: CK_ULONG = 0x1042;
-const CKM_ECDH: CK_ULONG = 0x1040;
-const CKM_ECDH1_DERIVE: CK_ULONG = 0x1051;  // EC DH key derivation (SoftHSM2 uses this)
+const CKM_ECDH: CK_ULONG = 0x1040;  // Alias for CKM_EC_KEY_PAIR_GEN (compatibility)
+const CKM_ECDH1_DERIVE: CK_ULONG = 0x1050;  // EC DH key derivation (was incorrectly 0x1051)
 
 // CK_MECHANISM_INFO flags
 const CKF_SIGN: CK_ULONG = 0x00000002;
@@ -146,9 +156,67 @@ const CKF_HW_SLOT: CK_ULONG = 0x00000001;
 const CKF_TOKEN_PRESENT: CK_ULONG = 0x00000001;
 
 // CK_TOKEN_INFO flags
-const CKF_TOKEN_INITIALIZED: CK_ULONG = 0x00000004;
-const CKF_USER_PIN_TO_BE_CHANGED: CK_ULONG = 0x00000002;
-const CKF_LOGIN_REQUIRED: CK_ULONG = 0x00000002;
+const CKF_TOKEN_INITIALIZED: CK_ULONG = 0x00000400;  // Correct value per PKCS#11 spec
+const CKF_USER_PIN_TO_BE_CHANGED: CK_ULONG = 0x00000002;  // Correct value
+const CKF_LOGIN_REQUIRED: CK_ULONG = 0x00000100;      // Correct value per PKCS#11 spec
+
+// PKCS#11 Session Info structure
+#[repr(C)]
+#[derive(Debug)]
+struct CK_SESSION_INFO {
+    slot_id: CK_SLOT,
+    state: CK_ULONG,
+    flags: CK_ULONG,
+    ul_device_error: CK_ULONG,
+}
+
+// Session states
+const CKS_RO_PUBLIC_SESSION: CK_ULONG = 0;
+const CKS_RO_USER_FUNCTIONS: CK_ULONG = 1;
+const CKS_RW_PUBLIC_SESSION: CK_ULONG = 2;
+const CKS_RW_USER_FUNCTIONS: CK_ULONG = 3;
+const CKS_RW_SO_FUNCTIONS: CK_ULONG = 4;
+
+// PKCS#11 Object Attributes
+const CKA_CLASS: CK_ULONG = 0x00000000;
+const CKA_LABEL: CK_ULONG = 0x00000003;
+const CKA_KEY_TYPE: CK_ULONG = 0x00000100;
+const CKA_SIGN: CK_ULONG = 0x00000108;
+const CKA_VERIFY: CK_ULONG = 0x00000109;
+const CKA_EC_PARAMS: CK_ULONG = 0x00000180;
+const CKA_EC_POINT: CK_ULONG = 0x00000181;
+const CKA_PUBLIC_EXPONENT: CK_ULONG = 0x00000122;
+const CKA_PRIVATE: CK_ULONG = 0x00000002;
+const CKA_TOKEN: CK_ULONG = 0x00000001;
+const CKA_SENSITIVE: CK_ULONG = 0x00000103;
+const CKA_EXTRACTABLE: CK_ULONG = 0x00000110;
+const CKA_ALWAYS_AUTHENTICATE: CK_ULONG = 0x00000202;
+const CKA_SIGN_RECOVER: CK_ULONG = 0x00000109;
+const CKA_VERIFY_RECOVER: CK_ULONG = 0x0000010a;
+const CKA_MODULUS_BITS: CK_ULONG = 0x00000121;
+const CKA_ID: CK_ULONG = 0x00000102;
+const CKA_APPLICATION: CK_ULONG = 0x0000000d;
+const CKA_OBJECT_ID: CK_ULONG = 0x00000012;
+const CKA_VALUE: CK_ULONG = 0x00000011;
+const CKA_CERTIFICATE_TYPE: CK_ULONG = 0x00000125;
+const CKA_ISSUER: CK_ULONG = 0x00000126;
+const CKA_SERIAL_NUMBER: CK_ULONG = 0x00000127;
+const CKA_SUBJECT: CK_ULONG = 0x00000131;
+const CKA_START_DATE: CK_ULONG = 0x00000132;
+const CKA_END_DATE: CK_ULONG = 0x00000133;
+const CKA_MODIFIABLE: CK_ULONG = 0x00000170;
+
+// PKCS#11 Object Classes
+const CKO_DATA: CK_ULONG = 0x00000000;
+const CKO_CERTIFICATE: CK_ULONG = 0x00000001;
+const CKO_PUBLIC_KEY: CK_ULONG = 0x00000002;
+const CKO_PRIVATE_KEY: CK_ULONG = 0x00000003;
+const CKO_SECRET_KEY: CK_ULONG = 0x00000004;
+
+// PKCS#11 Key Types
+const CKK_RSA: CK_ULONG = 0x00000000;
+const CKK_EC: CK_ULONG = 0x00000003;
+const CKK_ED25519: CK_ULONG = 0x00000040;
 
 // PKCS#11 function pointer types
 type C_GetInfo_t = extern "C" fn(*const ()) -> CK_RV;
@@ -162,6 +230,7 @@ type C_GetMechanismInfo_t = extern "C" fn(CK_SLOT, CK_ULONG, *mut CK_MECHANISM_I
 type C_OpenSession_t = extern "C" fn(CK_SLOT, CK_ULONG, *mut (), *const (), *mut CK_SESSION) -> CK_RV;
 type C_CloseSession_t = extern "C" fn(CK_SESSION) -> CK_RV;
 type C_CloseAllSessions_t = extern "C" fn(CK_SLOT) -> CK_RV;
+type C_GetSessionInfo_t = extern "C" fn(CK_SESSION, *mut CK_SESSION_INFO) -> CK_RV;
 type C_Login_t = extern "C" fn(CK_SESSION, CK_ULONG, *const u8, CK_ULONG) -> CK_RV;
 type C_Logout_t = extern "C" fn(CK_SESSION) -> CK_RV;
 type C_FindObjectsInit_t = extern "C" fn(CK_SESSION, *const u8, CK_ULONG) -> CK_RV;
@@ -175,6 +244,7 @@ type C_VerifyInit_t = extern "C" fn(CK_SESSION, *const u8, u64) -> CK_RV;
 type C_Verify_t = extern "C" fn(CK_SESSION, *const u8, CK_ULONG, *const u8, CK_ULONG) -> CK_RV;
 type C_GetFunctionList_t = extern "C" fn(*mut *const CK_FUNCTION_LIST) -> CK_RV;
 type C_FunctionNotSupported = extern "C" fn() -> CK_RV;
+type C_InitToken_t = extern "C" fn(CK_SLOT, *const u8, CK_ULONG, *const u8) -> CK_RV;
 
 // CK_FUNCTION_LIST structure - PKCS#11 v2.40
 #[repr(C)]
@@ -189,13 +259,13 @@ struct CK_FUNCTION_LIST {
     C_GetTokenInfo: C_GetTokenInfo_t,
     C_GetMechanismList: C_GetMechanismList_t,
     C_GetMechanismInfo: C_GetMechanismInfo_t,
-    C_InitToken: C_FunctionNotSupported,
+    C_InitToken: C_InitToken_t,
     C_InitPin: C_FunctionNotSupported,
     C_SetPin: C_FunctionNotSupported,
     C_OpenSession: C_OpenSession_t,
     C_CloseSession: C_CloseSession_t,
     C_CloseAllSessions: C_CloseAllSessions_t,
-    C_GetSessionInfo: C_FunctionNotSupported,
+    C_GetSessionInfo: C_GetSessionInfo_t,
     C_GetOperationState: C_FunctionNotSupported,
     C_SetOperationState: C_FunctionNotSupported,
     C_Login: C_Login_t,
@@ -266,13 +336,13 @@ static FUNCTION_LIST: CK_FUNCTION_LIST = CK_FUNCTION_LIST {
     C_GetTokenInfo,
     C_GetMechanismList,
     C_GetMechanismInfo,
-    C_InitToken: not_supported,
+    C_InitToken,
     C_InitPin: not_supported,
     C_SetPin: not_supported,
     C_OpenSession,
     C_CloseSession,
     C_CloseAllSessions,
-    C_GetSessionInfo: not_supported,
+    C_GetSessionInfo,
     C_GetOperationState: not_supported,
     C_SetOperationState: not_supported,
     C_Login,
@@ -415,8 +485,9 @@ pub extern "C" fn C_GetTokenInfo(slot: CK_SLOT, pInfo: *mut CK_TOKEN_INFO) -> CK
         let serial = b"0000000000000000";
         info.serial_number.copy_from_slice(serial);
         
-        // Flags
-        info.flags = CKF_TOKEN_INITIALIZED | CKF_USER_PIN_TO_BE_CHANGED | CKF_LOGIN_REQUIRED;
+        // Flags - token is initialized and ready to use
+        // Note: We don't set CKF_USER_PIN_TO_BE_CHANGED since identity tokens don't need changing
+        info.flags = CKF_TOKEN_INITIALIZED | CKF_LOGIN_REQUIRED;
         
         // Session counts
         info.ulMaxSessionCount = 0xFFFFFFFFFFFFFFFFu64;
@@ -486,13 +557,14 @@ pub extern "C" fn C_GetMechanismInfo(_slot: CK_SLOT, mech: CK_ULONG, pInfo: *mut
         return CKR_OK;
     }
     
-    // EC key pair generation
+    // EC key pair generation (CKM_EC_KEY_PAIR_GEN = 0x1040)
+    // Note: CKM_ECDH has same value (0x1040), so we include both flags
     if mech == CKM_EC_KEY_PAIR_GEN {
         unsafe {
             let info = &mut *pInfo;
             info.ulMinKeySize = 256;
             info.ulMaxKeySize = 521;
-            info.flags = CKF_GENERATE_KEY_PAIR | CKF_GENERATE;
+            info.flags = CKF_GENERATE_KEY_PAIR | CKF_GENERATE | CKF_DERIVE;
         }
         return CKR_OK;
     }
@@ -504,17 +576,6 @@ pub extern "C" fn C_GetMechanismInfo(_slot: CK_SLOT, mech: CK_ULONG, pInfo: *mut
             info.ulMinKeySize = 256;
             info.ulMaxKeySize = 521;
             info.flags = CKF_SIGN | CKF_VERIFY;
-        }
-        return CKR_OK;
-    }
-    
-    // ECDH key derivation - for compatibility with tools that check it
-    if mech == CKM_ECDH {
-        unsafe {
-            let info = &mut *pInfo;
-            info.ulMinKeySize = 256;
-            info.ulMaxKeySize = 521;
-            info.flags = CKF_DERIVE | CKF_GENERATE_KEY_PAIR;
         }
         return CKR_OK;
     }
@@ -559,6 +620,45 @@ pub extern "C" fn C_CloseAllSessions(_slot: CK_SLOT) -> CK_RV {
 }
 
 #[no_mangle]
+pub extern "C" fn C_GetSessionInfo(sess: CK_SESSION, p_info: *mut CK_SESSION_INFO) -> CK_RV {
+    if p_info.is_null() {
+        return CKR_ARGUMENTS_BAD;
+    }
+    
+    let sessions = match SESSIONS.lock() {
+        Ok(s) => s,
+        Err(_) => return CKR_DEVICE_ERROR,
+    };
+    
+    match sessions.get(&sess) {
+        Some(st) => {
+            unsafe {
+                (*p_info).slot_id = 0; // We only have slot 0
+                // Report user state based on login status
+                if st.is_logged_in {
+                    (*p_info).state = CKS_RW_USER_FUNCTIONS;
+                } else {
+                    (*p_info).state = CKS_RW_PUBLIC_SESSION;
+                }
+                (*p_info).flags = CKF_RW_SESSION | CKF_SERIAL_SESSION;
+                (*p_info).ul_device_error = 0;
+            }
+            CKR_OK
+        }
+        None => {
+            CKR_SESSION_HANDLE_INVALID
+        },
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn C_InitToken(_slot: CK_SLOT, _pin: *const u8, _pin_len: CK_ULONG, _label: *const u8) -> CK_RV {
+    info!("C_InitToken called - SoftHSM2 style: token auto-initialized");
+    // SoftHSM2 style: tokens are auto-initialized, just return success
+    CKR_OK
+}
+
+#[no_mangle]
 pub extern "C" fn C_Login(sess: CK_SESSION, _user_type: CK_ULONG, pin: *const u8, pin_len: CK_ULONG) -> CK_RV {
     info!("C_Login called for session {}", sess);
     
@@ -585,31 +685,24 @@ pub extern "C" fn C_Login(sess: CK_SESSION, _user_type: CK_ULONG, pin: *const u8
     if is_token_format {
         info!("C_Login: PIN appears to be an identity token, attempting validation");
         
-        // Try to validate the token with the daemon
-        if let Err(e) = ensure_daemon_connected() {
-            error!("C_Login: Failed to connect to daemon: {}", e);
-            return CKR_DEVICE_ERROR;
-        }
-        
-        let validation_result: Result<(String, String), String> = {
-            let mut client_guard = match DAEMON_CLIENT.lock() {
-                Ok(c) => c,
-                Err(_) => return CKR_DEVICE_ERROR,
-            };
-            
-            if let Some((ref mut client, ref rt)) = *client_guard {
-                let token_clone = pin_str.clone();
-                rt.block_on(async move {
-                    // Validate the identity token and get identity info
-                    match client.validate_identity_token(&token_clone).await {
-                        Ok((pubkey, _info)) => Ok((pubkey, token_clone)),
-                        Err(e) => Err(format!("Token validation failed: {}", e)),
-                    }
-                })
-            } else {
-                Err("No daemon client available".to_string())
-            }
+        // Create fresh client and runtime for this operation
+        let daemon_addr = get_daemon_addr();
+        let mut client = DaemonClient::new(&daemon_addr);
+        let rt = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(r) => r,
+            Err(_) => return CKR_DEVICE_ERROR,
         };
+        
+        let token_clone = pin_str.clone();
+        let validation_result = rt.block_on(async {
+            client.connect().await.map_err(|e| e.to_string())?;
+            client.validate_identity_token(&token_clone).await
+                .map(|(pubkey, _info)| (pubkey, token_clone))
+                .map_err(|e| format!("Token validation failed: {}", e))
+        });
         
         match validation_result {
             Ok((pubkey, token)) => {
@@ -648,11 +741,19 @@ pub extern "C" fn C_Logout(sess: CK_SESSION) -> CK_RV {
     CKR_SESSION_INVALID
 }
 
+// Track whether we need to query daemon for objects
 static mut FIND_SESSION: u64 = 0;
+static mut FIND_QUERIED: bool = false;
+
+// Token initialization state - persists across sessions
+static mut TOKEN_INITIALIZED: bool = false;
 
 #[no_mangle]
 pub extern "C" fn C_FindObjectsInit(sess: CK_SESSION, _templ: *const u8, _count: CK_ULONG) -> CK_RV { 
-    unsafe { FIND_SESSION = sess; }
+    unsafe { 
+        FIND_SESSION = sess;
+        FIND_QUERIED = false;  // Reset for new search
+    }
     CKR_OK 
 }
 
@@ -668,7 +769,9 @@ pub extern "C" fn C_FindObjects(sess: CK_SESSION, objects: *mut u64, max_count: 
             }
         };
         match sessions.get(&sess) {
-            Some(st) => (st.identity_pubkey.clone(), st.identity_token.clone()),
+            Some(st) => {
+                (st.identity_pubkey.clone(), st.identity_token.clone())
+            }
             None => {
                 unsafe { *count = 0; }
                 return CKR_OK;
@@ -676,66 +779,96 @@ pub extern "C" fn C_FindObjects(sess: CK_SESSION, objects: *mut u64, max_count: 
         }
     };
     
-    // If we have an identity, query daemon for keys
-    if let (Some(_pubkey), Some(token)) = (identity_pubkey, identity_token) {
-        let keys_result: Result<Vec<String>, String> = {
-            let mut client_guard = match DAEMON_CLIENT.lock() {
-                Ok(c) => c,
+    // If we have an identity and haven't queried yet, fetch keys from daemon
+    let should_query = unsafe { !FIND_QUERIED };
+    if should_query {
+        if let (Some(_pubkey), Some(token)) = (identity_pubkey, identity_token) {
+            // Create fresh client and runtime for this operation
+            let daemon_addr = get_daemon_addr();
+            let mut client = DaemonClient::new(&daemon_addr);
+            let rt = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(r) => r,
                 Err(_) => {
                     unsafe { *count = 0; }
                     return CKR_OK;
                 }
             };
             
-            if let Some((ref mut client, ref rt)) = *client_guard {
-                rt.block_on(async move {
-                    // Query daemon filtering by identity token
-                    match client.list_keys_with_identity(&token).await {
-                        Ok(keys) => Ok(keys.into_iter().map(|k| k.id).collect()),
-                        Err(e) => Err(e.to_string()),
+            let keys_result = rt.block_on(async {
+                client.connect().await.map_err(|e| e.to_string())?;
+                client.list_keys_with_identity(&token).await
+                    .map(|keys| keys.into_iter().map(|k| k.id).collect::<Vec<String>>())
+                    .map_err(|e| e.to_string())
+            });
+            
+            if let Ok(keys) = keys_result {
+                // Store in OBJECTS - merge with existing, don't clear
+                let mut objects = match OBJECTS.lock() {
+                    Ok(o) => o,
+                    Err(_) => {
+                        unsafe { *count = 0; }
+                        return CKR_OK;
                     }
-                })
-            } else {
-                Err("No client".to_string())
-            }
-        };
-        
-        if let Ok(keys) = keys_result {
-            // Store in OBJECTS - merge with existing, don't clear
-            let mut objects = match OBJECTS.lock() {
-                Ok(o) => o,
-                Err(_) => {
-                    unsafe { *count = 0; }
-                    return CKR_OK;
-                }
-            };
-            
-            let mut next_handle = match NEXT_HANDLE.lock() {
-                Ok(h) => *h,
-                Err(_) => {
-                    unsafe { *count = 0; }
-                    return CKR_OK;
-                }
-            };
-            
-            // Add new keys from daemon, preserving existing
-            // keys is Vec<String> containing key IDs
-            for key_id in keys.iter() {
-                // Check if key already has a handle
-                let existing_handle = objects.iter()
-                    .find(|(_, v)| **v == *key_id)
-                    .map(|(k, _)| *k);
+                };
                 
-                if existing_handle.is_none() {
-                    // New key - assign next available handle
-                    objects.insert(next_handle, key_id.clone());
-                    next_handle += 1;
+                // Also populate OBJECT_ATTRIBUTES for keys we find
+                let mut obj_attrs = match OBJECT_ATTRIBUTES.lock() {
+                    Ok(a) => a,
+                    Err(_) => {
+                        unsafe { *count = 0; }
+                        return CKR_OK;
+                    }
+                };
+                
+                // Add new keys from daemon, using deterministic handles
+                // This ensures handles match those created in C_GenerateKeyPair
+                for key_id in keys.iter() {
+                    // Use deterministic handle based on key_id
+                    let handle = key_handle_from_id(key_id);
+                    let pub_handle = pub_key_handle(key_id);
+                    
+                    // Insert private key handle if not exists
+                    if !objects.contains_key(&handle) {
+                        objects.insert(handle, key_id.clone());
+                        
+                        // Also populate attributes for private key
+                        if !obj_attrs.contains_key(&handle) {
+                            let mut priv_attrs = HashMap::new();
+                            priv_attrs.insert(CKA_CLASS, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03]); // CKO_PRIVATE_KEY
+                            priv_attrs.insert(CKA_LABEL, b"daemon-key".to_vec());
+                            priv_attrs.insert(CKA_KEY_TYPE, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03]); // CKK_EC
+                            priv_attrs.insert(CKA_SIGN, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE
+                            priv_attrs.insert(CKA_TOKEN, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE
+                            priv_attrs.insert(CKA_SENSITIVE, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE
+                            priv_attrs.insert(CKA_EXTRACTABLE, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_FALSE
+                            priv_attrs.insert(CKA_PRIVATE, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE
+                            obj_attrs.insert(handle, priv_attrs);
+                        }
+                    }
+                    
+                    // Insert public key handle if not exists  
+                    let pub_key_id = format!("{}:pub", key_id);
+                    if !objects.contains_key(&pub_handle) {
+                        objects.insert(pub_handle, pub_key_id);
+                        
+                        // Also populate attributes for public key
+                        if !obj_attrs.contains_key(&pub_handle) {
+                            let mut pub_attrs = HashMap::new();
+                            pub_attrs.insert(CKA_CLASS, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02]); // CKO_PUBLIC_KEY
+                            pub_attrs.insert(CKA_LABEL, b"daemon-key".to_vec());
+                            pub_attrs.insert(CKA_KEY_TYPE, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03]); // CKK_EC
+                            pub_attrs.insert(CKA_VERIFY, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE
+                            pub_attrs.insert(CKA_TOKEN, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE
+                            obj_attrs.insert(pub_handle, pub_attrs);
+                        }
+                    }
                 }
-            }
-            
-            // Update next handle counter
-            if let Ok(mut h) = NEXT_HANDLE.lock() {
-                *h = next_handle;
+                
+                // Mark that we've queried the daemon
+                unsafe { FIND_QUERIED = true; }
             }
         }
     }
@@ -766,47 +899,52 @@ pub extern "C" fn C_FindObjects(sess: CK_SESSION, objects: *mut u64, max_count: 
 
 #[no_mangle]
 pub extern "C" fn C_FindObjectsFinal(_sess: CK_SESSION) -> CK_RV { CKR_OK }
+
 #[no_mangle]
-pub extern "C" fn C_GetAttributeValue(_sess: CK_SESSION, _obj: u64, _templ: *mut u8, _count: CK_ULONG) -> CK_RV { CKR_OK }
-
-// Connect to daemon (blocking)
-fn ensure_daemon_connected() -> Result<(), String> {
-    let mut client_guard = DAEMON_CLIENT.lock().map_err(|e| e.to_string())?;
-    
-    if client_guard.is_none() {
-        let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
-        let daemon_addr = get_daemon_addr();
-        let mut client = DaemonClient::new(&daemon_addr);
-        
-        debug!("Connecting to daemon at {}", daemon_addr);
-        
-        rt.block_on(async {
-            client.connect().await
-        }).map_err(|e| e.to_string())?;
-        
-        *client_guard = Some((client, rt));
+pub extern "C" fn C_GetAttributeValue(_sess: CK_SESSION, obj: u64, templ: *mut u8, count: CK_ULONG) -> CK_RV {
+    if templ.is_null() || count == 0 {
+        return CKR_OK;
     }
-    Ok(())
-}
-
-fn ensure_daemon_connected_with_passphrase(passphrase: &str) -> Result<(), String> {
-    ensure_daemon_connected()?;
     
-    // Set passphrase for subsequent operations
-    {
-        let mut client_guard = DAEMON_CLIENT.lock().map_err(|e| e.to_string())?;
-        if let Some((ref mut client, _)) = *client_guard {
-            client.set_passphrase(passphrase.to_string());
+    unsafe {
+        let attrs = std::slice::from_raw_parts_mut(templ as *mut CK_ATTRIBUTE, count as usize);
+        
+        // Get OBJECT_ATTRIBUTES lock once
+        let obj_attrs = match OBJECT_ATTRIBUTES.lock() {
+            Ok(a) => a,
+            Err(_) => return CKR_DEVICE_ERROR,
+        };
+        
+        let attr_map = match obj_attrs.get(&obj) {
+            Some(m) => m,
+            None => {
+                // Object not found - mark all attributes as unavailable
+                for attr in attrs.iter_mut() {
+                    attr.ulValueLen = 0xFFFFFFFF;
+                }
+                return CKR_OK;
+            }
+        };
+        
+        // Look up each attribute
+        for attr in attrs.iter_mut() {
+            if let Some(value) = attr_map.get(&attr.attr_type) {
+                if !attr.pValue.is_null() {
+                    let len = std::cmp::min(attr.ulValueLen as usize, value.len());
+                    std::ptr::copy_nonoverlapping(value.as_ptr(), attr.pValue, len);
+                }
+                attr.ulValueLen = value.len() as CK_ULONG;
+            } else {
+                // Attribute not found
+                attr.ulValueLen = 0xFFFFFFFF;
+            }
         }
     }
     
-    // Note: We do NOT initialize the keystore here.
-    // The daemon should be initialized separately before PKCS#11 operations.
-    // PKCS#11 library only connects to an already-initialized daemon.
-    Ok(())
+    CKR_OK
 }
 
-// Generate a random handle
+// Generate a random handle for sessions
 fn rand_handle() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
@@ -814,6 +952,25 @@ fn rand_handle() -> u64 {
         .unwrap()
         .subsec_nanos();
     nanos as u64
+}
+
+// Generate a deterministic handle from key_id
+// This ensures the same key always gets the same handle
+fn key_handle_from_id(key_id: &str) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    
+    let mut hasher = DefaultHasher::new();
+    key_id.hash(&mut hasher);
+    let hash = hasher.finish();
+    
+    // Ensure handle is non-zero (0 is reserved/invalid)
+    if hash == 0 { 1 } else { hash }
+}
+
+// Generate a unique handle for public key (add ":pub" suffix)
+fn pub_key_handle(key_id: &str) -> u64 {
+    key_handle_from_id(&format!("{}:pub", key_id))
 }
 
 // Key generation - ECDSA P-256 via daemon
@@ -845,6 +1002,13 @@ pub extern "C" fn C_GenerateKeyPair(
         return CKR_ARGUMENTS_BAD;
     }
     
+    // Validate mechanism - accept CKM_EC_KEY_PAIR_GEN (0x1040) or CKM_ECDH (0x1040, same value)
+    // Note: Both constants are now 0x1040 per PKCS#11 spec
+    if mech_type != CKM_EC_KEY_PAIR_GEN {
+        error!("C_GenerateKeyPair: Unsupported mechanism 0x{:x}", mech_type);
+        return CKR_MECHANISM_INVALID;
+    }
+    
     // Get passphrase AND identity token from session
     let (passphrase, identity_token) = {
         let sessions = match SESSIONS.lock() {
@@ -860,47 +1024,31 @@ pub extern "C" fn C_GenerateKeyPair(
         }
     };
     
-    // Connect to daemon with passphrase
+    // Create fresh client and runtime for this operation
     let daemon_addr = get_daemon_addr();
-    info!("Attempting to connect to daemon at: {}", daemon_addr);
-    if let Err(e) = ensure_daemon_connected_with_passphrase(&passphrase) {
-        error!("Failed to connect to daemon at {}: {}", daemon_addr, e);
-        return CKR_DEVICE_ERROR;
-    }
+    let mut client = DaemonClient::new(&daemon_addr);
+    client.set_passphrase(passphrase.clone());
     
-    // Generate P-256 key via daemon, passing identity token
-    let key_id_result: Result<String, String> = {
-        let mut client_guard = match DAEMON_CLIENT.lock() {
-            Ok(c) => c,
-            Err(_) => {
-                error!("Failed to lock DAEMON_CLIENT");
-                return CKR_DEVICE_ERROR;
-            }
-        };
-        
-        if let Some((ref mut client, ref rt)) = *client_guard {
-            let passphrase_clone = passphrase.clone();
-            let identity_token_ref = identity_token.as_deref();
-            eprintln!("[PKCS11] Creating key with passphrase: {}... and identity: {:?}", &passphrase_clone[..20.min(passphrase_clone.len())], identity_token_ref.map(|t| &t[..20.min(t.len())]));
-            match rt.block_on(async move {
-                match client.create_key("p256", Some("pkcs11-key"), &passphrase_clone, identity_token_ref).await {
-                    Ok(id) => Ok(id),
-                    Err(e) => {
-                        eprintln!("[PKCS11] create_key error: {}", e);
-                        Err(e.to_string())
-                    }
-                }
-            }) {
-                Ok(id) => Ok(id),
-                Err(e) => {
-                    error!("Failed to create key: {}", e);
-                    Err(e)
-                }
-            }
-        } else {
-            Err("No client".to_string())
+    let rt = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(r) => r,
+        Err(_) => {
+            error!("Failed to create tokio runtime");
+            return CKR_DEVICE_ERROR;
         }
     };
+    
+    // Generate P-256 key via daemon, passing identity token
+    let identity_token_ref = identity_token.as_deref();
+
+    let key_id_result = rt.block_on(async {
+        client.connect().await.map_err(|e| e.to_string())?;
+        client.create_key("p256", Some("pkcs11-key"), &passphrase, identity_token_ref)
+            .await
+            .map_err(|e| e.to_string())
+    });
     
     let key_id = match key_id_result {
         Ok(id) => id,
@@ -912,8 +1060,10 @@ pub extern "C" fn C_GenerateKeyPair(
     
     info!("Generated P-256 key with ID: {}", key_id);
     
-    // Generate unique key handles
-    let handle = rand_handle();
+    // Use deterministic handles based on key_id
+    // This ensures FindObjects can find the same handles
+    let pub_handle = pub_key_handle(&key_id);
+    let priv_handle = key_handle_from_id(&key_id);
     
     // Store in global object store for FindObjects
     {
@@ -921,7 +1071,37 @@ pub extern "C" fn C_GenerateKeyPair(
             Ok(o) => o,
             Err(_) => return CKR_SESSION_INVALID,
         };
-        objects.insert(handle, key_id.clone());
+        objects.insert(pub_handle, format!("{}:pub", key_id));
+        objects.insert(priv_handle, key_id.clone());
+    }
+    
+    // Store attributes for both keys
+    {
+        let mut attrs = match OBJECT_ATTRIBUTES.lock() {
+            Ok(a) => a,
+            Err(_) => return CKR_SESSION_INVALID,
+        };
+        
+        // Public key attributes
+        let mut pub_attrs = HashMap::new();
+        pub_attrs.insert(CKA_CLASS, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02]); // CKO_PUBLIC_KEY as u64
+        pub_attrs.insert(CKA_LABEL, b"test-key".to_vec());
+        pub_attrs.insert(CKA_KEY_TYPE, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03]); // CKK_EC as u64
+        pub_attrs.insert(CKA_VERIFY, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE as u64
+        pub_attrs.insert(CKA_TOKEN, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE
+        attrs.insert(pub_handle, pub_attrs);
+        
+        // Private key attributes
+        let mut priv_attrs = HashMap::new();
+        priv_attrs.insert(CKA_CLASS, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03]); // CKO_PRIVATE_KEY as u64
+        priv_attrs.insert(CKA_LABEL, b"test-key".to_vec());
+        priv_attrs.insert(CKA_KEY_TYPE, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03]); // CKK_EC as u64
+        priv_attrs.insert(CKA_SIGN, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE as u64
+        priv_attrs.insert(CKA_TOKEN, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE
+        priv_attrs.insert(CKA_SENSITIVE, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE
+        priv_attrs.insert(CKA_EXTRACTABLE, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_FALSE
+        priv_attrs.insert(CKA_PRIVATE, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE
+        attrs.insert(priv_handle, priv_attrs);
     }
     
     // Store in session
@@ -932,8 +1112,8 @@ pub extern "C" fn C_GenerateKeyPair(
         };
         
         if let Some(st) = sessions.get_mut(&session) {
-            st.active_key_handle = Some(handle);
-            st.active_key_id = Some(key_id);
+            st.active_key_handle = Some(priv_handle);
+            st.active_key_id = Some(key_id.clone());
             st.signing_algorithm = Some("p256".to_string());
         } else {
             return CKR_SESSION_INVALID;
@@ -941,8 +1121,8 @@ pub extern "C" fn C_GenerateKeyPair(
     }
     
     unsafe {
-        *pub_key = handle;
-        *priv_key = handle + 1;
+        *pub_key = pub_handle;
+        *priv_key = priv_handle;
     }
     
     CKR_OK
@@ -950,26 +1130,15 @@ pub extern "C" fn C_GenerateKeyPair(
 
 // Signing
 #[no_mangle]
-pub extern "C" fn C_SignInit(sess: CK_SESSION, _mech: *const u8, key: u64) -> CK_RV { 
+pub extern "C" fn C_SignInit(sess: CK_SESSION, mech: *const u8, key: u64) -> CK_RV { 
+    let mech_type = if !mech.is_null() {
+        unsafe { *(mech as *const CK_ULONG) }
+    } else {
+        0
+    };
     info!("C_SignInit session: {} key: {}", sess, key); 
     
-    // Look up the key ID using the handle
-    let key_id = {
-        let objects = match OBJECTS.lock() {
-            Ok(o) => o,
-            Err(_) => return CKR_DEVICE_ERROR,
-        };
-        
-        match objects.get(&key) {
-            Some(id) => id.clone(),
-            None => {
-                error!("C_SignInit: Key handle {} not found in object store", key);
-                return CKR_KEY_HANDLE_INVALID;
-            }
-        }
-    };
-    
-    // Store the key handle and key ID in session state for C_Sign to use
+    // Just store the key handle - C_Sign will query daemon directly
     let mut sessions = match SESSIONS.lock() {
         Ok(s) => s,
         Err(_) => return CKR_SESSION_INVALID,
@@ -977,8 +1146,7 @@ pub extern "C" fn C_SignInit(sess: CK_SESSION, _mech: *const u8, key: u64) -> CK
     
     if let Some(st) = sessions.get_mut(&sess) {
         st.active_key_handle = Some(key);
-        st.active_key_id = Some(key_id);
-        info!("C_SignInit: Stored key handle {} and key ID for session {}", key, sess);
+        info!("C_SignInit: Stored key handle {} for session {} (will query daemon in C_Sign)", key, sess);
         CKR_OK
     } else {
         CKR_SESSION_INVALID
@@ -999,89 +1167,79 @@ pub extern "C" fn C_Sign(
         return CKR_SESSION_INVALID;
     }
     
-    // Get key from object store using the active key handle set by C_SignInit
-    // First get the key handle from session (avoids holding multiple locks)
-    let key_handle = {
+    // Get session data first (needed for key lookup and signing)
+    let (_active_key_handle, passphrase, identity_token) = {
         let sessions = match SESSIONS.lock() {
             Ok(s) => s,
             Err(_) => return CKR_SESSION_INVALID,
         };
         
         match sessions.get(&session) {
-            Some(st) => st.active_key_handle,
+            Some(st) => (
+                st.active_key_handle,
+                st.passphrase.clone().unwrap_or_default(),
+                st.identity_token.clone()
+            ),
             None => return CKR_SESSION_INVALID,
         }
     };
     
-    // Now look up the key ID using the handle
-    let key_id = match key_handle {
-        Some(handle) => {
-            let objects = match OBJECTS.lock() {
-                Ok(o) => o,
-                Err(_) => return CKR_DEVICE_ERROR,
-            };
-            match objects.get(&handle) {
-                Some(id) => id.clone(),
-                None => {
-                    error!("Key handle {} not found in object store", handle);
-                    return CKR_KEY_HANDLE_INVALID;
-                }
-            }
-        }
-        None => {
-            error!("No active key handle set (C_SignInit not called)");
-            return CKR_KEY_HANDLE_INVALID;
-        }
-    };
-    
-    // Get passphrase and identity token from session
-    let (passphrase, identity_token) = {
-        let sessions = match SESSIONS.lock() {
-            Ok(s) => s,
-            Err(_) => return CKR_SESSION_INVALID,
-        };
-        if let Some(st) = sessions.get(&session) {
-            (
-                st.passphrase.clone().unwrap_or_default(),
-                st.identity_token.clone()
-            )
-        } else {
-            return CKR_SESSION_INVALID;
-        }
-    };
-    
-    // Get data
+    // Get data first
     let data_to_sign = if data.is_null() || data_len == 0 {
         return CKR_ARGUMENTS_BAD;
     } else {
         unsafe { std::slice::from_raw_parts(data, data_len as usize).to_vec() }
     };
     
-    // Connect to daemon
-    if let Err(e) = ensure_daemon_connected_with_passphrase(&passphrase) {
-        error!("Failed to connect: {}", e);
-        return CKR_DEVICE_ERROR;
-    }
+    // Create fresh client and runtime for this operation
+    let daemon_addr = get_daemon_addr();
+    let mut client = DaemonClient::new(&daemon_addr);
+    client.set_passphrase(passphrase.clone());
+    
+    let rt = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(r) => r,
+        Err(_) => return CKR_DEVICE_ERROR,
+    };
+    
+    // ALWAYS query daemon for keys - skip local cache entirely
+    let key_id = if let Some(token) = identity_token.clone() {
+        info!("C_Sign: Querying daemon for keys (skipping local cache)");
+        
+        let keys_result = rt.block_on(async {
+            client.connect().await.map_err(|e| e.to_string())?;
+            client.list_keys_with_identity(&token).await
+                .map_err(|e| format!("Failed to list keys: {}", e))
+        });
+        
+        match keys_result {
+            Ok(keys) => {
+                if keys.is_empty() {
+                    error!("No keys found in daemon");
+                    return CKR_KEY_HANDLE_INVALID;
+                }
+                // Use the first key for signing (pkcs11-tool should have specified which one)
+                info!("Found {} keys in daemon, using first key: {}", keys.len(), keys[0].id);
+                keys[0].id.clone()
+            }
+            Err(e) => {
+                error!("Failed to query daemon for keys: {}", e);
+                return CKR_KEY_HANDLE_INVALID;
+            }
+        }
+    } else {
+        error!("No identity token for key lookup");
+        return CKR_KEY_HANDLE_INVALID;
+    };
     
     // Sign via daemon with identity token
-    let sig_result: Result<Vec<u8>, String> = {
-        let mut client_guard = match DAEMON_CLIENT.lock() {
-            Ok(c) => c,
-            Err(_) => return CKR_DEVICE_ERROR,
-        };
-        
-        if let Some((ref mut client, ref rt)) = *client_guard {
-            let key_id_clone = key_id.clone();
-            let data_clone = data_to_sign.clone();
-            let identity_token_ref = identity_token.as_deref();
-            rt.block_on(async move {
-                client.sign(&key_id_clone, &data_clone, identity_token_ref).await
-                    .map_err(|e| e.to_string())
-            })
-        } else {
-            Err("No client".to_string())
-        }
-    };
+    let identity_token_ref = identity_token.as_deref();
+    let sig_result = rt.block_on(async {
+        client.sign(&key_id, &data_to_sign, identity_token_ref).await
+            .map_err(|e| e.to_string())
+    });
     
     let sig_bytes = match sig_result {
         Ok(s) => s,
@@ -1171,7 +1329,7 @@ pub extern "C" fn C_Verify(
     }
 
     // Get the key ID from session (same pattern as C_Sign, avoiding nested locks)
-    let key_handle = {
+    let active_key = {
         let sessions = match SESSIONS.lock() {
             Ok(s) => s,
             Err(_) => return CKR_SESSION_INVALID,
@@ -1183,7 +1341,7 @@ pub extern "C" fn C_Verify(
         }
     };
 
-    let key_id = match key_handle {
+    let key_id = match active_key {
         Some(handle) => {
             let objects = match OBJECTS.lock() {
                 Ok(o) => o,
@@ -1213,7 +1371,7 @@ pub extern "C" fn C_Verify(
     };
 
     // Get passphrase and identity token from session
-    let (passphrase, identity_token) = {
+    let (passphrase, _identity_token) = {
         let sessions = match SESSIONS.lock() {
             Ok(s) => s,
             Err(_) => return CKR_SESSION_INVALID,
@@ -1228,31 +1386,25 @@ pub extern "C" fn C_Verify(
         }
     };
 
-    // Connect to daemon
-    if let Err(e) = ensure_daemon_connected_with_passphrase(&passphrase) {
-        error!("Failed to connect: {}", e);
-        return CKR_DEVICE_ERROR;
-    }
-
-    // Verify via daemon with identity token
-    let verify_result: Result<bool, String> = {
-        let mut client_guard = match DAEMON_CLIENT.lock() {
-            Ok(c) => c,
-            Err(_) => return CKR_DEVICE_ERROR,
-        };
-
-        if let Some((ref mut client, ref rt)) = *client_guard {
-            let key_id_clone = key_id.clone();
-            let data_clone = data_to_verify.clone();
-            let sig_clone = signature_bytes.clone();
-            rt.block_on(async move {
-                client.verify(&key_id_clone, &data_clone, &sig_clone).await
-                    .map_err(|e| e.to_string())
-            })
-        } else {
-            Err("No client".to_string())
-        }
+    // Create fresh client and runtime for this operation
+    let daemon_addr = get_daemon_addr();
+    let mut client = DaemonClient::new(&daemon_addr);
+    client.set_passphrase(passphrase.clone());
+    
+    let rt = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(r) => r,
+        Err(_) => return CKR_DEVICE_ERROR,
     };
+
+    // Verify via daemon
+    let verify_result = rt.block_on(async {
+        client.connect().await.map_err(|e| e.to_string())?;
+        client.verify(&key_id, &data_to_verify, &signature_bytes).await
+            .map_err(|e| e.to_string())
+    });
 
     match verify_result {
         Ok(valid) => {
@@ -1537,11 +1689,11 @@ mod tests {
     fn test_constants() {
         // Verify mechanism constants
         assert_eq!(CKM_ECDSA, 0x1001);
-        assert_eq!(CKM_EC_KEY_PAIR_GEN, 0x1050);
+        assert_eq!(CKM_EC_KEY_PAIR_GEN, 0x1040);  // Updated per PKCS#11 spec
         assert_eq!(CKM_ECDSA_SHA256, 0x1041);
         assert_eq!(CKM_ECDSA_SHA384, 0x1042);
-        assert_eq!(CKM_ECDH, 0x1040);
-        assert_eq!(CKM_ECDH1_DERIVE, 0x1051);
+        assert_eq!(CKM_ECDH, 0x1040);  // Same as CKM_EC_KEY_PAIR_GEN
+        assert_eq!(CKM_ECDH1_DERIVE, 0x1050);  // Updated per PKCS#11 spec
         
         // Verify flag constants
         assert_eq!(CKF_SIGN, 0x00000002);

@@ -503,9 +503,9 @@ else
     # Test 16d: Generate key pair
     echo ""
     echo "  [TEST 16d] PKCS#11 generate EC key pair"
-    echo -e "${CYAN}[CMD]${NC} pkcs11-tool --module \"$PKCS11_LIB\" --login --pin \"$PKCS11_PIN\" --keypairgen --key-type EC:prime256v1 --label \"pkcs11-test-key\" -m 0x1050"
+    echo -e "${CYAN}[CMD]${NC} pkcs11-tool --module \"$PKCS11_LIB\" --login --pin \"$PKCS11_PIN\" --keypairgen --key-type EC:prime256v1 --label \"pkcs11-test-key\" -m 0x1040"
     OUTPUT=""
-    if OUTPUT=$(pkcs11-tool --module "$PKCS11_LIB" --login --pin "$PKCS11_PIN" --keypairgen --key-type EC:prime256v1 --label "pkcs11-test-key" -m 0x1050 2>&1); then
+    if OUTPUT=$(pkcs11-tool --module "$PKCS11_LIB" --login --pin "$PKCS11_PIN" --keypairgen --key-type EC:prime256v1 --label "pkcs11-test-key" -m 0x1040 2>&1); then
         echo -e "${GREEN}[OUTPUT]${NC}"
         echo "$OUTPUT" | sed 's/^/    /'
         pass_test "PKCS#11 generate EC key pair"
@@ -556,9 +556,9 @@ else
     # Test 16e: Generate key with Identity A token
     echo ""
     echo "  [TEST 16e] PKCS#11 generate key with identity token"
-    echo -e "${CYAN}[CMD]${NC} pkcs11-tool --module \"$PKCS11_LIB\" --login --pin \"<TOKEN_A>\" --keypairgen --key-type EC:prime256v1 --label \"identity-a-key\" -m 0x1050"
+    echo -e "${CYAN}[CMD]${NC} pkcs11-tool --module \"$PKCS11_LIB\" --login --pin \"<TOKEN_A>\" --keypairgen --key-type EC:prime256v1 --label \"identity-a-key\" -m 0x1040"
     OUTPUT=""
-    if OUTPUT=$(pkcs11-tool --module "$PKCS11_LIB" --login --pin "$TOKEN_A" --keypairgen --key-type EC:prime256v1 --label "identity-a-key" -m 0x1050 2>&1); then
+    if OUTPUT=$(pkcs11-tool --module "$PKCS11_LIB" --login --pin "$TOKEN_A" --keypairgen --key-type EC:prime256v1 --label "identity-a-key" -m 0x1040 2>&1); then
         echo -e "${GREEN}[OUTPUT]${NC}"
         echo "$OUTPUT" | sed 's/^/    /'
         pass_test "PKCS#11 generate key with identity token"
@@ -571,9 +571,9 @@ else
     # Test 16f: Generate second key with Identity B token
     echo ""
     echo "  [TEST 16f] PKCS#11 generate key with Identity B token"
-    echo -e "${CYAN}[CMD]${NC} pkcs11-tool --module \"$PKCS11_LIB\" --login --pin \"<TOKEN_B>\" --keypairgen --key-type EC:prime256v1 --label \"identity-b-key\" -m 0x1050"
+    echo -e "${CYAN}[CMD]${NC} pkcs11-tool --module \"$PKCS11_LIB\" --login --pin \"<TOKEN_B>\" --keypairgen --key-type EC:prime256v1 --label \"identity-b-key\" -m 0x1040"
     OUTPUT=""
-    if OUTPUT=$(pkcs11-tool --module "$PKCS11_LIB" --login --pin "$TOKEN_B" --keypairgen --key-type EC:prime256v1 --label "identity-b-key" -m 0x1050 2>&1); then
+    if OUTPUT=$(pkcs11-tool --module "$PKCS11_LIB" --login --pin "$TOKEN_B" --keypairgen --key-type EC:prime256v1 --label "identity-b-key" -m 0x1040 2>&1); then
         echo -e "${GREEN}[OUTPUT]${NC}"
         echo "$OUTPUT" | sed 's/^/    /'
         pass_test "PKCS#11 generate key with identity B token"

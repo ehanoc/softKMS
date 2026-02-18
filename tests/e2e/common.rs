@@ -52,8 +52,8 @@ impl ServerGuard {
         // Find an available port
         let port = find_available_port();
 
-        // Start daemon
-        let mut child = Command::new("target/debug/softkms-daemon")
+        // Start daemon (use release build for tests)
+        let mut child = Command::new("target/release/softkms-daemon")
             .args(&[
                 "--storage-path",
                 storage_path.to_str().unwrap(),

@@ -138,7 +138,7 @@ fn test_pkcs11_key_generation() {
             "--label",
             "test-key",
             "-m",
-            "0x1050",
+            "0x1040",
         ])
         .output()
         .expect("Failed to run pkcs11-tool");
@@ -186,7 +186,7 @@ fn test_pkcs11_sign_data() {
             "--label",
             "test-sign-key",
             "-m",
-            "0x1050",
+            "0x1040",
         ])
         .output();
 
@@ -259,7 +259,7 @@ fn test_pkcs11_daemon_keys_persist() {
             "--label",
             "persistent-key",
             "-m",
-            "0x1050",
+            "0x1040",
         ])
         .output();
 

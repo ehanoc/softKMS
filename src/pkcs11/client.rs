@@ -67,16 +67,13 @@ impl DaemonClient {
     
     /// Connect to the daemon
     pub async fn connect(&mut self) -> DaemonResult<()> {
-        eprintln!("[PKCS11-CLIENT] Attempting to connect to daemon at: {}", self.server);
         match KeyStoreClient::connect(self.server.clone()).await {
             Ok(client) => {
                 self.client = Some(client);
-                eprintln!("[PKCS11-CLIENT] Successfully connected to daemon");
                 info!("Connected to daemon");
                 Ok(())
             }
             Err(e) => {
-                eprintln!("[PKCS11-CLIENT] Failed to connect to {}: {}", self.server, e);
                 error!("Failed to connect: {}", e);
                 Err(DaemonError::Connection(e.to_string()))
             }
