@@ -55,6 +55,10 @@ path = "tests/cli_integration_tests.rs"
 name = "pkcs11_integration_tests"
 path = "tests/integration/pkcs11_tests.rs"
 
+[[test]]
+name = "signature_verification_tests"
+path = "tests/e2e/signature_verification_tests.rs"
+
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }
