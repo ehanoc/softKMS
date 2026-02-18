@@ -20,7 +20,7 @@ use softkms::api::softkms::{
     ImportSeedRequest, ListKeysRequest, SignRequest,
     DeriveP256Request, DeriveEd25519Request, HealthRequest, InitRequest,
     VerifyRequest, DerivationScheme,
-    CreateIdentityRequest, ListIdentitiesRequest, RevokeIdentityRequest,
+    CreateIdentityRequest, ListIdentitiesRequest, RevokeIdentityRequest, GetIdentityRequest,
     ClientType, IdentityKeyType,
 };
 use softkms::api::softkms::identity_service_client::IdentityServiceClient;
@@ -40,6 +40,10 @@ struct Cli {
     /// Passphrase for keystore (if not provided, will prompt interactively)
     #[arg(short = 'p', long)]
     passphrase: Option<String>,
+    
+    /// Identity token for authentication (alternative to passphrase for identity-scoped operations)
+    #[arg(short = 't', long)]
+    token: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -50,7 +54,7 @@ enum Commands {
         #[arg(short, long)]
         algorithm: String,
 
-        /// Key label
+        /// Human-readable label
         #[arg(short, long)]
         label: Option<String>,
 
@@ -107,74 +111,17 @@ enum Commands {
         #[arg(short, long, group = "verify_key_ref")]
         label: Option<String>,
 
-        /// Data that was signed (raw bytes or base64)
+        /// Data that was signed
         #[arg(short, long)]
         data: String,
 
         /// Signature to verify (base64 encoded)
         #[arg(short, long)]
         signature: String,
-    },
 
-    /// Import a seed
-    ImportSeed {
-        /// Seed mnemonic or raw hex seed
-        #[arg(short, long)]
-        mnemonic: String,
-
-        /// Label for the seed
-        #[arg(short, long)]
-        label: Option<String>,
-    },
-
-    /// Derive a key from seed (BIP32)
-    Derive {
-        /// Algorithm to derive (ed25519, p256)
-        #[arg(short, long, default_value = "ed25519")]
-        algorithm: String,
-        
-        /// Seed ID
-        #[arg(short, long)]
-        seed: String,
-
-        /// Derivation path (e.g., m/44'/283'/0'/0/0)
-        #[arg(short, long)]
-        path: String,
-
-        /// Derivation scheme: peikert (default) or v2
-        #[arg(long, default_value = "peikert")]
-        scheme: String,
-
-        /// Origin for P-256 derivation
-        #[arg(long)]
-        origin: Option<String>,
-
-        /// User handle for P-256 derivation
-        #[arg(long)]
-        user_handle: Option<String>,
-
-        /// Counter for P-256 derivation
-        #[arg(long, default_value = "0")]
-        counter: u32,
-
-        /// Label for derived key
-        #[arg(short, long)]
-        label: Option<String>,
-    },
-
-    /// Delete a key
-    Delete {
-        /// Key ID (alternative to --label)
-        #[arg(short, long, group = "delete_key_ref")]
-        key: Option<String>,
-
-        /// Key label (alternative to --key)
-        #[arg(short, long, group = "delete_key_ref")]
-        label: Option<String>,
-
-        /// Force deletion without confirmation
-        #[arg(short, long)]
-        force: bool,
+        /// Data encoding: raw (default) or hex
+        #[arg(long, default_value = "raw")]
+        encoding: String,
     },
 
     /// Show key information
@@ -232,6 +179,13 @@ enum IdentityCommands {
         include_inactive: bool,
     },
 
+    /// Show identity details
+    Info {
+        /// Public key of the identity (base64 encoded)
+        #[arg(short, long)]
+        public_key: String,
+    },
+
     /// Revoke an identity
     Revoke {
         /// Public key of the identity to revoke
@@ -249,25 +203,23 @@ async fn lookup_key_by_label(
     client: &mut KeyStoreClient<tonic::transport::Channel>,
     label: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let list_request = tonic::Request::new(ListKeysRequest {
-            auth_token: String::new(),
-            include_public_keys: false,
+    let request = tonic::Request::new(ListKeysRequest {
+        include_public_keys: false,
+        auth_token: String::new(),
     });
-    
-    let response = client.list_keys(list_request).await?;
-    let list: softkms::api::softkms::ListKeysResponse = response.into_inner();
-    
+
+    let response = client.list_keys(request).await?;
+    let list = response.into_inner();
+
     let matching_keys: Vec<_> = list.keys.iter()
         .filter(|k| k.label.as_deref() == Some(label))
         .collect();
-    
+
     match matching_keys.len() {
-        0 => {
-            Err(format!("No key found with label '{}'", label).into())
-        }
+        0 => Err(format!("No key found with label '{}'", label).into()),
         1 => Ok(matching_keys[0].key_id.clone()),
         _ => {
-            eprintln!("Multiple keys found with label '{}':", label);
+            eprintln!("Multiple keys found with label '{}'", label);
             for k in matching_keys {
                 println!("  {} (created: {})", k.key_id, k.created_at);
             }
@@ -276,20 +228,33 @@ async fn lookup_key_by_label(
     }
 }
 
-/// Get passphrase from CLI arg or prompt interactively
-fn get_passphrase(cli_pass: Option<String>) -> Result<String, Box<dyn std::error::Error>> {
+/// Get authentication credentials - either token or passphrase
+/// Token takes precedence if both are provided
+fn get_auth_credentials(
+    cli_token: Option<String>,
+    cli_pass: Option<String>,
+) -> Result<(Option<String>, Option<String>), Box<dyn std::error::Error>> {
+    // Token takes precedence
+    if let Some(token) = cli_token {
+        if !token.is_empty() {
+            return Ok((Some(token), None));
+        }
+    }
+    
+    // Fall back to passphrase
     if let Some(pass) = cli_pass {
         if pass.is_empty() {
             return Err("Passphrase cannot be empty".into());
         }
-        Ok(pass)
-    } else {
-        let passphrase = prompt_password("Enter passphrase: ")?;
-        if passphrase.is_empty() {
-            return Err("Passphrase cannot be empty".into());
-        }
-        Ok(passphrase)
+        return Ok((None, Some(pass)));
     }
+    
+    // Prompt for passphrase interactively
+    let passphrase = prompt_password("Enter passphrase: ")?;
+    if passphrase.is_empty() {
+        return Err("Passphrase cannot be empty".into());
+    }
+    Ok((None, Some(passphrase)))
 }
 
 #[tokio::main]
@@ -316,9 +281,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         return Ok(());
     }
-    
+
+    // Connect to daemon
     let mut client = KeyStoreClient::connect(cli.server.clone()).await?;
-    
+    let mut identity_client = IdentityServiceClient::connect(cli.server).await?;
+
     match cli.command {
         Commands::Generate { algorithm, label, from_seed, origin, user_handle, counter } => {
             if let Some(seed_id) = from_seed {
@@ -343,10 +310,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
-                let passphrase = match get_passphrase(cli.passphrase.clone()) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        eprintln!("{}", e);
+                // Derive P256 always needs passphrase for now
+                let passphrase = match get_auth_credentials(cli.token.clone(), cli.passphrase.clone())? {
+                    (Some(_), _) => {
+                        eprintln!("Token-based auth not yet supported for HD derivation");
+                        std::process::exit(1);
+                    }
+                    (_, Some(pass)) => pass,
+                    _ => {
+                        eprintln!("Passphrase required for HD key derivation");
                         std::process::exit(1);
                     }
                 };
@@ -378,10 +350,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             } else {
-                let passphrase = match get_passphrase(cli.passphrase.clone()) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        eprintln!("{}", e);
+                // Use token if provided, otherwise use passphrase
+                let (auth_token, passphrase) = match get_auth_credentials(
+                    cli.token.clone(),
+                    cli.passphrase.clone(),
+                )? {
+                    (Some(token), _) => (token, String::new()),
+                    (_, Some(pass)) => (String::new(), pass),
+                    _ => {
+                        eprintln!("Either --token or --passphrase must be provided");
                         std::process::exit(1);
                     }
                 };
@@ -390,7 +367,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     algorithm: algorithm.clone(),
                     label,
                     attributes: std::collections::HashMap::new(),
-                    auth_token: String::new(),
+                    auth_token,
                     passphrase,
                 });
 
@@ -414,17 +391,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         
         Commands::List { detailed: _ } => {
-            let passphrase = match get_passphrase(cli.passphrase.clone()) {
-                Ok(p) => p,
-                Err(e) => {
-                    eprintln!("{}", e);
+            // Use token if provided, otherwise use passphrase
+            let (auth_token, passphrase) = match get_auth_credentials(
+                cli.token.clone(),
+                cli.passphrase.clone(),
+            )? {
+                (Some(token), _) => (token, String::new()),
+                (_, Some(pass)) => (String::new(), pass),
+                _ => {
+                    eprintln!("Either --token or --passphrase must be provided");
                     std::process::exit(1);
                 }
             };
             
             let request = tonic::Request::new(ListKeysRequest {
-                    auth_token: passphrase,
-                    include_public_keys: true,
+                include_public_keys: true,
+                auth_token,
             });
             
             match client.list_keys(request).await {
@@ -455,40 +437,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        
+
         Commands::Sign { key, label, data, encoding: _ } => {
             let key_id = if let Some(kid) = key {
                 kid
             } else if let Some(lbl) = label {
-                let list_request = tonic::Request::new(ListKeysRequest {
-                        auth_token: String::new(),
-                        include_public_keys: false,
-                });
-                
-                match client.list_keys(list_request).await {
-                    Ok(response) => {
-                        let list: softkms::api::softkms::ListKeysResponse = response.into_inner();
-                        let matching_keys: Vec<_> = list.keys.iter()
-                            .filter(|k| k.label.as_deref() == Some(&lbl))
-                            .collect();
-                        
-                        match matching_keys.len() {
-                            0 => {
-                                eprintln!("No key found with label '{}'", lbl);
-                                std::process::exit(1);
-                            }
-                            1 => matching_keys[0].key_id.clone(),
-                            _ => {
-                                eprintln!("Multiple keys found with label '{}'. Please use --key with the UUID:", lbl);
-                                for k in matching_keys {
-                                    println!("  {} (created: {})", k.key_id, k.created_at);
-                                }
-                                std::process::exit(1);
-                            }
-                        }
-                    }
+                match lookup_key_by_label(&mut client, &lbl).await {
+                    Ok(id) => id,
                     Err(e) => {
-                        eprintln!("Failed to lookup key by label: {}", e);
+                        eprintln!("{}", e);
                         std::process::exit(1);
                     }
                 }
@@ -497,10 +454,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             };
             
-            let passphrase = match get_passphrase(cli.passphrase.clone()) {
-                Ok(p) => p,
-                Err(e) => {
-                    eprintln!("{}", e);
+            // Use token if provided, otherwise use passphrase
+            let (auth_token, passphrase) = match get_auth_credentials(
+                cli.token.clone(),
+                cli.passphrase.clone(),
+            )? {
+                (Some(token), _) => (token, String::new()),
+                (_, Some(pass)) => (String::new(), pass),
+                _ => {
+                    eprintln!("Either --token or --passphrase must be provided");
                     std::process::exit(1);
                 }
             };
@@ -515,7 +477,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 key_id: key_id.clone(),
                 data: data_bytes,
                 passphrase,
-                auth_token: String::new(),
+                auth_token,
             });
             
             match client.sign(request).await {
@@ -531,7 +493,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        Commands::Verify { key, label, data, signature } => {
+        Commands::Verify { key, label, data, signature, encoding: _ } => {
             let key_id = if let Some(kid) = key {
                 kid
             } else if let Some(lbl) = label {
@@ -553,13 +515,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 data.as_bytes().to_vec()
             };
 
-            let signature_bytes = match BASE64.decode(&signature) {
-                Ok(decoded) => decoded,
-                Err(e) => {
-                    eprintln!("Failed to decode signature from base64: {}", e);
-                    std::process::exit(1);
-                }
-            };
+            let signature_bytes = BASE64.decode(&signature)
+                .map_err(|e| format!("Invalid base64 signature: {}", e))?;
 
             let request = tonic::Request::new(VerifyRequest {
                 key_id: key_id.clone(),
@@ -568,203 +525,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
 
             match client.verify(request).await {
-                Ok(response) => {
-                    let result: softkms::api::softkms::VerifyResponse = response.into_inner();
-                    if result.valid {
-                        println!("Signature is VALID");
-                        println!("Algorithm: {}", result.algorithm);
-                    } else {
-                        println!("Signature is INVALID");
-                        std::process::exit(1);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Failed to verify signature: {}", e);
-                    std::process::exit(1);
-                }
-            }
-        }
-        
-        Commands::ImportSeed { mnemonic, label } => {
-            let passphrase = match get_passphrase(cli.passphrase.clone()) {
-                Ok(p) => p,
-                Err(e) => {
-                    eprintln!("{}", e);
-                    std::process::exit(1);
-                }
-            };
-
-            let request = tonic::Request::new(ImportSeedRequest {
-                mnemonic,
-                label,
-                passphrase,
-            });
-            
-            match client.import_seed(request).await {
-                Ok(response) => {
-                    let seed: softkms::api::softkms::ImportSeedResponse = response.into_inner();
-                    println!("Seed imported successfully:");
-                    println!("  ID: {}", seed.seed_id);
-                    println!("  Created: {}", seed.created_at);
-                }
-                Err(e) => {
-                    eprintln!("Failed to import seed: {}", e);
-                    std::process::exit(1);
-                }
-            }
-        }
-        
-        Commands::Derive { algorithm, seed, path, scheme, origin, user_handle, counter, label } => {
-            let passphrase = match get_passphrase(cli.passphrase.clone()) {
-                Ok(p) => p,
-                Err(e) => {
-                    eprintln!("{}", e);
-                    std::process::exit(1);
-                }
-            };
-
-            // First, try to resolve seed as ID, then as label
-            let seed_id = if seed.len() == 36 && seed.chars().nth(8) == Some('-') && seed.chars().nth(13) == Some('-') && seed.chars().nth(18) == Some('-') && seed.chars().nth(23) == Some('-') {
-                // Looks like a UUID format
-                seed.clone()
-            } else {
-                // Try to resolve as label
-                match lookup_key_by_label(&mut client, &seed).await {
-                    Ok(id) => {
-                        println!("Resolved seed label '{}' to ID: {}", seed, id);
-                        id
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to find seed by label '{}': {}", seed, e);
-                        std::process::exit(1);
-                    }
-                }
-            };
-
-            // Extract coin type from path (m/44'/coin_type'/...)
-            let coin_type: u32 = path.split('/').nth(2)
-                .and_then(|s| s.trim_end_matches('\'').parse().ok())
-                .unwrap_or(283); // Default to Algorand (283) if not found
-
-            match algorithm.as_str() {
-                "ed25519" => {
-                    // Map scheme string to enum
-                    let scheme_enum = match scheme.as_str() {
-                        "v2" => DerivationScheme::V2 as i32,
-                        _ => DerivationScheme::Peikert as i32,
-                    };
-
-                    let request = tonic::Request::new(DeriveEd25519Request {
-                        seed_id,
-                        derivation_path: path,
-                        coin_type,
-                        scheme: scheme_enum,
-                        store_key: true,
-                        label,
-                        passphrase,
-                    });
-                    
-                    match client.derive_ed25519(request).await {
-                        Ok(response) => {
-                            let result = response.into_inner();
-                            println!("Ed25519 key derived successfully:");
-                            println!("  Key ID: {}", result.key_id);
-                            println!("  Algorithm: {}", result.algorithm);
-                            println!("  Public Key (base64): {}", result.public_key);
-                            if !result.address.is_empty() {
-                                println!("  Address: {}", result.address);
-                            }
-                            println!("  Created: {}", result.created_at);
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to derive Ed25519 key: {}", e);
-                            std::process::exit(1);
-                        }
-                    }
-                }
-                "p256" => {
-                    // P256 derivation
-                    let origin = origin.expect("--origin required for p256 derivation");
-                    let user_handle = user_handle.expect("--user-handle required for p256 derivation");
-                    
-                    let request = tonic::Request::new(DeriveP256Request {
-                        seed_id,
-                        origin,
-                        user_handle,
-                        counter,
-                        label,
-                        passphrase,
-                    });
-                    
-                    match client.derive_p256(request).await {
-                        Ok(response) => {
-                            let result = response.into_inner();
-                            println!("P-256 key derived successfully:");
-                            println!("  Key ID: {}", result.key_id);
-                            println!("  Algorithm: {}", result.algorithm);
-                            println!("  Public Key (base64): {}", result.public_key);
-                            println!("  Created: {}", result.created_at);
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to derive P-256 key: {}", e);
-                            std::process::exit(1);
-                        }
-                    }
-                }
-                _ => {
-                    eprintln!("Unknown algorithm: {}. Use 'ed25519' or 'p256'", algorithm);
-                    std::process::exit(1);
-                }
-            }
-        }
-        
-        
-        Commands::Delete { key, label, force } => {
-            let key_id = if let Some(kid) = key {
-                kid
-            } else if let Some(lbl) = &label {
-                match lookup_key_by_label(&mut client, lbl).await {
-                    Ok(id) => id,
-                    Err(e) => {
-                        eprintln!("{}", e);
-                        std::process::exit(1);
-                    }
-                }
-            } else {
-                eprintln!("Either --key or --label must be specified");
-                std::process::exit(1);
-            };
-            
-            if !force {
-                println!("Are you sure you want to delete key {}?", key_id);
-                println!("This operation cannot be undone.");
-                println!("Use --force to confirm deletion.");
-                return Ok(());
-            }
-            
-            let request = tonic::Request::new(DeleteKeyRequest {
-                key_id: key_id.clone(),
-                force: true,
-                auth_token: String::new(),
-            });
-            
-            match client.delete_key(request).await {
                 Ok(_) => {
-                    println!("Key {} deleted successfully.", key_id);
+                    println!("Signature verified successfully");
                 }
                 Err(e) => {
-                    eprintln!("Failed to delete key: {}", e);
+                    eprintln!("Signature verification failed: {}", e);
                     std::process::exit(1);
                 }
             }
         }
-        
+
         Commands::Info { key, label } => {
-            // Determine key_id from key or label
             let key_id = if let Some(kid) = key {
                 kid
-            } else if let Some(lbl) = &label {
-                match lookup_key_by_label(&mut client, lbl).await {
+            } else if let Some(lbl) = label {
+                match lookup_key_by_label(&mut client, &lbl).await {
                     Ok(id) => id,
                     Err(e) => {
                         eprintln!("{}", e);
@@ -775,13 +550,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("Either --key or --label must be specified");
                 std::process::exit(1);
             };
-            
+
+            // Use token if provided, otherwise use passphrase
+            let (auth_token, passphrase) = match get_auth_credentials(
+                cli.token.clone(),
+                cli.passphrase.clone(),
+            )? {
+                (Some(token), _) => (token, String::new()),
+                (_, Some(pass)) => (String::new(), pass),
+                _ => {
+                    eprintln!("Either --token or --passphrase must be provided");
+                    std::process::exit(1);
+                }
+            };
+
             let request = tonic::Request::new(GetKeyRequest {
                 key_id: key_id.clone(),
                 include_public_key: true,
-                auth_token: String::new(),
+                auth_token,
             });
-            
+
             match client.get_key(request).await {
                 Ok(response) => {
                     let info: softkms::api::softkms::GetKeyResponse = response.into_inner();
@@ -809,42 +597,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        
-        Commands::Health => {
-            let request = tonic::Request::new(HealthRequest {});
-            
-            match client.health(request).await {
-                Ok(response) => {
-                    let health: softkms::api::softkms::HealthResponse = response.into_inner();
-                    if health.healthy {
-                        println!("Daemon is healthy");
-                        println!("  Version: {}", health.version);
-                        println!("  Storage: {}", if health.storage_ready { "ready" } else { "not ready" });
-                        println!("  API: {}", if health.api_ready { "ready" } else { "not ready" });
-                        println!("  Initialized: {}", if health.initialized { "yes" } else { "no - run 'init' first" });
-                    } else {
-                        println!("Daemon is not healthy");
-                        std::process::exit(1);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Failed to check health: {}", e);
+
+        Commands::Init { confirm } => {
+            let passphrase = match get_auth_credentials(cli.token.clone(), cli.passphrase.clone())? {
+                (Some(_), _) => {
+                    eprintln!("Initialization requires passphrase, not token");
                     std::process::exit(1);
                 }
-            }
-        }
-        
-        Commands::Init { confirm } => {
-            let passphrase = match get_passphrase(cli.passphrase.clone()) {
-                Ok(p) => p,
-                Err(e) => {
-                    eprintln!("{}", e);
+                (_, Some(pass)) => pass,
+                _ => {
+                    eprintln!("Passphrase required for initialization");
                     std::process::exit(1);
                 }
             };
 
             if confirm {
-                let confirm_pass = rpassword::prompt_password("Confirm passphrase: ")?;
+                let confirm_pass = prompt_password("Confirm passphrase: ")?;
                 if passphrase != confirm_pass {
                     eprintln!("Passphrases do not match");
                     std::process::exit(1);
@@ -852,20 +620,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let request = tonic::Request::new(InitRequest {
-                passphrase,
-                confirm,
+                passphrase: passphrase.clone(),
+                confirm: confirm.clone(),
             });
-            
+
             match client.init(request).await {
-                Ok(response) => {
-                    let resp = response.into_inner();
-                    if resp.success {
-                        println!("Keystore initialized successfully.");
-                        println!("  {}", resp.message);
-                    } else {
-                        eprintln!("Initialization failed: {}", resp.message);
-                        std::process::exit(1);
-                    }
+                Ok(_) => {
+                    println!("Keystore initialized successfully.");
                 }
                 Err(e) => {
                     eprintln!("Failed to initialize keystore: {}", e);
@@ -873,50 +634,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        
-        Commands::Pkcs11 { module } => {
-            // Already handled above - this is a fallback
-            unreachable!("PKCS#11 command should be handled before daemon connection");
+
+        Commands::Pkcs11 { .. } => {
+            // Handled above before connecting to daemon
         }
-        
+
         Commands::Identity { command } => {
-            let passphrase = match get_passphrase(cli.passphrase.clone()) {
-                Ok(p) => p,
-                Err(e) => {
-                    eprintln!("{}", e);
-                    std::process::exit(1);
-                }
-            };
-            
-            let mut identity_client = IdentityServiceClient::connect(cli.server.clone()).await?;
-            
             match command {
                 IdentityCommands::Create { r#type, description } => {
+                    // Identity creation needs passphrase for auth
+                    let passphrase = match get_auth_credentials(cli.token.clone(), cli.passphrase.clone())? {
+                        (Some(_), _) => {
+                            eprintln!("Token-based auth not supported for identity creation");
+                            std::process::exit(1);
+                        }
+                        (_, Some(pass)) => pass,
+                        _ => {
+                            eprintln!("Passphrase required for identity creation");
+                            std::process::exit(1);
+                        }
+                    };
+
                     let client_type = match r#type.as_str() {
                         "ai-agent" => ClientType::AiAgent,
                         "service" => ClientType::Service,
                         "user" => ClientType::User,
                         "pkcs11" => ClientType::Pkcs11,
                         _ => {
-                            eprintln!("Unknown identity type: {}. Use 'ai-agent', 'service', 'user', or 'pkcs11'", r#type);
+                            eprintln!("Invalid identity type: {}", r#type);
                             std::process::exit(1);
                         }
                     };
-                    
+
+                    let key_type = match client_type {
+                        ClientType::Pkcs11 => IdentityKeyType::P256,
+                        _ => IdentityKeyType::Ed25519,
+                    };
+
                     let request = tonic::Request::new(CreateIdentityRequest {
-                        passphrase,
                         client_type: client_type as i32,
-                        key_type: IdentityKeyType::Ed25519 as i32,
+                        key_type: key_type as i32,
                         description,
+                        passphrase,
                     });
-                    
+
                     match identity_client.create_identity(request).await {
                         Ok(response) => {
                             let resp = response.into_inner();
                             println!("Identity created successfully:");
                             println!("  Token: {}", resp.token);
                             println!("  Public Key: {}", resp.public_key);
-                            println!("  Created At: {}", resp.created_at);
+                            println!("  Created: {}", resp.created_at);
+                            println!("");
+                            println!("IMPORTANT: Store the token securely - it will not be shown again!");
                         }
                         Err(e) => {
                             eprintln!("Failed to create identity: {}", e);
@@ -924,31 +694,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                
+
                 IdentityCommands::List { include_inactive } => {
+                    // Identity listing needs passphrase for auth
+                    let passphrase = match get_auth_credentials(cli.token.clone(), cli.passphrase.clone())? {
+                        (Some(_), _) => {
+                            eprintln!("Token-based auth not supported for identity listing");
+                            std::process::exit(1);
+                        }
+                        (_, Some(pass)) => pass,
+                        _ => {
+                            eprintln!("Passphrase required for identity listing");
+                            std::process::exit(1);
+                        }
+                    };
+
                     let request = tonic::Request::new(ListIdentitiesRequest {
-                        passphrase,
                         include_inactive,
+                        passphrase,
                     });
-                    
-                        match identity_client.list_identities(request).await {
+
+                    match identity_client.list_identities(request).await {
                         Ok(response) => {
                             let resp = response.into_inner();
-                            let count = resp.identities.len();
-                            println!("Identities:");
-                            for identity in &resp.identities {
-                                let status = if identity.is_active { "active" } else { "inactive" };
-                                println!("  {}:", identity.public_key);
-                                println!("    Type: {:?}", identity.client_type);
-                                println!("    Status: {}", status);
-                                if !identity.description.is_empty() {
-                                    println!("    Description: {}", identity.description);
+                            if resp.identities.is_empty() {
+                                println!("No identities found.");
+                            } else {
+                                println!("Identities:");
+                                for identity in resp.identities {
+                                    println!("  Public Key: {}", identity.public_key);
+                                    println!("    Type: {:?}", identity.client_type);
+                                    println!("    Status: {}", if identity.is_active { "active" } else { "inactive" });
+                                    if !identity.description.is_empty() {
+                                        println!("    Description: {}", identity.description);
+                                    }
+                                    println!("    Created: {}", identity.created_at);
+                                    if !identity.last_used.is_empty() {
+                                        println!("    Last Used: {}", identity.last_used);
+                                    }
+                                    println!();
                                 }
-                                println!("    Created: {}", identity.created_at);
-                                println!("    Keys: {}", identity.key_count);
                             }
-                            println!("");
-                            println!("Total: {} identities", count);
                         }
                         Err(e) => {
                             eprintln!("Failed to list identities: {}", e);
@@ -956,31 +742,78 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                
+
+                IdentityCommands::Info { public_key } => {
+                    // Identity info needs token for auth
+                    let token = match cli.token.clone() {
+                        Some(token) => token,
+                        _ => {
+                            eprintln!("Token required for identity info");
+                            std::process::exit(1);
+                        }
+                    };
+
+                    let request = tonic::Request::new(GetIdentityRequest {
+                        public_key: public_key.clone(),
+                        token,
+                    });
+
+                    match identity_client.get_identity(request).await {
+                        Ok(response) => {
+                            let resp = response.into_inner();
+                            if let Some(identity) = resp.identity {
+                                println!("Identity Information:");
+                                println!("  Public Key: {}", identity.public_key);
+                                println!("  Type: {:?}", identity.client_type);
+                                println!("  Status: {}", if identity.is_active { "active" } else { "inactive" });
+                                if !identity.description.is_empty() {
+                                    println!("  Description: {}", identity.description);
+                                }
+                                println!("  Created: {}", identity.created_at);
+                                if !identity.last_used.is_empty() {
+                                    println!("  Last Used: {}", identity.last_used);
+                                }
+                            } else {
+                                println!("Identity {} not found.", public_key);
+                                std::process::exit(1);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to get identity info: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+
                 IdentityCommands::Revoke { public_key, force } => {
                     if !force {
                         println!("Are you sure you want to revoke identity {}?", public_key);
-                        println!("This will disable all keys owned by this identity.");
-                        println!("Use --force to confirm revocation.");
-                        return Ok(());
+                        println!("This action cannot be undone. Use --force to confirm.");
+                        std::process::exit(1);
                     }
-                    
+
+                    // Identity revocation needs passphrase for auth
+                    let passphrase = match get_auth_credentials(cli.token.clone(), cli.passphrase.clone())? {
+                        (Some(_), _) => {
+                            eprintln!("Token-based auth not supported for identity revocation");
+                            std::process::exit(1);
+                        }
+                        (_, Some(pass)) => pass,
+                        _ => {
+                            eprintln!("Passphrase required for identity revocation");
+                            std::process::exit(1);
+                        }
+                    };
+
                     let request = tonic::Request::new(RevokeIdentityRequest {
+                        public_key: public_key.clone(),
                         passphrase,
-                        public_key,
-                        force: true,
+                        force,
                     });
-                    
+
                     match identity_client.revoke_identity(request).await {
-                        Ok(response) => {
-                            let resp = response.into_inner();
-                            if resp.success {
-                                println!("Identity revoked successfully.");
-                                println!("  {}", resp.message);
-                            } else {
-                                eprintln!("Failed to revoke identity: {}", resp.message);
-                                std::process::exit(1);
-                            }
+                        Ok(_) => {
+                            println!("Identity {} revoked successfully.", public_key);
                         }
                         Err(e) => {
                             eprintln!("Failed to revoke identity: {}", e);
@@ -990,7 +823,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+
+        Commands::Health => {
+            // Health check doesn't need authentication
+            let request = tonic::Request::new(HealthRequest {});
+            match client.health(request).await {
+                Ok(response) => {
+                    let resp = response.into_inner();
+                    println!("Health check passed");
+                    println!("  Status: {}", if resp.healthy { "healthy" } else { "unhealthy" });
+                    if !resp.version.is_empty() {
+                        println!("  Version: {}", resp.version);
+                    }
+                    println!("  Storage Ready: {}", resp.storage_ready);
+                    println!("  API Ready: {}", resp.api_ready);
+                    println!("  Initialized: {}", resp.initialized);
+                }
+                Err(e) => {
+                    eprintln!("Health check failed: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
     }
-    
+
     Ok(())
 }
