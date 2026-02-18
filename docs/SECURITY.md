@@ -281,6 +281,38 @@ master_key = PBKDF2-HMAC-SHA256(
 
 **Note:** Master key derived from admin passphrase, not identity tokens. Tokens provide access control, not key encryption.
 
+### ⚠️ Single Master Key Architecture
+
+**IMPORTANT:** All keys in the keystore are encrypted with a **single master key** derived from the admin passphrase. This design has important security implications:
+
+| Aspect | Implementation | Impact |
+|--------|---------------|--------|
+| **Access Control** | Per-identity tokens | Identity A cannot access Identity B's keys via API |
+| **Encryption** | Single master key | All keys encrypted with same key |
+| **Isolation Level** | Logical (authorization) | Not cryptographic (encryption) |
+
+**Security Implications:**
+
+1. **Master Key Compromise**: If the master key is exposed, **ALL keys in the system are compromised** regardless of identity ownership
+2. **No Cryptographic Isolation**: Physical access to encrypted storage + master key = access to all keys
+3. **Admin Authority**: Anyone with the admin passphrase can decrypt any key (by design)
+
+**When to Use This Model:**
+
+✅ **Appropriate for:**
+- Single-administrator deployments
+- Internal services with trusted infrastructure
+- Development and staging environments
+- Small teams with shared security responsibility
+
+❌ **Not recommended for:**
+- Multi-tenant SaaS with untrusted tenants
+- Environments requiring cryptographic compartmentalization
+- Compliance regimes requiring per-user encryption boundaries
+- High-risk scenarios with sophisticated threat actors
+
+**Future Enhancement:** Per-identity encryption keys can be implemented by deriving separate KEKs (Key Encryption Keys) from identity-specific passphrases or credentials. This would provide cryptographic isolation at the cost of more complex key management.
+
 ### Key Wrapping
 
 ```rust
