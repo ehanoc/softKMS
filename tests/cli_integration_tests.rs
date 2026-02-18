@@ -94,7 +94,7 @@ impl Drop for CliTest {
 
 #[test]
 fn test_cli_p256_key_generation() {
-    let _guard = TEST_LOCK.lock().unwrap();
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut test = CliTest::new();
     test.start_daemon();
 
@@ -143,7 +143,7 @@ fn test_cli_p256_key_generation() {
 
 #[test]
 fn test_cli_p256_sign_and_verify() {
-    let _guard = TEST_LOCK.lock().unwrap();
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut test = CliTest::new();
     test.start_daemon();
 
@@ -226,7 +226,7 @@ fn test_cli_p256_sign_and_verify() {
 
 #[test]
 fn test_cli_ed25519_sign_and_verify() {
-    let _guard = TEST_LOCK.lock().unwrap();
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut test = CliTest::new();
     test.start_daemon();
 
@@ -309,7 +309,7 @@ fn test_cli_ed25519_sign_and_verify() {
 
 #[test]
 fn test_cli_verify_invalid_signature() {
-    let _guard = TEST_LOCK.lock().unwrap();
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut test = CliTest::new();
     test.start_daemon();
 
@@ -373,7 +373,7 @@ fn test_cli_verify_invalid_signature() {
 
 #[test]
 fn test_cli_ed25519_key_generation() {
-    let _guard = TEST_LOCK.lock().unwrap();
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut test = CliTest::new();
     test.start_daemon();
 
@@ -406,7 +406,7 @@ fn test_cli_ed25519_key_generation() {
 
 #[test]
 fn test_cli_list_keys() {
-    let _guard = TEST_LOCK.lock().unwrap();
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut test = CliTest::new();
     test.start_daemon();
 

@@ -36,8 +36,12 @@ pub trait StorageBackend: Send + Sync {
         id: KeyId,
     ) -> BoxFuture<'_, Result<()>>;
     
-    /// List all keys
-    fn list_keys(&self) -> BoxFuture<'_, Result<Vec<KeyMetadata>>>;
+    /// List keys in a namespace
+    /// 
+    /// # Arguments
+    /// * `namespace` - Optional namespace to filter by. If None, lists admin keys.
+    ///   For identity-scoped keys, pass the identity public key.
+    fn list_keys(&self, namespace: Option<&str>) -> BoxFuture<'_, Result<Vec<KeyMetadata>>>;
     
     /// Check if key exists
     fn exists(&self, id: KeyId) -> BoxFuture<'_, Result<bool>>;

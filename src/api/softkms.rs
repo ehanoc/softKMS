@@ -170,9 +170,12 @@ pub struct ImportSeedRequest {
     pub mnemonic: ::prost::alloc::string::String,
     #[prost(string, optional, tag = "2")]
     pub label: ::core::option::Option<::prost::alloc::string::String>,
-    /// Keystore passphrase for wrapping
+    /// Keystore passphrase for wrapping (admin) or identity token
     #[prost(string, tag = "3")]
     pub passphrase: ::prost::alloc::string::String,
+    /// Identity token for identity-scoped seeds
+    #[prost(string, tag = "4")]
+    pub auth_token: ::prost::alloc::string::String,
 }
 /// Import seed response
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -227,6 +230,9 @@ pub struct DeriveP256Request {
     /// For accessing seed
     #[prost(string, tag = "6")]
     pub passphrase: ::prost::alloc::string::String,
+    /// Identity token for identity-scoped derivation
+    #[prost(string, tag = "7")]
+    pub auth_token: ::prost::alloc::string::String,
 }
 /// Derive P-256 key response
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -266,6 +272,9 @@ pub struct DeriveEd25519Request {
     /// For accessing seed
     #[prost(string, tag = "7")]
     pub passphrase: ::prost::alloc::string::String,
+    /// Identity token for identity-scoped derivation
+    #[prost(string, tag = "8")]
+    pub auth_token: ::prost::alloc::string::String,
 }
 /// Derive Ed25519 key response
 #[allow(clippy::derive_partial_eq_without_eq)]

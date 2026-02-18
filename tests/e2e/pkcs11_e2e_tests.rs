@@ -111,7 +111,7 @@ fn test_pkcs11_e2e_keygen() {
 
     // Verify key exists via CLI (use identity token to list)
     let list_output = Command::new("./target/release/softkms")
-        .args(&["--server", &server.grpc_addr(), "-p", token, "list"])
+        .args(&["--server", &server.grpc_addr(), "--token", token, "list"])
         .output()
         .expect("CLI should work");
 
@@ -277,7 +277,7 @@ fn test_pkcs11_e2e_multiple_keys() {
 
     // List all keys using identity token
     let output = Command::new("./target/release/softkms")
-        .args(&["--server", &server.grpc_addr(), "-p", token, "list"])
+        .args(&["--server", &server.grpc_addr(), "--token", token, "list"])
         .output()
         .expect("CLI should work");
 

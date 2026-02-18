@@ -159,7 +159,7 @@ async fn test_identity_create_and_access_own_key() {
     assert_eq!(key_a.owner_identity, Some(identity_a.public_key.clone()));
     
     // Identity A can access own key
-    let keys = service.list_keys().await.unwrap();
+    let keys = service.list_keys(None).await.unwrap();
     let identity_a_keys: Vec<_> = keys.iter()
         .filter(|k| k.owner_identity == Some(identity_a.public_key.clone()))
         .collect();
@@ -262,7 +262,7 @@ async fn test_identity_cannot_see_other_identity_keys() {
     ).await.unwrap();
     
     // Get all keys
-    let all_keys = service.list_keys().await.unwrap();
+    let all_keys = service.list_keys(None).await.unwrap();
     
     // Filter by identity
     let identity_a_keys: Vec<_> = all_keys.iter()
@@ -525,7 +525,7 @@ async fn test_mixed_identity_and_admin_keys() {
     ).await.unwrap();
     
     // List all keys - admin sees both
-    let all_keys = service.list_keys().await.unwrap();
+    let all_keys = service.list_keys(None).await.unwrap();
     assert_eq!(all_keys.len(), 2);
     
     // Filter by owner

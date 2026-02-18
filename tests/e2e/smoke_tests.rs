@@ -190,7 +190,7 @@ async fn test_key_lifecycle_with_passphrase() {
     assert_eq!(metadata.label, Some("Test Key".to_string()));
 
     // 2. List keys
-    let keys = service.list_keys().await.unwrap();
+    let keys = service.list_keys(None).await.unwrap();
     assert_eq!(keys.len(), 1);
 
     // 3. Get key info
@@ -226,7 +226,7 @@ async fn test_key_lifecycle_with_passphrase() {
 
     // 8. Delete key
     service.delete_key(metadata.id).await.unwrap();
-    let remaining = service.list_keys().await.unwrap();
+    let remaining = service.list_keys(None).await.unwrap();
     assert_eq!(remaining.len(), 1);
 }
 
@@ -265,13 +265,14 @@ async fn test_seed_import_and_operations() {
         seed,
         Some("Recovery Seed".to_string()),
         passphrase,
+        None, // Admin-owned seed
     ).await.unwrap();
 
     assert_eq!(metadata.algorithm, "bip32-seed");
     assert_eq!(metadata.key_type, softkms::KeyType::Seed);
 
     // List should show seed
-    let keys = service.list_keys().await.unwrap();
+    let keys = service.list_keys(None).await.unwrap();
     assert_eq!(keys.len(), 1);
 }
 
@@ -314,8 +315,8 @@ async fn test_encrypted_storage_format() {
         None,
     ).await.unwrap();
 
-    // Verify encrypted file exists
-    let key_file = storage_path.join(format!("{}.enc", metadata.id));
+    // Verify encrypted file exists (in admin namespace)
+    let key_file = storage_path.join("keys").join("admin").join(format!("{}.enc", metadata.id));
     assert!(key_file.exists(), "Encrypted key file should exist");
 
     // Read encrypted data - should not be plaintext
@@ -327,8 +328,8 @@ async fn test_encrypted_storage_format() {
     // Should be reasonable size (not plaintext)
     assert!(encrypted_data.len() > 100, "Should be encrypted, not plaintext");
 
-    // Metadata file should exist
-    let metadata_file = storage_path.join(format!("{}.json", metadata.id));
+    // Metadata file should exist (in admin namespace)
+    let metadata_file = storage_path.join("keys").join("admin").join(format!("{}.json", metadata.id));
     assert!(metadata_file.exists(), "Metadata file should exist");
 
     // Metadata should be JSON (not encrypted)

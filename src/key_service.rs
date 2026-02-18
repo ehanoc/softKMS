@@ -281,6 +281,7 @@ impl KeyService {
         seed: Vec<u8>,
         label: Option<String>,
         passphrase: &str,
+        owner_identity: Option<String>,
     ) -> Result<KeyMetadata> {
         info!("Importing seed");
 
@@ -295,7 +296,7 @@ impl KeyService {
             created_at,
             attributes: HashMap::new(),
             public_key: Vec::new(),
-                    owner_identity: None,
+            owner_identity,
         };
 
         let master_key = self.security_manager
@@ -322,8 +323,8 @@ impl KeyService {
         Ok(metadata)
     }
 
-    pub async fn list_keys(&self) -> Result<Vec<KeyMetadata>> {
-        self.storage.list_keys().await
+    pub async fn list_keys(&self, namespace: Option<&str>) -> Result<Vec<KeyMetadata>> {
+        self.storage.list_keys(namespace).await
     }
 
     pub async fn get_key(&self, key_id: KeyId) -> Result<Option<KeyMetadata>> {
@@ -353,7 +354,7 @@ impl KeyService {
 
         // Check if we already have a derived key with these parameters
         // We store the derivation params in attributes for lookup
-        let keys = self.list_keys().await?;
+        let keys = self.list_keys(None).await?;
         let derivation_id = format!("{}:{}:{}:{}", seed_id, origin, user_handle, counter);
         
         for key in &keys {
@@ -480,7 +481,7 @@ impl KeyService {
         );
 
         // Check if we already have a derived key with these parameters
-        let keys = self.list_keys().await?;
+        let keys = self.list_keys(None).await?;
         let derivation_id = format!("{}:{}", seed_id, derivation_path);
         
         for key in &keys {
@@ -801,7 +802,7 @@ mod tests {
         assert_eq!(metadata.algorithm, "ed25519");
         assert_eq!(metadata.label, Some("Test Key".to_string()));
 
-        let keys = service.list_keys().await.unwrap();
+        let keys = service.list_keys(None).await.unwrap();
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].id, metadata.id);
     }
@@ -838,6 +839,7 @@ mod tests {
             seed,
             Some("Test Seed".to_string()),
             passphrase,
+            None,
         ).await.unwrap();
 
         assert_eq!(metadata.algorithm, "bip32-seed");
@@ -888,7 +890,7 @@ mod tests {
             None,
         ).await.unwrap();
 
-        let keys = service.list_keys().await.unwrap();
+        let keys = service.list_keys(None).await.unwrap();
         assert_eq!(keys.len(), 2);
 
         let data = b"test data";
@@ -910,6 +912,7 @@ mod tests {
             seed.clone(),
             Some("Test Seed for P-256".to_string()),
             passphrase,
+            None,
         ).await.unwrap();
 
         assert_eq!(seed_metadata.algorithm, "bip32-seed");
@@ -983,7 +986,7 @@ mod tests {
         assert_ne!(sig1.bytes, sig2.bytes);
 
         // Verify total keys: 1 seed + 2 derived keys = 3 keys
-        let keys = service.list_keys().await.unwrap();
+        let keys = service.list_keys(None).await.unwrap();
         assert_eq!(keys.len(), 3);
     }
 
@@ -1003,6 +1006,7 @@ mod tests {
             seed,
             Some("HD Ed25519 Test Seed".to_string()),
             passphrase,
+            None,
         ).await.unwrap();
 
         assert_eq!(seed_metadata.algorithm, "bip32-seed");
@@ -1041,7 +1045,7 @@ mod tests {
         assert!(!wrong_valid, "Signature should be invalid for wrong data");
 
         // Verify we have 2 keys (1 seed + 1 derived)
-        let keys = service.list_keys().await.unwrap();
+        let keys = service.list_keys(None).await.unwrap();
         assert_eq!(keys.len(), 2);
     }
 }

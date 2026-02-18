@@ -117,8 +117,8 @@ impl StorageBackend for EncryptedFileStorage {
         self.inner.delete_key(id)
     }
     
-    fn list_keys(&self) -> crate::storage::BoxFuture<'_, Result<Vec<KeyMetadata>>> {
-        self.inner.list_keys()
+    fn list_keys(&self, namespace: Option<&str>) -> crate::storage::BoxFuture<'_, Result<Vec<KeyMetadata>>> {
+        self.inner.list_keys(namespace)
     }
     
     fn exists(&self, id: KeyId) -> crate::storage::BoxFuture<'_, Result<bool>> {

@@ -63,7 +63,7 @@ mod p256_tests {
         assert_eq!(metadata.label, Some("Random P256 Key".to_string()));
 
         // Verify key exists
-        let keys = service.list_keys().await.unwrap();
+        let keys = service.list_keys(None).await.unwrap();
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].id, metadata.id);
 
@@ -87,6 +87,7 @@ mod p256_tests {
             seed,
             Some("Test Seed".to_string()),
             passphrase,
+            None,
         ).await.unwrap();
 
         assert_eq!(seed_metadata.algorithm, "bip32-seed");
@@ -133,7 +134,7 @@ mod p256_tests {
 
         // Import seed
         let seed = vec![1u8; 64];
-        let seed_metadata = service.import_seed(seed, None, passphrase).await.unwrap();
+        let seed_metadata = service.import_seed(seed, None, passphrase, None).await.unwrap();
 
         let origin = "github.com";
         let user_handle = "user@example.com";
@@ -177,7 +178,7 @@ mod p256_tests {
         assert_eq!(key3.algorithm, "p256");
 
         // Total keys: 1 seed + 3 derived = 4
-        let keys = service.list_keys().await.unwrap();
+        let keys = service.list_keys(None).await.unwrap();
         assert_eq!(keys.len(), 4);
 
         // Each key should sign successfully
@@ -196,7 +197,7 @@ mod p256_tests {
 
         // Import seed
         let seed = vec![2u8; 64];
-        let seed_metadata = service.import_seed(seed, None, passphrase).await.unwrap();
+        let seed_metadata = service.import_seed(seed, None, passphrase, None).await.unwrap();
 
         // Derive key first time
         let origin = "example.com";
@@ -225,7 +226,7 @@ mod p256_tests {
         assert_eq!(key1.id, key2.id);
 
         // Should only have 2 keys total (1 seed + 1 derived)
-        let keys = service.list_keys().await.unwrap();
+        let keys = service.list_keys(None).await.unwrap();
         assert_eq!(keys.len(), 2);
     }
 
@@ -299,14 +300,14 @@ mod p256_tests {
         ).await.unwrap();
 
         // Verify exists
-        let keys_before = service.list_keys().await.unwrap();
+        let keys_before = service.list_keys(None).await.unwrap();
         assert_eq!(keys_before.len(), 1);
 
         // Delete
         service.delete_key(metadata.id).await.unwrap();
 
         // Verify gone
-        let keys_after = service.list_keys().await.unwrap();
+        let keys_after = service.list_keys(None).await.unwrap();
         assert_eq!(keys_after.len(), 0);
 
         // Try to sign with deleted key
@@ -412,7 +413,7 @@ mod passphrase_tests {
 
         // Import seed
         let seed = vec![5u8; 64];
-        let seed_metadata = service.import_seed(seed, Some("My Seed".to_string()), passphrase).await.unwrap();
+        let seed_metadata = service.import_seed(seed, Some("My Seed".to_string()), passphrase, None).await.unwrap();
 
         // Derive key from seed
         let derived = service.derive_p256_key(
@@ -514,6 +515,7 @@ mod integration_tests {
             seed,
             Some("Recovery Seed".to_string()),
             passphrase,
+            None,
         ).await.unwrap();
 
         assert_eq!(seed_metadata.key_type, KeyType::Seed);
@@ -555,7 +557,7 @@ mod integration_tests {
         assert_eq!(google_sig.algorithm, "p256");
 
         // Verify we have 3 keys: 1 seed + 2 derived
-        let keys = service.list_keys().await.unwrap();
+        let keys = service.list_keys(None).await.unwrap();
         assert_eq!(keys.len(), 3);
     }
 
@@ -584,7 +586,7 @@ mod integration_tests {
 
         // Import seed and derive P-256
         let seed = vec![0xCD; 64];
-        let seed_metadata = service.import_seed(seed, None, passphrase).await.unwrap();
+        let seed_metadata = service.import_seed(seed, None, passphrase, None).await.unwrap();
         
         let derived_p256 = service.derive_p256_key(
             seed_metadata.id,
@@ -607,7 +609,7 @@ mod integration_tests {
         assert_eq!(derived_sig.algorithm, "p256");
 
         // Verify key count
-        let keys = service.list_keys().await.unwrap();
+        let keys = service.list_keys(None).await.unwrap();
         assert_eq!(keys.len(), 4); // 1 ed25519 + 1 p256 + 1 seed + 1 derived
     }
 

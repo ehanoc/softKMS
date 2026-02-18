@@ -152,6 +152,52 @@ enum Commands {
         module: bool,
     },
 
+    /// Import a BIP39 seed phrase
+    ImportSeed {
+        /// BIP39 mnemonic phrase (12-24 words)
+        #[arg(short, long)]
+        mnemonic: String,
+
+        /// Human-readable label
+        #[arg(short, long)]
+        label: Option<String>,
+    },
+
+    /// Derive a key from seed (BIP32)
+    Derive {
+        /// Algorithm to derive (ed25519, p256)
+        #[arg(short, long)]
+        algorithm: String,
+
+        /// Seed ID to derive from
+        #[arg(short, long)]
+        seed: String,
+
+        /// Derivation path (e.g., "m/44'/283'/0'/0/0")
+        #[arg(short, long)]
+        path: String,
+
+        /// Derivation scheme: v2 or peikert
+        #[arg(long, default_value = "v2")]
+        scheme: String,
+
+        /// Origin/domain for derivation (e.g., "github.com")
+        #[arg(long)]
+        origin: Option<String>,
+
+        /// User handle for derivation
+        #[arg(long)]
+        user_handle: Option<String>,
+
+        /// Counter for multiple keys per origin
+        #[arg(long, default_value = "0")]
+        counter: u32,
+
+        /// Label for derived key
+        #[arg(short, long)]
+        label: Option<String>,
+    },
+
     /// Identity management commands
     Identity {
         #[command(subcommand)]
@@ -330,6 +376,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     counter,
                     label,
                     passphrase,
+                    auth_token: String::new(), // HD derivation from generate command doesn't support tokens yet
                 });
                 
                 match client.derive_p256(request).await {
@@ -648,6 +695,123 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Handled above before connecting to daemon
         }
 
+        Commands::ImportSeed { mnemonic, label } => {
+            // Import seed supports both identity token and admin passphrase
+            let (auth_token, passphrase) = match get_auth_credentials(cli.token.clone(), cli.passphrase.clone())? {
+                (Some(token), _) => (token, String::new()),
+                (_, Some(pass)) => (String::new(), pass),
+                _ => {
+                    eprintln!("Either --token or --passphrase must be provided");
+                    std::process::exit(1);
+                }
+            };
+
+            let request = tonic::Request::new(ImportSeedRequest {
+                mnemonic,
+                label,
+                passphrase,
+                auth_token,
+            });
+
+            match client.import_seed(request).await {
+                Ok(response) => {
+                    let resp = response.into_inner();
+                    println!("Seed imported successfully:");
+                    println!("  Seed ID: {}", resp.seed_id);
+                    println!("  Created: {}", resp.created_at);
+                }
+                Err(e) => {
+                    eprintln!("Failed to import seed: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        Commands::Derive { algorithm, seed, path, scheme, origin, user_handle, counter, label } => {
+            // Derive supports both identity token and admin passphrase
+            let (auth_token, passphrase) = match get_auth_credentials(cli.token.clone(), cli.passphrase.clone())? {
+                (Some(token), _) => (token, String::new()),
+                (_, Some(pass)) => (String::new(), pass),
+                _ => {
+                    eprintln!("Either --token or --passphrase must be provided");
+                    std::process::exit(1);
+                }
+            };
+
+            let derivation_scheme = match scheme.as_str() {
+                "v2" => DerivationScheme::V2,
+                _ => DerivationScheme::Peikert,
+            };
+
+            match algorithm.as_str() {
+                "p256" => {
+                    let origin = origin.unwrap_or_default();
+                    let user_handle = user_handle.unwrap_or_default();
+                    
+                    let request = tonic::Request::new(DeriveP256Request {
+                        seed_id: seed,
+                        origin,
+                        user_handle,
+                        counter,
+                        label,
+                        passphrase,
+                        auth_token: auth_token.clone(),
+                    });
+
+                    match client.derive_p256(request).await {
+                        Ok(response) => {
+                            let resp = response.into_inner();
+                            println!("P-256 key derived successfully:");
+                            println!("  Key ID: {}", resp.key_id);
+                            println!("  Algorithm: {}", resp.algorithm);
+                            println!("  Public Key (base64): {}...", &resp.public_key[..50.min(resp.public_key.len())]);
+                            println!("  Created: {}", resp.created_at);
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to derive P-256 key: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                "ed25519" => {
+                    // Extract coin type from BIP44 path (m/44'/coin_type'/...)
+                    let coin_type: u32 = path.split('/').nth(2)
+                        .and_then(|s| s.trim_end_matches('\'').parse().ok())
+                        .unwrap_or(283);
+                    
+                    let request = tonic::Request::new(DeriveEd25519Request {
+                        seed_id: seed,
+                        derivation_path: path,
+                        coin_type,
+                        scheme: derivation_scheme as i32,
+                        store_key: true,
+                        label,
+                        passphrase,
+                        auth_token,
+                    });
+
+                    match client.derive_ed25519(request).await {
+                        Ok(response) => {
+                            let resp = response.into_inner();
+                            println!("Ed25519 key derived successfully:");
+                            println!("  Key ID: {}", resp.key_id);
+                            println!("  Algorithm: {}", resp.algorithm);
+                            println!("  Public Key (base64): {}...", &resp.public_key[..50.min(resp.public_key.len())]);
+                            println!("  Created: {}", resp.created_at);
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to derive Ed25519 key: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                _ => {
+                    eprintln!("Unsupported algorithm for derivation: {}", algorithm);
+                    std::process::exit(1);
+                }
+            }
+        }
+
         Commands::Identity { command } => {
             match command {
                 IdentityCommands::Create { r#type, description } => {
@@ -726,6 +890,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     match identity_client.list_identities(request).await {
                         Ok(response) => {
                             let resp = response.into_inner();
+                            let count = resp.identities.len();
                             if resp.identities.is_empty() {
                                 println!("No identities found.");
                             } else {
@@ -743,6 +908,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     }
                                     println!();
                                 }
+                                println!("Total: {} identities", count);
                             }
                         }
                         Err(e) => {

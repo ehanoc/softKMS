@@ -66,7 +66,7 @@ async fn test_list_keys_returns_all_keys() {
     let passphrase = "test_passphrase";
 
     // Initially empty
-    let keys = service.list_keys().await.unwrap();
+    let keys = service.list_keys(None).await.unwrap();
     assert_eq!(keys.len(), 0);
 
     // Create some keys (admin-owned)
@@ -74,7 +74,7 @@ async fn test_list_keys_returns_all_keys() {
     service.create_key("ed25519".to_string(), Some("Labeled".to_string()), std::collections::HashMap::new(), passphrase, None).await.unwrap();
     service.create_key("ed25519".to_string(), None, std::collections::HashMap::new(), passphrase, None).await.unwrap();
 
-    let keys = service.list_keys().await.unwrap();
+    let keys = service.list_keys(None).await.unwrap();
     assert_eq!(keys.len(), 3);
 
     // Verify we can find the labeled key
@@ -184,7 +184,7 @@ async fn test_passphrase_caching() {
     ).await.unwrap();
     
     // Both keys should exist
-    let keys = service2.list_keys().await.unwrap();
+    let keys = service2.list_keys(None).await.unwrap();
     assert_eq!(keys.len(), 1);
 }
 
@@ -201,7 +201,7 @@ async fn test_same_passphrase_multiple_operations() {
 
     // Import seed
     let seed = vec![0u8; 32];
-    let _ = service.import_seed(seed, Some("Seed".to_string()), passphrase).await.unwrap();
+    let _ = service.import_seed(seed, Some("Seed".to_string()), passphrase, None).await.unwrap();
 
     // Sign with all keys using same passphrase (admin requests)
     let data = b"test data";
@@ -210,7 +210,7 @@ async fn test_same_passphrase_multiple_operations() {
     service.sign(key3.id, data, passphrase, None).await.unwrap();
 
     // All operations succeeded
-    let keys = service.list_keys().await.unwrap();
+    let keys = service.list_keys(None).await.unwrap();
     assert_eq!(keys.len(), 4); // 3 keys + 1 seed
 }
 
@@ -326,7 +326,7 @@ async fn test_storage_persistence() {
         let service = KeyService::new(storage, security_manager, config);
 
         // List should show the persisted key
-        let keys = service.list_keys().await.unwrap();
+        let keys = service.list_keys(None).await.unwrap();
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].label, Some("Persistent".to_string()));
 

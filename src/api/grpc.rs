@@ -200,51 +200,47 @@ impl KeyStore for GrpcKeyStore {
         let req = request.into_inner();
         let auth_token = req.auth_token;
         
-        let metadatas = self.key_service
-            .list_keys()
-            .await
-            .map_err(map_error)?;
-        
-        // Filter keys by owner if auth_token is provided
-        let filtered_keys: Vec<_> = if !auth_token.is_empty() {
-            // Try to parse as identity token first
+        // Determine namespace based on auth token
+        let namespace: Option<String> = if !auth_token.is_empty() {
+            // Try to parse as identity token
             match Token::parse(&auth_token) {
                 Ok(token) => {
-                    // It's a valid identity token format - verify and filter
+                    // It's a valid identity token - verify and extract namespace
                     match self.identity_store.load(&token.public_key).await {
                         Ok(identity) => {
                             if token.verify(&identity.token_hash) && identity.is_active {
-                                // Filter to only return keys owned by this identity
-                                let owner_pubkey = token.public_key.clone();
-                                metadatas.into_iter()
-                                    .filter(|m| {
-                                        m.owner_identity.as_ref()
-                                            .map(|owner| owner == &owner_pubkey)
-                                            .unwrap_or(false)
-                                    })
-                                    .collect()
+                                // Use the identity's public key as namespace
+                                Some(token.public_key.clone())
                             } else {
-                                // Invalid or inactive token, return empty
-                                vec![]
+                                // Invalid or inactive token - return empty
+                                let response = ListKeysResponse { keys: vec![] };
+                                return Ok(Response::new(response));
                             }
                         }
-                        Err(_) => vec![], // Identity not found, return empty
+                        Err(_) => {
+                            // Identity not found - return empty
+                            let response = ListKeysResponse { keys: vec![] };
+                            return Ok(Response::new(response));
+                        }
                     }
                 }
                 Err(_) => {
-                    // Not a valid token format - check if it's the admin passphrase
-                    // For admin passphrase, return all keys (no filtering)
-                    // We can't verify admin passphrase here without additional context,
-                    // so we just return all keys as before
-                    metadatas
+                    // Not an identity token - treat as admin (no namespace filter)
+                    None
                 }
             }
         } else {
-            // No auth_token, return all keys (legacy behavior)
-            metadatas
+            // No auth_token - treat as admin (no namespace filter)
+            None
         };
         
-        let keys = filtered_keys.iter()
+        // List keys from specific namespace or all admin keys
+        let metadatas = self.key_service
+            .list_keys(namespace.as_deref())
+            .await
+            .map_err(map_error)?;
+        
+        let keys = metadatas.iter()
             .map(|m| metadata_to_key_info(m, req.include_public_keys))
             .collect();
         
@@ -475,8 +471,30 @@ impl KeyStore for GrpcKeyStore {
             Self::mnemonic_to_seed(&req.mnemonic)?
         };
         
+        // Extract owner identity from auth_token if provided
+        let owner_identity = if !req.auth_token.is_empty() {
+            match Token::parse(&req.auth_token) {
+                Ok(token) => {
+                    // Verify token is valid
+                    match self.identity_store.load(&token.public_key).await {
+                        Ok(identity) => {
+                            if token.verify(&identity.token_hash) && identity.is_active {
+                                Some(token.public_key)
+                            } else {
+                                None
+                            }
+                        }
+                        Err(_) => None,
+                    }
+                }
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+        
         let metadata = self.key_service
-            .import_seed(seed_bytes, req.label, &req.passphrase)
+            .import_seed(seed_bytes, req.label, &req.passphrase, owner_identity)
             .await
             .map_err(map_error)?;
         

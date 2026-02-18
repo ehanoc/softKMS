@@ -185,7 +185,8 @@ message VerifyResponse {
 message ImportSeedRequest {
   string mnemonic = 1;
   optional string label = 2;
-  string passphrase = 3;  // Keystore passphrase for wrapping
+  string passphrase = 3;  // Keystore passphrase for wrapping (admin) or identity token
+  string auth_token = 4;  // Identity token for identity-scoped seeds
 }
 
 // Import seed response
@@ -216,6 +217,7 @@ message DeriveP256Request {
   uint32 counter = 4;       // Counter for multiple keys per origin
   optional string label = 5;
   string passphrase = 6;    // For accessing seed
+  string auth_token = 7;    // Identity token for identity-scoped derivation
 }
 
 // Derive P-256 key response
@@ -235,6 +237,7 @@ message DeriveEd25519Request {
   bool store_key = 5;            // If true, persist the derived key
   optional string label = 6;
   string passphrase = 7;         // For accessing seed
+  string auth_token = 8;         // Identity token for identity-scoped derivation
 }
 
 // Derive Ed25519 key response

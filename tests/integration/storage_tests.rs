@@ -126,8 +126,8 @@ async fn test_file_storage_list_keys() {
     
     storage.init().await.unwrap();
     
-    // Initially empty
-    let keys = storage.list_keys().await.unwrap();
+    // Initially empty (admin namespace)
+    let keys = storage.list_keys(None).await.unwrap();
     assert!(keys.is_empty());
     
     // Store multiple keys
@@ -146,8 +146,8 @@ async fn test_file_storage_list_keys() {
         storage.store_key(key_id, &metadata, b"test").await.unwrap();
     }
     
-    // List should return 3 keys
-    let keys = storage.list_keys().await.unwrap();
+    // List should return 3 keys from admin namespace
+    let keys = storage.list_keys(None).await.unwrap();
     assert_eq!(keys.len(), 3);
 }
 
