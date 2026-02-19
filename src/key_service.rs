@@ -17,8 +17,6 @@ use crate::crypto::p256::DeterministicP256;
 use crate::storage::StorageBackend;
 use crate::security::{SecurityManager, WrappedKey};
 use crate::{Config, Error, KeyId, KeyMetadata, KeyType, Result, Signature};
-use p256::ecdsa::SigningKey;
-use rand_core::OsRng;
 use chrono::Utc;
 use secrecy::ExposeSecret;
 use secrecy::Secret;

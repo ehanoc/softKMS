@@ -5,8 +5,7 @@
 
 use crate::storage::file::FileStorage;
 use crate::storage::StorageBackend;
-use crate::security::{KeyWrapper, MasterKey, SecurityError, SecurityManager, WrappedKey};
-use crate::key_service::KeyService;
+use crate::security::{SecurityManager, WrappedKey};
 use crate::{Config, KeyId, KeyMetadata, Result, Error};
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -1,7 +1,5 @@
 //! Session state management for PKCS#11
 
-use tracing::info;
-
 /// Session state
 #[derive(Debug, Clone)]
 pub struct SessionState {

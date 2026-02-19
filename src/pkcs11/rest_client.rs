@@ -6,10 +6,8 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
-use tracing::{error, info};
 
 /// Result type for daemon operations
 pub type DaemonResult<T> = Result<T, DaemonError>;

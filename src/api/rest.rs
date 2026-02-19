@@ -7,7 +7,7 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::Json,
-    routing::{get, post, delete},
+    routing::{get, post},
     Router,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -15,12 +15,12 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 use crate::identity::storage::IdentityStore;
 use crate::identity::validation::validate_token;
 use crate::key_service::KeyService;
-use crate::{Config, KeyId, KeyMetadata, Result};
+use crate::{Config, KeyId, Result};
 
 /// REST API server state
 #[derive(Clone)]

@@ -7,7 +7,6 @@ use ed25519_dalek::{Signature as DalekSignature, PUBLIC_KEY_LENGTH, SECRET_KEY_L
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use rand_core::OsRng;
 use secrecy::{ExposeSecret, Secret};
-use zeroize::Zeroize;
 
 use crate::{Error, KeyId, KeyMetadata, Result, Signature};
 

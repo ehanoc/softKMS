@@ -21,10 +21,8 @@ use crate::key_service::KeyService;
 use crate::security::SecurityManager;
 use crate::{Config, Error, KeyId, KeyMetadata, KeyType};
 
-// Import BIP39 for mnemonic handling
-use bip39::{Language, Mnemonic};
-
 // Re-export generated protobuf types
+#[allow(unused_imports)]
 pub use super::softkms::*;
 use super::softkms::key_store_server::{KeyStore, KeyStoreServer};
 
@@ -753,10 +751,8 @@ impl KeyStore for GrpcKeyStore {
 }
 
 use super::softkms::identity_service_server::{IdentityService, IdentityServiceServer};
-use super::softkms::{CreateIdentityRequest, CreateIdentityResponse, ListIdentitiesRequest, ListIdentitiesResponse, RevokeIdentityRequest, RevokeIdentityResponse, IdentityInfo};
 use chrono::Utc;
-use crate::identity::{IdentityStore, Identity, IdentityRole, ClientType, IdentityKeyType, Token};
-use crate::crypto::ed25519::Ed25519Engine;
+use crate::identity::{IdentityStore, Identity, IdentityRole, Token, IdentityKeyType as IdKeyType};
 
 pub struct GrpcIdentityService {
     security_manager: Arc<SecurityManager>,
@@ -817,23 +813,23 @@ impl IdentityService for GrpcIdentityService {
         let public_key_str = format!("ed25519:{}", public_key_b64);
         
         // Generate token with Token struct
-        let (token_obj, token_hash) = Token::generate(public_key_str.clone(), IdentityKeyType::Ed25519);
+        let (token_obj, token_hash) = Token::generate(public_key_str.clone(), IdKeyType::Ed25519);
         let token = token_obj.token;
         
-        // Map key type
+        // Map key type - convert from softkms::IdentityKeyType to identity::types::IdentityKeyType
         let key_type = match req.key_type {
-            1 => IdentityKeyType::P256,
-            _ => IdentityKeyType::Ed25519,
+            1 => IdKeyType::P256,
+            _ => IdKeyType::Ed25519,
         };
         
-        // Map client type (matching softkms::ClientType enum values)
+        // Map client type - convert from softkms::ClientType to identity::types::ClientType
         let client_type = match req.client_type {
-            0 => ClientType::AiAgent, // Unspecified defaults to AiAgent
-            1 => ClientType::AiAgent,
-            2 => ClientType::Service,
-            3 => ClientType::User,
-            4 => ClientType::Pkcs11,
-            _ => ClientType::AiAgent,
+            0 => crate::identity::types::ClientType::AiAgent, // Unspecified defaults to AiAgent
+            1 => crate::identity::types::ClientType::AiAgent,
+            2 => crate::identity::types::ClientType::Service,
+            3 => crate::identity::types::ClientType::User,
+            4 => crate::identity::types::ClientType::Pkcs11,
+            _ => crate::identity::types::ClientType::AiAgent,
         };
         
         // Create identity

@@ -13,10 +13,13 @@
 //!
 //! Keys never leave the daemon - all cryptographic operations happen server-side.
 
+// Allow non_camel_case_types for PKCS#11 specification compliance
+#![allow(non_camel_case_types)]
+
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info};
 
 mod rest_client;
 pub use rest_client::{KeyInfo, RestClient};
@@ -64,6 +67,7 @@ const CKR_PIN_INCORRECT: u32 = 0xA0; // Same value as CKR_KEY_HANDLE_INVALID, bu
 const CKR_SESSION_HANDLE_INVALID: u32 = 0xB3;
 const CKR_DATA_INVALID: u32 = 0x20; // 32, data is invalid
 
+// PKCS#11 types use C-style naming as per specification
 type CK_RV = u32;
 type CK_SLOT = u64;
 type CK_SESSION = u64;
@@ -217,7 +221,7 @@ const CKK_RSA: CK_ULONG = 0x00000000;
 const CKK_EC: CK_ULONG = 0x00000003;
 const CKK_ED25519: CK_ULONG = 0x00000040;
 
-// PKCS#11 function pointer types
+// PKCS#11 function pointer types - using C-style names per PKCS#11 spec
 type C_GetInfo_t = extern "C" fn(*const ()) -> CK_RV;
 type C_Initialize_t = extern "C" fn(*const ()) -> CK_RV;
 type C_Finalize_t = extern "C" fn(*const ()) -> CK_RV;
