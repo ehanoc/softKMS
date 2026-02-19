@@ -37,7 +37,8 @@ fn find_available_port() -> u16 {
 /// RAII wrapper for softKMS daemon process
 pub struct ServerGuard {
     child: Child,
-    port: u16,
+    grpc_port: u16,
+    rest_port: u16,
     temp_dir: TempDir,
 }
 
@@ -49,16 +50,19 @@ impl ServerGuard {
         let pid_path = temp_dir.path().join("softkms.pid");
         std::fs::create_dir_all(&storage_path)?;
 
-        // Find an available port
-        let port = find_available_port();
+        // Find available ports for gRPC and REST
+        let grpc_port = find_available_port();
+        let rest_port = find_available_port();
 
-        // Start daemon (use release build for tests)
+        // Start daemon with both gRPC and REST (use release build for tests)
         let mut child = Command::new("target/release/softkms-daemon")
             .args(&[
                 "--storage-path",
                 storage_path.to_str().unwrap(),
                 "--grpc-addr",
-                &format!("127.0.0.1:{}", port),
+                &format!("127.0.0.1:{}", grpc_port),
+                "--rest-addr",
+                &format!("127.0.0.1:{}", rest_port),
                 "--pid-file",
                 pid_path.to_str().unwrap(),
                 "--foreground",
@@ -67,7 +71,7 @@ impl ServerGuard {
             .stderr(Stdio::piped())
             .spawn()?;
 
-        // Wait for daemon to be ready
+        // Wait for daemon to be ready (check gRPC port)
         let mut ready = false;
         for _ in 0..50 {
             std::thread::sleep(Duration::from_millis(100));
@@ -80,8 +84,8 @@ impl ServerGuard {
                 ));
             }
 
-            // Try TCP connection
-            if std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok() {
+            // Try TCP connection to gRPC port
+            if std::net::TcpStream::connect(format!("127.0.0.1:{}", grpc_port)).is_ok() {
                 ready = true;
                 break;
             }
@@ -95,24 +99,35 @@ impl ServerGuard {
             ));
         }
 
-        // Give the gRPC server a moment to be fully ready
+        // Give servers a moment to be fully ready
         std::thread::sleep(Duration::from_secs(2));
 
         Ok(Self {
             child,
-            port,
+            grpc_port,
+            rest_port,
             temp_dir,
         })
     }
 
-    /// Get the port the daemon is listening on
-    pub fn port(&self) -> u16 {
-        self.port
+    /// Get the gRPC port
+    pub fn grpc_port(&self) -> u16 {
+        self.grpc_port
+    }
+
+    /// Get the REST port
+    pub fn rest_port(&self) -> u16 {
+        self.rest_port
     }
 
     /// Get the full gRPC address
     pub fn grpc_addr(&self) -> String {
-        format!("http://127.0.0.1:{}", self.port)
+        format!("http://127.0.0.1:{}", self.grpc_port)
+    }
+
+    /// Get the full REST address (for PKCS#11)
+    pub fn rest_addr(&self) -> String {
+        format!("127.0.0.1:{}", self.rest_port)
     }
 
     /// Wait for daemon to be ready

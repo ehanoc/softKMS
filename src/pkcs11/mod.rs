@@ -5,21 +5,21 @@
 //!
 //! ## Architecture
 //!
-//! The PKCS#11 provider acts as a CLIENT to the softKMS daemon via gRPC:
+//! The PKCS#11 provider acts as a CLIENT to the softKMS daemon via REST API:
 //!
 //! ```text
-//! Application → PKCS#11 API → libsoftkms.so → gRPC → softKMS Daemon
+//! Application → PKCS#11 API → libsoftkms.so → REST API → softKMS Daemon
 //! ```
 //!
 //! Keys never leave the daemon - all cryptographic operations happen server-side.
 
-use std::sync::Mutex;
-use std::collections::HashMap;
 use once_cell::sync::Lazy;
-use tracing::{info, warn, error, debug};
+use std::collections::HashMap;
+use std::sync::Mutex;
+use tracing::{debug, error, info, warn};
 
-mod client;
-pub use client::{DaemonClient, KeyInfo};
+mod rest_client;
+pub use rest_client::{KeyInfo, RestClient};
 
 mod session;
 pub use session::SessionState;
@@ -33,23 +33,17 @@ static OBJECTS: Lazy<Mutex<HashMap<u64, String>>> = Lazy::new(|| Mutex::new(Hash
 
 // Object attributes store - maps handle to attribute map
 // Attributes: CKA_CLASS, CKA_LABEL, CKA_KEY_TYPE, CKA_SIGN, etc.
-static OBJECT_ATTRIBUTES: Lazy<Mutex<HashMap<u64, HashMap<u64, Vec<u8>>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+static OBJECT_ATTRIBUTES: Lazy<Mutex<HashMap<u64, HashMap<u64, Vec<u8>>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 // Global handle counter for sequential handle assignment
 static NEXT_HANDLE: Lazy<Mutex<u64>> = Lazy::new(|| Mutex::new(1));
 
 // Daemon server address - can be overridden via environment variable
-const DEFAULT_DAEMON_ADDR: &str = "http://127.0.0.1:50051";
+const DEFAULT_DAEMON_ADDR: &str = "127.0.0.1:50051";
 
 fn get_daemon_addr() -> String {
-    let addr = std::env::var("SOFTKMS_DAEMON_ADDR")
-        .unwrap_or_else(|_| DEFAULT_DAEMON_ADDR.to_string());
-    // Ensure address has http:// prefix for gRPC
-    if addr.starts_with("http://") || addr.starts_with("https://") {
-        addr
-    } else {
-        format!("http://{}", addr)
-    }
+    std::env::var("SOFTKMS_DAEMON_ADDR").unwrap_or_else(|_| DEFAULT_DAEMON_ADDR.to_string())
 }
 
 // Return codes
@@ -59,15 +53,16 @@ const CKR_BUFFER_TOO_SMALL: u32 = 16;
 const CKR_SESSION_INVALID: u32 = 6;
 const CKR_SLOT_INVALID: u32 = 3;
 const CKR_NOT_SUPPORTED: u32 = 84;
-const CKR_DEVICE_ERROR: u32 = 0x30;  // 48 per PKCS#11 spec
+const CKR_DEVICE_ERROR: u32 = 0x30; // 48 per PKCS#11 spec
 const CKR_FUNCTION_NOT_SUPPORTED: u32 = 0x54;
-const CKR_KEY_HANDLE_INVALID: u32 = 0xA0;  // 160, not 0x60!
-const CKR_SIGNATURE_INVALID: u32 = 0xC0;  // 192, signature verification failed
+const CKR_KEY_HANDLE_INVALID: u32 = 0xA0; // 160, not 0x60!
+const CKR_SIGNATURE_INVALID: u32 = 0xC0; // 192, signature verification failed
 const CKR_OBJECT_HANDLE_INVALID: u32 = 0x82;
 const CKR_USER_NOT_LOGGED_IN: u32 = 0x101;
 const CKR_MECHANISM_INVALID: u32 = 0x70;
-const CKR_PIN_INCORRECT: u32 = 0xA0;  // Same value as CKR_KEY_HANDLE_INVALID, but semantically correct for PIN errors
+const CKR_PIN_INCORRECT: u32 = 0xA0; // Same value as CKR_KEY_HANDLE_INVALID, but semantically correct for PIN errors
 const CKR_SESSION_HANDLE_INVALID: u32 = 0xB3;
+const CKR_DATA_INVALID: u32 = 0x20; // 32, data is invalid
 
 type CK_RV = u32;
 type CK_SLOT = u64;
@@ -132,13 +127,16 @@ struct CK_ATTRIBUTE {
 }
 
 // Mechanism constants for ECDSA P-256
-// IMPORTANT: These values follow PKCS#11 specification and SoftHSM2 implementation
-const CKM_ECDSA: CK_ULONG = 0x1001;
-const CKM_EC_KEY_PAIR_GEN: CK_ULONG = 0x1040;  // EC key pair generation (was incorrectly 0x1050)
-const CKM_ECDSA_SHA256: CK_ULONG = 0x1041;
-const CKM_ECDSA_SHA384: CK_ULONG = 0x1042;
-const CKM_ECDH: CK_ULONG = 0x1040;  // Alias for CKM_EC_KEY_PAIR_GEN (compatibility)
-const CKM_ECDH1_DERIVE: CK_ULONG = 0x1050;  // EC DH key derivation (was incorrectly 0x1051)
+// IMPORTANT: These values follow PKCS#11 specification and what pkcs11-tool expects
+const CKM_ECDSA: CK_ULONG = 0x1001; // Raw ECDSA
+const CKM_ECDSA_SHA1: CK_ULONG = 0x1041; // ECDSA with SHA1
+const CKM_ECDSA_SHA224: CK_ULONG = 0x1042; // ECDSA with SHA224 (not SHA256!)
+const CKM_ECDSA_SHA256: CK_ULONG = 0x1043; // ECDSA with SHA256
+const CKM_ECDSA_SHA384: CK_ULONG = 0x1044; // ECDSA with SHA384
+const CKM_ECDSA_SHA512: CK_ULONG = 0x1045; // ECDSA with SHA512
+const CKM_EC_KEY_PAIR_GEN: CK_ULONG = 0x1040; // EC key pair generation
+const CKM_ECDH: CK_ULONG = 0x1040; // Alias for CKM_EC_KEY_PAIR_GEN
+const CKM_ECDH1_DERIVE: CK_ULONG = 0x1050; // EC DH key derivation
 
 // CK_MECHANISM_INFO flags
 const CKF_SIGN: CK_ULONG = 0x00000002;
@@ -156,9 +154,9 @@ const CKF_HW_SLOT: CK_ULONG = 0x00000001;
 const CKF_TOKEN_PRESENT: CK_ULONG = 0x00000001;
 
 // CK_TOKEN_INFO flags
-const CKF_TOKEN_INITIALIZED: CK_ULONG = 0x00000400;  // Correct value per PKCS#11 spec
-const CKF_USER_PIN_TO_BE_CHANGED: CK_ULONG = 0x00000002;  // Correct value
-const CKF_LOGIN_REQUIRED: CK_ULONG = 0x00000100;      // Correct value per PKCS#11 spec
+const CKF_TOKEN_INITIALIZED: CK_ULONG = 0x00000400; // Correct value per PKCS#11 spec
+const CKF_USER_PIN_TO_BE_CHANGED: CK_ULONG = 0x00000002; // Correct value
+const CKF_LOGIN_REQUIRED: CK_ULONG = 0x00000100; // Correct value per PKCS#11 spec
 
 // PKCS#11 Session Info structure
 #[repr(C)]
@@ -205,6 +203,7 @@ const CKA_SUBJECT: CK_ULONG = 0x00000131;
 const CKA_START_DATE: CK_ULONG = 0x00000132;
 const CKA_END_DATE: CK_ULONG = 0x00000133;
 const CKA_MODIFIABLE: CK_ULONG = 0x00000170;
+const CKA_ALLOWED_MECHANISMS: CK_ULONG = 0x0000021A; // List of mechanisms allowed for this key
 
 // PKCS#11 Object Classes
 const CKO_DATA: CK_ULONG = 0x00000000;
@@ -227,7 +226,8 @@ type C_GetSlotInfo_t = extern "C" fn(CK_SLOT, *mut CK_SLOT_INFO) -> CK_RV;
 type C_GetTokenInfo_t = extern "C" fn(CK_SLOT, *mut CK_TOKEN_INFO) -> CK_RV;
 type C_GetMechanismList_t = extern "C" fn(CK_SLOT, *mut CK_ULONG, *mut CK_ULONG) -> CK_RV;
 type C_GetMechanismInfo_t = extern "C" fn(CK_SLOT, CK_ULONG, *mut CK_MECHANISM_INFO) -> CK_RV;
-type C_OpenSession_t = extern "C" fn(CK_SLOT, CK_ULONG, *mut (), *const (), *mut CK_SESSION) -> CK_RV;
+type C_OpenSession_t =
+    extern "C" fn(CK_SLOT, CK_ULONG, *mut (), *const (), *mut CK_SESSION) -> CK_RV;
 type C_CloseSession_t = extern "C" fn(CK_SESSION) -> CK_RV;
 type C_CloseAllSessions_t = extern "C" fn(CK_SLOT) -> CK_RV;
 type C_GetSessionInfo_t = extern "C" fn(CK_SESSION, *mut CK_SESSION_INFO) -> CK_RV;
@@ -237,9 +237,20 @@ type C_FindObjectsInit_t = extern "C" fn(CK_SESSION, *const u8, CK_ULONG) -> CK_
 type C_FindObjects_t = extern "C" fn(CK_SESSION, *mut u64, CK_ULONG, *mut CK_ULONG) -> CK_RV;
 type C_FindObjectsFinal_t = extern "C" fn(CK_SESSION) -> CK_RV;
 type C_GetAttributeValue_t = extern "C" fn(CK_SESSION, u64, *mut u8, CK_ULONG) -> CK_RV;
-type C_GenerateKeyPair_t = extern "C" fn(CK_SESSION, *const u8, *const u8, CK_ULONG, *const u8, CK_ULONG, *mut u64, *mut u64) -> CK_RV;
+type C_GenerateKeyPair_t = extern "C" fn(
+    CK_SESSION,
+    *const u8,
+    *const u8,
+    CK_ULONG,
+    *const u8,
+    CK_ULONG,
+    *mut u64,
+    *mut u64,
+) -> CK_RV;
 type C_SignInit_t = extern "C" fn(CK_SESSION, *const u8, u64) -> CK_RV;
 type C_Sign_t = extern "C" fn(CK_SESSION, *const u8, CK_ULONG, *mut u8, *mut CK_ULONG) -> CK_RV;
+type C_SignUpdate_t = extern "C" fn(CK_SESSION, *const u8, CK_ULONG) -> CK_RV;
+type C_SignFinal_t = extern "C" fn(CK_SESSION, *mut u8, *mut CK_ULONG) -> CK_RV;
 type C_VerifyInit_t = extern "C" fn(CK_SESSION, *const u8, u64) -> CK_RV;
 type C_Verify_t = extern "C" fn(CK_SESSION, *const u8, CK_ULONG, *const u8, CK_ULONG) -> CK_RV;
 type C_GetFunctionList_t = extern "C" fn(*mut *const CK_FUNCTION_LIST) -> CK_RV;
@@ -294,8 +305,8 @@ struct CK_FUNCTION_LIST {
     C_DigestFinal: C_FunctionNotSupported,
     C_SignInit: C_SignInit_t,
     C_Sign: C_Sign_t,
-    C_SignUpdate: C_FunctionNotSupported,
-    C_SignFinal: C_FunctionNotSupported,
+    C_SignUpdate: C_SignUpdate_t,
+    C_SignFinal: C_SignFinal_t,
     C_SignRecoverInit: C_FunctionNotSupported,
     C_SignRecover: C_FunctionNotSupported,
     C_VerifyInit: C_VerifyInit_t,
@@ -326,7 +337,10 @@ extern "C" fn not_supported() -> CK_RV {
 
 // Global function list instance
 static FUNCTION_LIST: CK_FUNCTION_LIST = CK_FUNCTION_LIST {
-    version: CK_VERSION { major: 2, minor: 40 },  // PKCS#11 version 2.40
+    version: CK_VERSION {
+        major: 2,
+        minor: 40,
+    }, // PKCS#11 version 2.40
     C_GetInfo,
     C_GetFunctionList,
     C_Initialize,
@@ -371,8 +385,8 @@ static FUNCTION_LIST: CK_FUNCTION_LIST = CK_FUNCTION_LIST {
     C_DigestFinal: not_supported,
     C_SignInit,
     C_Sign,
-    C_SignUpdate: not_supported,
-    C_SignFinal: not_supported,
+    C_SignUpdate,
+    C_SignFinal,
     C_SignRecoverInit: not_supported,
     C_SignRecover: not_supported,
     C_VerifyInit,
@@ -399,39 +413,53 @@ static FUNCTION_LIST: CK_FUNCTION_LIST = CK_FUNCTION_LIST {
 
 // C_GetFunctionList - Entry point for PKCS#11 consumers
 #[no_mangle]
-pub extern "C" fn C_GetFunctionList(ppFunctionList: *mut *const CK_FUNCTION_LIST) -> CK_RV { 
+pub extern "C" fn C_GetFunctionList(ppFunctionList: *mut *const CK_FUNCTION_LIST) -> CK_RV {
     if ppFunctionList.is_null() {
         return CKR_ARGUMENTS_BAD;
     }
-    unsafe { 
-        *ppFunctionList = &FUNCTION_LIST; 
+    unsafe {
+        *ppFunctionList = &FUNCTION_LIST;
     }
     CKR_OK
 }
 
 #[no_mangle]
-pub extern "C" fn C_GetInfo(_: *const ()) -> CK_RV { CKR_OK }
+pub extern "C" fn C_GetInfo(_: *const ()) -> CK_RV {
+    CKR_OK
+}
 
 #[no_mangle]
-pub extern "C" fn C_Initialize(_: *const ()) -> CK_RV { CKR_OK }
+pub extern "C" fn C_Initialize(_: *const ()) -> CK_RV {
+    CKR_OK
+}
 
 #[no_mangle]
-pub extern "C" fn C_Finalize(_: *const ()) -> CK_RV { CKR_OK }
+pub extern "C" fn C_Finalize(_: *const ()) -> CK_RV {
+    CKR_OK
+}
 
 #[no_mangle]
-pub extern "C" fn C_GetSlotList(_token_present: CK_BOOL, slot_list: *mut CK_ULONG, count: *mut CK_ULONG) -> CK_RV {
-    if count.is_null() { 
-        return CKR_ARGUMENTS_BAD; 
+pub extern "C" fn C_GetSlotList(
+    _token_present: CK_BOOL,
+    slot_list: *mut CK_ULONG,
+    count: *mut CK_ULONG,
+) -> CK_RV {
+    if count.is_null() {
+        return CKR_ARGUMENTS_BAD;
     }
-    
+
     // Return 1 slot (slot 0)
-    unsafe { *count = 1; }
-    
-    if slot_list.is_null() { 
-        return CKR_OK; 
+    unsafe {
+        *count = 1;
     }
-    
-    unsafe { *slot_list = 0; }
+
+    if slot_list.is_null() {
+        return CKR_OK;
+    }
+
+    unsafe {
+        *slot_list = 0;
+    }
     CKR_OK
 }
 
@@ -440,15 +468,15 @@ pub extern "C" fn C_GetSlotInfo(_slot: CK_SLOT, pInfo: *mut CK_SLOT_INFO) -> CK_
     if pInfo.is_null() {
         return CKR_OK;
     }
-    
+
     unsafe {
         let info = &mut *pInfo;
         info.flags = CKF_HW_SLOT | CKF_TOKEN_PRESENT;
-        
+
         // Set slot description (max 64 bytes)
         let desc = b"softKMS                                         ";
         info.slot_description[..desc.len()].copy_from_slice(desc);
-        
+
         // Set manufacturer ID (max 32 bytes)
         let mfg = b"softKMS                       ";
         info.manufacturer_id[..mfg.len()].copy_from_slice(mfg);
@@ -456,96 +484,120 @@ pub extern "C" fn C_GetSlotInfo(_slot: CK_SLOT, pInfo: *mut CK_SLOT_INFO) -> CK_
     CKR_OK
 }
 
-#[no_mangle]  
+#[no_mangle]
 pub extern "C" fn C_GetTokenInfo(slot: CK_SLOT, pInfo: *mut CK_TOKEN_INFO) -> CK_RV {
     if slot != 0 {
         return CKR_SLOT_INVALID;
     }
-    
+
     if pInfo.is_null() {
         return CKR_ARGUMENTS_BAD;
     }
-    
+
     unsafe {
         let info = &mut *pInfo;
-        
+
         // Set label
         let label = b"softKMS                        ";
         info.label[..label.len()].copy_from_slice(label);
-        
+
         // Set manufacturer
         let mfg = b"softKMS                        ";
         info.manufacturer_id[..mfg.len()].copy_from_slice(mfg);
-        
+
         // Set model
         let model = b"softKMS         ";
         info.model[..model.len()].copy_from_slice(model);
-        
+
         // Serial number
         let serial = b"0000000000000000";
         info.serial_number.copy_from_slice(serial);
-        
+
         // Flags - token is initialized and ready to use
         // Note: We don't set CKF_USER_PIN_TO_BE_CHANGED since identity tokens don't need changing
         info.flags = CKF_TOKEN_INITIALIZED | CKF_LOGIN_REQUIRED;
-        
+
         // Session counts
         info.ulMaxSessionCount = 0xFFFFFFFFFFFFFFFFu64;
         info.ulSessionCount = 0;
         info.ulMaxRwSessionCount = 0xFFFFFFFFFFFFFFFFu64;
         info.ulRwSessionCount = 0;
-        
+
         // PIN lengths
         info.ulMaxPinLen = 256;
         info.ulMinPinLen = 4;
-        
+
         // Memory
         info.ulTotalPublicMemory = 0xFFFFFFFFFFFFFFFFu64;
         info.ulFreePublicMemory = 0xFFFFFFFFFFFFFFFFu64;
         info.ulTotalPrivateMemory = 0xFFFFFFFFFFFFFFFFu64;
         info.ulFreePrivateMemory = 0xFFFFFFFFFFFFFFFFu64;
-        
+
         // Versions
         info.hardware_version = CK_VERSION { major: 1, minor: 0 };
         info.firmware_version = CK_VERSION { major: 1, minor: 0 };
     }
-    
+
     CKR_OK
 }
 
 #[no_mangle]
-pub extern "C" fn C_GetMechanismList(slot: CK_SLOT, list: *mut CK_ULONG, count: *mut CK_ULONG) -> CK_RV {
-    if slot != 0 { return CKR_SLOT_INVALID; }
-    if count.is_null() { return CKR_ARGUMENTS_BAD; }
-    
-    // Advertise ECDSA P-256 support - following SoftHSM2 pattern for maximum interoperability
-    // Including CKM_ECDH for compatibility with tools that check for it
-    let mechanisms = [CKM_ECDSA, CKM_EC_KEY_PAIR_GEN, CKM_ECDSA_SHA256, CKM_ECDSA_SHA384, CKM_ECDH, CKM_ECDH1_DERIVE];
+pub extern "C" fn C_GetMechanismList(
+    slot: CK_SLOT,
+    list: *mut CK_ULONG,
+    count: *mut CK_ULONG,
+) -> CK_RV {
+    if slot != 0 {
+        return CKR_SLOT_INVALID;
+    }
+    if count.is_null() {
+        return CKR_ARGUMENTS_BAD;
+    }
+
+    // Advertise ECDSA P-256 support - matching what pkcs11-tool expects
+    let mechanisms = [
+        CKM_ECDSA,           // 0x1001 - raw ECDSA
+        CKM_ECDSA_SHA1,      // 0x1041 - ECDSA with SHA1
+        CKM_ECDSA_SHA224,    // 0x1042 - ECDSA with SHA224
+        CKM_ECDSA_SHA256,    // 0x1043 - ECDSA with SHA256
+        CKM_ECDSA_SHA384,    // 0x1044 - ECDSA with SHA384
+        CKM_EC_KEY_PAIR_GEN, // 0x1040 - key generation
+        CKM_ECDH1_DERIVE,    // 0x1050 - key derivation
+    ];
     let mech_count = mechanisms.len() as CK_ULONG;
-    
-    unsafe { *count = mech_count; }
-    
+
+    unsafe {
+        *count = mech_count;
+    }
+
     if list.is_null() {
         return CKR_OK;
     }
-    
+
     if unsafe { *count < mech_count } {
         return CKR_BUFFER_TOO_SMALL;
     }
-    
+
     for (i, &mech) in mechanisms.iter().enumerate() {
-        unsafe { *list.offset(i as isize) = mech; }
+        unsafe {
+            *list.offset(i as isize) = mech;
+        }
     }
-    
+
     CKR_OK
 }
 
 #[no_mangle]
-pub extern "C" fn C_GetMechanismInfo(_slot: CK_SLOT, mech: CK_ULONG, pInfo: *mut CK_MECHANISM_INFO) -> CK_RV { 
+pub extern "C" fn C_GetMechanismInfo(
+    _slot: CK_SLOT,
+    mech: CK_ULONG,
+    pInfo: *mut CK_MECHANISM_INFO,
+) -> CK_RV {
+    eprintln!("DEBUG C_GetMechanismInfo: mech=0x{:x}", mech);
     if pInfo.is_null() {
         return CKR_ARGUMENTS_BAD;
     }
-    
+
     // ECDSA
     if mech == CKM_ECDSA {
         unsafe {
@@ -556,7 +608,7 @@ pub extern "C" fn C_GetMechanismInfo(_slot: CK_SLOT, mech: CK_ULONG, pInfo: *mut
         }
         return CKR_OK;
     }
-    
+
     // EC key pair generation (CKM_EC_KEY_PAIR_GEN = 0x1040)
     // Note: CKM_ECDH has same value (0x1040), so we include both flags
     if mech == CKM_EC_KEY_PAIR_GEN {
@@ -568,9 +620,14 @@ pub extern "C" fn C_GetMechanismInfo(_slot: CK_SLOT, mech: CK_ULONG, pInfo: *mut
         }
         return CKR_OK;
     }
-    
-    // ECDSA with SHA
-    if mech == CKM_ECDSA_SHA256 || mech == CKM_ECDSA_SHA384 {
+
+    // ECDSA with SHA variants
+    if mech == CKM_ECDSA_SHA1
+        || mech == CKM_ECDSA_SHA224
+        || mech == CKM_ECDSA_SHA256
+        || mech == CKM_ECDSA_SHA384
+        || mech == CKM_ECDSA_SHA512
+    {
         unsafe {
             let info = &mut *pInfo;
             info.ulMinKeySize = 256;
@@ -579,7 +636,7 @@ pub extern "C" fn C_GetMechanismInfo(_slot: CK_SLOT, mech: CK_ULONG, pInfo: *mut
         }
         return CKR_OK;
     }
-    
+
     // ECDH1_DERIVE - SoftHSM2 style key derivation
     if mech == CKM_ECDH1_DERIVE {
         unsafe {
@@ -590,32 +647,48 @@ pub extern "C" fn C_GetMechanismInfo(_slot: CK_SLOT, mech: CK_ULONG, pInfo: *mut
         }
         return CKR_OK;
     }
-    
+
     CKR_MECHANISM_INVALID
 }
 
 #[no_mangle]
-pub extern "C" fn C_OpenSession(slot: CK_SLOT, _flags: CK_ULONG, _notify: *mut (), _app: *const (), session: *mut CK_SESSION) -> CK_RV {
-    if slot != 0 { return CKR_SLOT_INVALID; }
-    if session.is_null() { return CKR_ARGUMENTS_BAD; }
-    
+pub extern "C" fn C_OpenSession(
+    slot: CK_SLOT,
+    _flags: CK_ULONG,
+    _notify: *mut (),
+    _app: *const (),
+    session: *mut CK_SESSION,
+) -> CK_RV {
+    if slot != 0 {
+        return CKR_SLOT_INVALID;
+    }
+    if session.is_null() {
+        return CKR_ARGUMENTS_BAD;
+    }
+
     let handle = rand_handle();
-    unsafe { *session = handle; }
-    if let Ok(ref mut s) = SESSIONS.lock() { 
-        s.insert(handle, SessionState::new(handle, false)); 
+    unsafe {
+        *session = handle;
+    }
+    if let Ok(ref mut s) = SESSIONS.lock() {
+        s.insert(handle, SessionState::new(handle, false));
     }
     CKR_OK
 }
 
 #[no_mangle]
 pub extern "C" fn C_CloseSession(sess: CK_SESSION) -> CK_RV {
-    if let Ok(ref mut s) = SESSIONS.lock() { s.remove(&sess); }
+    if let Ok(ref mut s) = SESSIONS.lock() {
+        s.remove(&sess);
+    }
     CKR_OK
 }
 
 #[no_mangle]
 pub extern "C" fn C_CloseAllSessions(_slot: CK_SLOT) -> CK_RV {
-    if let Ok(ref mut s) = SESSIONS.lock() { s.clear(); }
+    if let Ok(ref mut s) = SESSIONS.lock() {
+        s.clear();
+    }
     CKR_OK
 }
 
@@ -624,17 +697,17 @@ pub extern "C" fn C_GetSessionInfo(sess: CK_SESSION, p_info: *mut CK_SESSION_INF
     if p_info.is_null() {
         return CKR_ARGUMENTS_BAD;
     }
-    
+
     let sessions = match SESSIONS.lock() {
         Ok(s) => s,
         Err(_) => return CKR_DEVICE_ERROR,
     };
-    
+
     match sessions.get(&sess) {
         Some(st) => {
             unsafe {
                 (*p_info).slot_id = 0; // We only have slot 0
-                // Report user state based on login status
+                                       // Report user state based on login status
                 if st.is_logged_in {
                     (*p_info).state = CKS_RW_USER_FUNCTIONS;
                 } else {
@@ -645,28 +718,36 @@ pub extern "C" fn C_GetSessionInfo(sess: CK_SESSION, p_info: *mut CK_SESSION_INF
             }
             CKR_OK
         }
-        None => {
-            CKR_SESSION_HANDLE_INVALID
-        },
+        None => CKR_SESSION_HANDLE_INVALID,
     }
 }
 
 #[no_mangle]
-pub extern "C" fn C_InitToken(_slot: CK_SLOT, _pin: *const u8, _pin_len: CK_ULONG, _label: *const u8) -> CK_RV {
+pub extern "C" fn C_InitToken(
+    _slot: CK_SLOT,
+    _pin: *const u8,
+    _pin_len: CK_ULONG,
+    _label: *const u8,
+) -> CK_RV {
     info!("C_InitToken called - SoftHSM2 style: token auto-initialized");
     // SoftHSM2 style: tokens are auto-initialized, just return success
     CKR_OK
 }
 
 #[no_mangle]
-pub extern "C" fn C_Login(sess: CK_SESSION, _user_type: CK_ULONG, pin: *const u8, pin_len: CK_ULONG) -> CK_RV {
+pub extern "C" fn C_Login(
+    sess: CK_SESSION,
+    _user_type: CK_ULONG,
+    pin: *const u8,
+    pin_len: CK_ULONG,
+) -> CK_RV {
     info!("C_Login called for session {}", sess);
-    
+
     if pin.is_null() || pin_len == 0 {
         error!("C_Login: Invalid PIN (null or empty)");
         return CKR_ARGUMENTS_BAD;
     }
-    
+
     let pin_str = unsafe {
         match std::str::from_utf8(std::slice::from_raw_parts(pin, pin_len as usize)) {
             Ok(s) => s.to_string(),
@@ -676,46 +757,39 @@ pub extern "C" fn C_Login(sess: CK_SESSION, _user_type: CK_ULONG, pin: *const u8
             }
         }
     };
-    
+
     // Check if PIN looks like an identity token (base64 format with sk_token_ prefix or similar)
     // Identity tokens are base64 encoded and typically 100+ characters
-    let is_token_format = pin_str.len() > 50 && 
-        pin_str.chars().all(|c| c.is_alphanumeric() || c == '+' || c == '/' || c == '=');
-    
+    let is_token_format = pin_str.len() > 50
+        && pin_str
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '+' || c == '/' || c == '=');
+
     if is_token_format {
         info!("C_Login: PIN appears to be an identity token, attempting validation");
-        
-        // Create fresh client and runtime for this operation
+
+        // Use REST client for validation
         let daemon_addr = get_daemon_addr();
-        let mut client = DaemonClient::new(&daemon_addr);
-        let rt = match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(r) => r,
-            Err(_) => return CKR_DEVICE_ERROR,
-        };
-        
+        let client = RestClient::new(&daemon_addr);
+
         let token_clone = pin_str.clone();
-        let validation_result = rt.block_on(async {
-            client.connect().await.map_err(|e| e.to_string())?;
-            client.validate_identity_token(&token_clone).await
-                .map(|(pubkey, _info)| (pubkey, token_clone))
-                .map_err(|e| format!("Token validation failed: {}", e))
-        });
-        
+        let validation_result = client.validate_identity_token(&token_clone);
+
         match validation_result {
-            Ok((pubkey, token)) => {
-                info!("C_Login: Identity token validated successfully for pubkey: {}...", &pubkey[..32.min(pubkey.len())]);
-                
+            Ok((pubkey, _info)) => {
+                info!(
+                    "C_Login: Identity token validated successfully for pubkey: {}...",
+                    &pubkey[..32.min(pubkey.len())]
+                );
+
                 // Store identity info in session
                 if let Ok(ref mut s) = SESSIONS.lock() {
                     if let Some(st) = s.get_mut(&sess) {
-                        st.identity_token = Some(token.clone());
+                        st.identity_token = Some(token_clone.clone());
                         st.identity_pubkey = Some(pubkey);
                         st.is_identity_session = true;
                         st.is_logged_in = true;
-                        st.passphrase = Some(token); // Store token as passphrase for daemon operations
+                        st.passphrase = Some(token_clone); // Store token as passphrase for daemon operations
                         return CKR_OK;
                     }
                 }
@@ -736,7 +810,10 @@ pub extern "C" fn C_Login(sess: CK_SESSION, _user_type: CK_ULONG, pin: *const u8
 #[no_mangle]
 pub extern "C" fn C_Logout(sess: CK_SESSION) -> CK_RV {
     if let Ok(ref mut s) = SESSIONS.lock() {
-        if let Some(st) = s.get_mut(&sess) { st.is_logged_in = false; return CKR_OK; }
+        if let Some(st) = s.get_mut(&sess) {
+            st.is_logged_in = false;
+            return CKR_OK;
+        }
     }
     CKR_SESSION_INVALID
 }
@@ -749,142 +826,211 @@ static mut FIND_QUERIED: bool = false;
 static mut TOKEN_INITIALIZED: bool = false;
 
 #[no_mangle]
-pub extern "C" fn C_FindObjectsInit(sess: CK_SESSION, _templ: *const u8, _count: CK_ULONG) -> CK_RV { 
-    unsafe { 
+pub extern "C" fn C_FindObjectsInit(
+    sess: CK_SESSION,
+    _templ: *const u8,
+    _count: CK_ULONG,
+) -> CK_RV {
+    eprintln!("DEBUG C_FindObjectsInit: session={}", sess);
+    unsafe {
+        // Clear caches for new test runs when session changes
+        if FIND_SESSION != sess {
+            eprintln!("DEBUG: Clearing caches for new session");
+            if let Ok(ref mut o) = OBJECTS.lock() {
+                o.clear();
+            }
+            if let Ok(ref mut a) = OBJECT_ATTRIBUTES.lock() {
+                a.clear();
+            }
+        }
         FIND_SESSION = sess;
-        FIND_QUERIED = false;  // Reset for new search
+        FIND_QUERIED = false; // Reset for new search
     }
-    CKR_OK 
+    CKR_OK
 }
 
 #[no_mangle]
-pub extern "C" fn C_FindObjects(sess: CK_SESSION, objects: *mut u64, max_count: CK_ULONG, count: *mut CK_ULONG) -> CK_RV { 
+pub extern "C" fn C_FindObjects(
+    sess: CK_SESSION,
+    objects: *mut u64,
+    max_count: CK_ULONG,
+    count: *mut CK_ULONG,
+) -> CK_RV {
     // First, get both identity pubkey and token from session
     let (identity_pubkey, identity_token) = {
         let sessions = match SESSIONS.lock() {
             Ok(s) => s,
             Err(_) => {
-                unsafe { *count = 0; }
+                unsafe {
+                    *count = 0;
+                }
                 return CKR_OK;
             }
         };
         match sessions.get(&sess) {
-            Some(st) => {
-                (st.identity_pubkey.clone(), st.identity_token.clone())
-            }
+            Some(st) => (st.identity_pubkey.clone(), st.identity_token.clone()),
             None => {
-                unsafe { *count = 0; }
+                unsafe {
+                    *count = 0;
+                }
                 return CKR_OK;
             }
         }
     };
-    
+
     // If we have an identity and haven't queried yet, fetch keys from daemon
     let should_query = unsafe { !FIND_QUERIED };
     if should_query {
         if let (Some(_pubkey), Some(token)) = (identity_pubkey, identity_token) {
-            // Create fresh client and runtime for this operation
+            // Use REST client to list keys
             let daemon_addr = get_daemon_addr();
-            let mut client = DaemonClient::new(&daemon_addr);
-            let rt = match tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                Ok(r) => r,
-                Err(_) => {
-                    unsafe { *count = 0; }
-                    return CKR_OK;
-                }
-            };
-            
-            let keys_result = rt.block_on(async {
-                client.connect().await.map_err(|e| e.to_string())?;
-                client.list_keys_with_identity(&token).await
-                    .map(|keys| keys.into_iter().map(|k| k.id).collect::<Vec<String>>())
-                    .map_err(|e| e.to_string())
-            });
-            
+            let client = RestClient::new(&daemon_addr);
+
+            let keys_result = client.list_keys_with_identity(&token);
+
             if let Ok(keys) = keys_result {
                 // Store in OBJECTS - merge with existing, don't clear
                 let mut objects = match OBJECTS.lock() {
                     Ok(o) => o,
                     Err(_) => {
-                        unsafe { *count = 0; }
+                        unsafe {
+                            *count = 0;
+                        }
                         return CKR_OK;
                     }
                 };
-                
+
                 // Also populate OBJECT_ATTRIBUTES for keys we find
                 let mut obj_attrs = match OBJECT_ATTRIBUTES.lock() {
                     Ok(a) => a,
                     Err(_) => {
-                        unsafe { *count = 0; }
+                        unsafe {
+                            *count = 0;
+                        }
                         return CKR_OK;
                     }
                 };
-                
+
+                // Pre-compute allowed mechanisms for ECDSA keys
+                let allowed_mechs = vec![
+                    (CKM_ECDSA as CK_ULONG).to_le_bytes().to_vec(),
+                    (CKM_ECDSA_SHA1 as CK_ULONG).to_le_bytes().to_vec(),
+                    (CKM_ECDSA_SHA224 as CK_ULONG).to_le_bytes().to_vec(),
+                    (CKM_ECDSA_SHA256 as CK_ULONG).to_le_bytes().to_vec(),
+                    (CKM_ECDSA_SHA384 as CK_ULONG).to_le_bytes().to_vec(),
+                    (CKM_ECDSA_SHA512 as CK_ULONG).to_le_bytes().to_vec(),
+                ]
+                .concat();
+
                 // Add new keys from daemon, using deterministic handles
                 // This ensures handles match those created in C_GenerateKeyPair
-                for key_id in keys.iter() {
+                for key_info in keys.iter() {
+                    let key_id = &key_info.id;
+                    let key_label = &key_info.label;
+
                     // Use deterministic handle based on key_id
                     let handle = key_handle_from_id(key_id);
                     let pub_handle = pub_key_handle(key_id);
-                    
+
                     // Insert private key handle if not exists
                     if !objects.contains_key(&handle) {
                         objects.insert(handle, key_id.clone());
-                        
+
                         // Also populate attributes for private key
                         if !obj_attrs.contains_key(&handle) {
                             let mut priv_attrs = HashMap::new();
-                            priv_attrs.insert(CKA_CLASS, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03]); // CKO_PRIVATE_KEY
-                            priv_attrs.insert(CKA_LABEL, b"daemon-key".to_vec());
-                            priv_attrs.insert(CKA_KEY_TYPE, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03]); // CKK_EC
-                            priv_attrs.insert(CKA_SIGN, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE
-                            priv_attrs.insert(CKA_TOKEN, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE
-                            priv_attrs.insert(CKA_SENSITIVE, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE
-                            priv_attrs.insert(CKA_EXTRACTABLE, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_FALSE
-                            priv_attrs.insert(CKA_PRIVATE, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE
+                            priv_attrs.insert(
+                                CKA_CLASS,
+                                vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03],
+                            ); // CKO_PRIVATE_KEY
+                            priv_attrs.insert(CKA_LABEL, key_label.clone().into_bytes());
+                            priv_attrs.insert(
+                                CKA_KEY_TYPE,
+                                vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03],
+                            ); // CKK_EC
+                            priv_attrs.insert(
+                                CKA_SIGN,
+                                vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+                            ); // CK_TRUE
+                            priv_attrs.insert(
+                                CKA_TOKEN,
+                                vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+                            ); // CK_TRUE
+                            priv_attrs.insert(
+                                CKA_SENSITIVE,
+                                vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+                            ); // CK_TRUE
+                            priv_attrs.insert(
+                                CKA_EXTRACTABLE,
+                                vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+                            ); // CK_FALSE
+                            priv_attrs.insert(
+                                CKA_PRIVATE,
+                                vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+                            ); // CK_TRUE
+                            priv_attrs.insert(CKA_ALLOWED_MECHANISMS, allowed_mechs.clone());
                             obj_attrs.insert(handle, priv_attrs);
                         }
                     }
-                    
-                    // Insert public key handle if not exists  
+
+                    // Insert public key handle if not exists
                     let pub_key_id = format!("{}:pub", key_id);
                     if !objects.contains_key(&pub_handle) {
                         objects.insert(pub_handle, pub_key_id);
-                        
+
                         // Also populate attributes for public key
                         if !obj_attrs.contains_key(&pub_handle) {
                             let mut pub_attrs = HashMap::new();
-                            pub_attrs.insert(CKA_CLASS, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02]); // CKO_PUBLIC_KEY
-                            pub_attrs.insert(CKA_LABEL, b"daemon-key".to_vec());
-                            pub_attrs.insert(CKA_KEY_TYPE, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03]); // CKK_EC
-                            pub_attrs.insert(CKA_VERIFY, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE
-                            pub_attrs.insert(CKA_TOKEN, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE
+                            pub_attrs.insert(
+                                CKA_CLASS,
+                                vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02],
+                            ); // CKO_PUBLIC_KEY
+                            pub_attrs.insert(CKA_LABEL, key_label.clone().into_bytes());
+                            pub_attrs.insert(
+                                CKA_KEY_TYPE,
+                                vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03],
+                            ); // CKK_EC
+                            pub_attrs.insert(
+                                CKA_VERIFY,
+                                vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+                            ); // CK_TRUE
+                            pub_attrs.insert(
+                                CKA_TOKEN,
+                                vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+                            ); // CK_TRUE
+                            pub_attrs.insert(CKA_ALLOWED_MECHANISMS, allowed_mechs.clone());
                             obj_attrs.insert(pub_handle, pub_attrs);
                         }
                     }
                 }
-                
+
                 // Mark that we've queried the daemon
-                unsafe { FIND_QUERIED = true; }
+                unsafe {
+                    FIND_QUERIED = true;
+                }
             }
         }
     }
-    
+
     // Now return from OBJECTS
     let objs = match OBJECTS.lock() {
         Ok(o) => o,
         Err(_) => {
-            unsafe { *count = 0; }
+            unsafe {
+                *count = 0;
+            }
             return CKR_OK;
         }
     };
-    
+
     let handles: Vec<u64> = objs.keys().copied().collect();
     let num_objs = handles.len().min(max_count as usize);
-    
+
+    eprintln!("DEBUG C_FindObjects: returning {} objects", num_objs);
+    for (i, handle) in handles.iter().enumerate().take(num_objs) {
+        eprintln!("  obj[{}]: handle={}", i, handle);
+    }
+
     if !objects.is_null() {
         for i in 0..num_objs {
             unsafe {
@@ -892,32 +1038,48 @@ pub extern "C" fn C_FindObjects(sess: CK_SESSION, objects: *mut u64, max_count: 
             }
         }
     }
-    
-    unsafe { *count = num_objs as CK_ULONG; }
-    CKR_OK 
+
+    unsafe {
+        *count = num_objs as CK_ULONG;
+    }
+    CKR_OK
 }
 
 #[no_mangle]
-pub extern "C" fn C_FindObjectsFinal(_sess: CK_SESSION) -> CK_RV { CKR_OK }
+pub extern "C" fn C_FindObjectsFinal(_sess: CK_SESSION) -> CK_RV {
+    CKR_OK
+}
 
 #[no_mangle]
-pub extern "C" fn C_GetAttributeValue(_sess: CK_SESSION, obj: u64, templ: *mut u8, count: CK_ULONG) -> CK_RV {
+pub extern "C" fn C_GetAttributeValue(
+    _sess: CK_SESSION,
+    obj: u64,
+    templ: *mut u8,
+    count: CK_ULONG,
+) -> CK_RV {
     if templ.is_null() || count == 0 {
         return CKR_OK;
     }
-    
+
     unsafe {
         let attrs = std::slice::from_raw_parts_mut(templ as *mut CK_ATTRIBUTE, count as usize);
-        
+
+        // DEBUG: Log what attributes are being queried
+        eprintln!("DEBUG C_GetAttributeValue: obj={}, count={}", obj, count);
+        for (i, attr) in attrs.iter().enumerate() {
+            eprintln!("  attr[{}]: type=0x{:x}", i, attr.attr_type);
+        }
+
         // Get OBJECT_ATTRIBUTES lock once
         let obj_attrs = match OBJECT_ATTRIBUTES.lock() {
             Ok(a) => a,
             Err(_) => return CKR_DEVICE_ERROR,
         };
-        
+
         let attr_map = match obj_attrs.get(&obj) {
             Some(m) => m,
             None => {
+                eprintln!("DEBUG: Object {} not found in OBJECT_ATTRIBUTES", obj);
                 // Object not found - mark all attributes as unavailable
                 for attr in attrs.iter_mut() {
                     attr.ulValueLen = 0xFFFFFFFF;
@@ -925,23 +1087,45 @@ pub extern "C" fn C_GetAttributeValue(_sess: CK_SESSION, obj: u64, templ: *mut u
                 return CKR_OK;
             }
         };
-        
+
         // Look up each attribute
         for attr in attrs.iter_mut() {
             if let Some(value) = attr_map.get(&attr.attr_type) {
+                eprintln!(
+                    "DEBUG: Found attr 0x{:x}, len={}",
+                    attr.attr_type,
+                    value.len()
+                );
                 if !attr.pValue.is_null() {
                     let len = std::cmp::min(attr.ulValueLen as usize, value.len());
                     std::ptr::copy_nonoverlapping(value.as_ptr(), attr.pValue, len);
                 }
                 attr.ulValueLen = value.len() as CK_ULONG;
             } else {
+                eprintln!(
+                    "DEBUG: Attr 0x{:x} not found in attr_map with {} entries",
+                    attr.attr_type,
+                    attr_map.len()
+                );
+                // Print available attributes
+                for (k, _v) in attr_map.iter() {
+                    eprintln!("    Available: 0x{:x}", k);
+                }
                 // Attribute not found
                 attr.ulValueLen = 0xFFFFFFFF;
             }
         }
     }
-    
+
     CKR_OK
+}
+
+// Debug helper to log all attributes in a map
+fn debug_log_attr_map(obj: u64, attr_map: &HashMap<CK_ULONG, Vec<u8>>) {
+    eprintln!("DEBUG: Object {} has {} attributes:", obj, attr_map.len());
+    for (attr_type, value) in attr_map.iter() {
+        eprintln!("  0x{:x} ({}): len={}", attr_type, attr_type, value.len());
+    }
 }
 
 // Generate a random handle for sessions
@@ -959,13 +1143,17 @@ fn rand_handle() -> u64 {
 fn key_handle_from_id(key_id: &str) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    
+
     let mut hasher = DefaultHasher::new();
     key_id.hash(&mut hasher);
     let hash = hasher.finish();
-    
+
     // Ensure handle is non-zero (0 is reserved/invalid)
-    if hash == 0 { 1 } else { hash }
+    if hash == 0 {
+        1
+    } else {
+        hash
+    }
 }
 
 // Generate a unique handle for public key (add ":pub" suffix)
@@ -973,17 +1161,79 @@ fn pub_key_handle(key_id: &str) -> u64 {
     key_handle_from_id(&format!("{}:pub", key_id))
 }
 
+/// Parse label from PKCS#11 template
+fn parse_label_from_template(template: *const u8, attr_count: CK_ULONG) -> Option<String> {
+    info!(
+        "parse_label_from_template: template={:?}, attr_count={}",
+        template, attr_count
+    );
+
+    if template.is_null() || attr_count == 0 {
+        info!("parse_label_from_template: null template or zero attrs, returning None");
+        return None;
+    }
+
+    // Template is array of CK_ATTRIBUTE structures
+    // CK_ATTRIBUTE has: type (CK_ULONG), pValue (*void), ulValueLen (CK_ULONG)
+    #[repr(C)]
+    struct CK_ATTRIBUTE {
+        attr_type: CK_ULONG,
+        p_value: *const u8,
+        value_len: CK_ULONG,
+    }
+
+    let attrs =
+        unsafe { std::slice::from_raw_parts(template as *const CK_ATTRIBUTE, attr_count as usize) };
+
+    info!(
+        "parse_label_from_template: iterating over {} attributes",
+        attrs.len()
+    );
+
+    for (i, attr) in attrs.iter().enumerate() {
+        info!("parse_label_from_template: attr[{}]: type=0x{:x} (CKA_LABEL=0x{:x}), p_value={:?}, value_len={}", 
+              i, attr.attr_type, CKA_LABEL, attr.p_value, attr.value_len);
+
+        if attr.attr_type == CKA_LABEL && !attr.p_value.is_null() && attr.value_len > 0 {
+            let label_bytes =
+                unsafe { std::slice::from_raw_parts(attr.p_value, attr.value_len as usize) };
+            info!(
+                "parse_label_from_template: CKA_LABEL found, bytes={:?}",
+                label_bytes
+            );
+
+            // Remove trailing nulls and convert to string
+            let label = String::from_utf8_lossy(label_bytes)
+                .trim_end_matches('\0')
+                .to_string();
+            info!(
+                "parse_label_from_template: parsed label='{}', empty={}",
+                label,
+                label.is_empty()
+            );
+
+            if !label.is_empty() {
+                info!("parse_label_from_template: returning label='{}'", label);
+                return Some(label);
+            }
+        }
+    }
+
+    info!("parse_label_from_template: no valid label found, returning None");
+    None
+}
+
 // Key generation - ECDSA P-256 via daemon
 #[no_mangle]
 pub extern "C" fn C_GenerateKeyPair(
-    session: CK_SESSION, 
+    session: CK_SESSION,
     mech: *const u8,
-    pub_template: *const u8, 
-    pub_attr_count: CK_ULONG, 
-    priv_template: *const u8, 
-    priv_attr_count: CK_ULONG, 
-    pub_key: *mut u64, 
-    priv_key: *mut u64
+    pub_template: *const u8,
+    pub_attr_count: CK_ULONG,
+    priv_template: *const u8,
+    priv_attr_count: CK_ULONG,
+    pub_key: *mut u64,
+    priv_key: *mut u64,
 ) -> CK_RV {
     // Parse mechanism type
     let mech_type = if !mech.is_null() {
@@ -991,24 +1241,27 @@ pub extern "C" fn C_GenerateKeyPair(
     } else {
         0
     };
-    
-    info!("C_GenerateKeyPair called with session: {}, mech: 0x{:x}", session, mech_type);
-    
+
+    info!(
+        "C_GenerateKeyPair called with session: {}, mech: 0x{:x}",
+        session, mech_type
+    );
+
     if session == 0 {
         return CKR_SESSION_INVALID;
     }
-    
+
     if pub_key.is_null() || priv_key.is_null() {
         return CKR_ARGUMENTS_BAD;
     }
-    
+
     // Validate mechanism - accept CKM_EC_KEY_PAIR_GEN (0x1040) or CKM_ECDH (0x1040, same value)
     // Note: Both constants are now 0x1040 per PKCS#11 spec
     if mech_type != CKM_EC_KEY_PAIR_GEN {
         error!("C_GenerateKeyPair: Unsupported mechanism 0x{:x}", mech_type);
         return CKR_MECHANISM_INVALID;
     }
-    
+
     // Get passphrase AND identity token from session
     let (passphrase, identity_token) = {
         let sessions = match SESSIONS.lock() {
@@ -1018,38 +1271,41 @@ pub extern "C" fn C_GenerateKeyPair(
         match sessions.get(&session) {
             Some(st) => (
                 st.passphrase.clone().unwrap_or_default(),
-                st.identity_token.clone()
+                st.identity_token.clone(),
             ),
             None => return CKR_SESSION_INVALID,
         }
     };
-    
-    // Create fresh client and runtime for this operation
-    let daemon_addr = get_daemon_addr();
-    let mut client = DaemonClient::new(&daemon_addr);
-    client.set_passphrase(passphrase.clone());
-    
-    let rt = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(r) => r,
-        Err(_) => {
-            error!("Failed to create tokio runtime");
-            return CKR_DEVICE_ERROR;
-        }
-    };
-    
-    // Generate P-256 key via daemon, passing identity token
-    let identity_token_ref = identity_token.as_deref();
 
-    let key_id_result = rt.block_on(async {
-        client.connect().await.map_err(|e| e.to_string())?;
-        client.create_key("p256", Some("pkcs11-key"), &passphrase, identity_token_ref)
-            .await
-            .map_err(|e| e.to_string())
-    });
-    
+    // Parse label from template if provided
+    info!(
+        "C_GenerateKeyPair: parsing label from pub_template (count={})",
+        pub_attr_count
+    );
+    let key_label = parse_label_from_template(pub_template, pub_attr_count)
+        .or_else(|| {
+            info!(
+                "C_GenerateKeyPair: no label in pub_template, trying priv_template (count={})",
+                priv_attr_count
+            );
+            parse_label_from_template(priv_template, priv_attr_count)
+        })
+        .unwrap_or_else(|| {
+            info!("C_GenerateKeyPair: no label found in templates, using default 'pkcs11-key'");
+            "pkcs11-key".to_string()
+        });
+
+    info!("C_GenerateKeyPair: final key_label='{}'", key_label);
+
+    // Use REST client to create key
+    let daemon_addr = get_daemon_addr();
+    let client = RestClient::new(&daemon_addr);
+
+    // Generate P-256 key via daemon, passing identity token
+    let identity_token_ref = identity_token.as_deref().unwrap_or("");
+
+    let key_id_result = client.create_key("p256", &key_label, identity_token_ref);
+
     let key_id = match key_id_result {
         Ok(id) => id,
         Err(e) => {
@@ -1057,14 +1313,14 @@ pub extern "C" fn C_GenerateKeyPair(
             return CKR_DEVICE_ERROR;
         }
     };
-    
+
     info!("Generated P-256 key with ID: {}", key_id);
-    
+
     // Use deterministic handles based on key_id
     // This ensures FindObjects can find the same handles
     let pub_handle = pub_key_handle(&key_id);
     let priv_handle = key_handle_from_id(&key_id);
-    
+
     // Store in global object store for FindObjects
     {
         let mut objects = match OBJECTS.lock() {
@@ -1074,43 +1330,88 @@ pub extern "C" fn C_GenerateKeyPair(
         objects.insert(pub_handle, format!("{}:pub", key_id));
         objects.insert(priv_handle, key_id.clone());
     }
-    
+
     // Store attributes for both keys
     {
         let mut attrs = match OBJECT_ATTRIBUTES.lock() {
             Ok(a) => a,
             Err(_) => return CKR_SESSION_INVALID,
         };
-        
+
         // Public key attributes
         let mut pub_attrs = HashMap::new();
-        pub_attrs.insert(CKA_CLASS, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02]); // CKO_PUBLIC_KEY as u64
-        pub_attrs.insert(CKA_LABEL, b"test-key".to_vec());
-        pub_attrs.insert(CKA_KEY_TYPE, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03]); // CKK_EC as u64
-        pub_attrs.insert(CKA_VERIFY, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE as u64
-        pub_attrs.insert(CKA_TOKEN, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE
+        pub_attrs.insert(
+            CKA_CLASS,
+            vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02],
+        ); // CKO_PUBLIC_KEY as u64
+        pub_attrs.insert(CKA_LABEL, key_label.clone().into_bytes());
+        pub_attrs.insert(
+            CKA_KEY_TYPE,
+            vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03],
+        ); // CKK_EC as u64
+        pub_attrs.insert(
+            CKA_VERIFY,
+            vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+        ); // CK_TRUE as u64
+        pub_attrs.insert(
+            CKA_TOKEN,
+            vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+        ); // CK_TRUE
+           // Add supported mechanisms for this key (ECDSA variants)
+        let allowed_mechs = vec![
+            (CKM_ECDSA as CK_ULONG).to_le_bytes().to_vec(),
+            (CKM_ECDSA_SHA1 as CK_ULONG).to_le_bytes().to_vec(),
+            (CKM_ECDSA_SHA224 as CK_ULONG).to_le_bytes().to_vec(),
+            (CKM_ECDSA_SHA256 as CK_ULONG).to_le_bytes().to_vec(),
+            (CKM_ECDSA_SHA384 as CK_ULONG).to_le_bytes().to_vec(),
+            (CKM_ECDSA_SHA512 as CK_ULONG).to_le_bytes().to_vec(),
+        ]
+        .concat();
+        pub_attrs.insert(CKA_ALLOWED_MECHANISMS, allowed_mechs.clone());
         attrs.insert(pub_handle, pub_attrs);
-        
+
         // Private key attributes
         let mut priv_attrs = HashMap::new();
-        priv_attrs.insert(CKA_CLASS, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03]); // CKO_PRIVATE_KEY as u64
-        priv_attrs.insert(CKA_LABEL, b"test-key".to_vec());
-        priv_attrs.insert(CKA_KEY_TYPE, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03]); // CKK_EC as u64
-        priv_attrs.insert(CKA_SIGN, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE as u64
-        priv_attrs.insert(CKA_TOKEN, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE
-        priv_attrs.insert(CKA_SENSITIVE, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE
-        priv_attrs.insert(CKA_EXTRACTABLE, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_FALSE
-        priv_attrs.insert(CKA_PRIVATE, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // CK_TRUE
+        priv_attrs.insert(
+            CKA_CLASS,
+            vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03],
+        ); // CKO_PRIVATE_KEY as u64
+        priv_attrs.insert(CKA_LABEL, key_label.clone().into_bytes());
+        priv_attrs.insert(
+            CKA_KEY_TYPE,
+            vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03],
+        ); // CKK_EC as u64
+        priv_attrs.insert(
+            CKA_SIGN,
+            vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+        ); // CK_TRUE as u64
+        priv_attrs.insert(
+            CKA_TOKEN,
+            vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+        ); // CK_TRUE
+        priv_attrs.insert(
+            CKA_SENSITIVE,
+            vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+        ); // CK_TRUE
+        priv_attrs.insert(
+            CKA_EXTRACTABLE,
+            vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+        ); // CK_FALSE
+        priv_attrs.insert(
+            CKA_PRIVATE,
+            vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+        ); // CK_TRUE
+        priv_attrs.insert(CKA_ALLOWED_MECHANISMS, allowed_mechs);
         attrs.insert(priv_handle, priv_attrs);
     }
-    
+
     // Store in session
     {
         let mut sessions = match SESSIONS.lock() {
             Ok(s) => s,
             Err(_) => return CKR_SESSION_INVALID,
         };
-        
+
         if let Some(st) = sessions.get_mut(&session) {
             st.active_key_handle = Some(priv_handle);
             st.active_key_id = Some(key_id.clone());
@@ -1119,35 +1420,92 @@ pub extern "C" fn C_GenerateKeyPair(
             return CKR_SESSION_INVALID;
         }
     }
-    
+
     unsafe {
         *pub_key = pub_handle;
         *priv_key = priv_handle;
     }
-    
+
     CKR_OK
 }
 
 // Signing
 #[no_mangle]
-pub extern "C" fn C_SignInit(sess: CK_SESSION, mech: *const u8, key: u64) -> CK_RV { 
+pub extern "C" fn C_SignInit(sess: CK_SESSION, mech: *const u8, key: u64) -> CK_RV {
     let mech_type = if !mech.is_null() {
         unsafe { *(mech as *const CK_ULONG) }
     } else {
         0
     };
-    info!("C_SignInit session: {} key: {}", sess, key); 
-    
+
+    // DEBUG: Log what we received vs what we support
+    eprintln!("DEBUG C_SignInit: mech_type=0x{:x}", mech_type);
+    eprintln!(
+        "  CKM_ECDSA=0x{:x}, CKM_ECDSA_SHA1=0x{:x}",
+        CKM_ECDSA, CKM_ECDSA_SHA1
+    );
+    eprintln!(
+        "  CKM_ECDSA_SHA224=0x{:x}, CKM_ECDSA_SHA256=0x{:x}",
+        CKM_ECDSA_SHA224, CKM_ECDSA_SHA256
+    );
+    eprintln!(
+        "  CKM_ECDSA_SHA384=0x{:x}, CKM_ECDSA_SHA512=0x{:x}",
+        CKM_ECDSA_SHA384, CKM_ECDSA_SHA512
+    );
+
+    info!(
+        "C_SignInit session: {} key: {} mech: 0x{:x}",
+        sess, key, mech_type
+    );
+
+    // Validate mechanism - we support ECDSA and all SHA variants
+    let supported = mech_type == CKM_ECDSA
+        || mech_type == CKM_ECDSA_SHA1
+        || mech_type == CKM_ECDSA_SHA224
+        || mech_type == CKM_ECDSA_SHA256
+        || mech_type == CKM_ECDSA_SHA384
+        || mech_type == CKM_ECDSA_SHA512;
+    if !supported {
+        error!("C_SignInit: Unsupported mechanism 0x{:x}", mech_type);
+        return CKR_MECHANISM_INVALID;
+    }
+
     // Just store the key handle - C_Sign will query daemon directly
     let mut sessions = match SESSIONS.lock() {
         Ok(s) => s,
         Err(_) => return CKR_SESSION_INVALID,
     };
-    
+
     if let Some(st) = sessions.get_mut(&sess) {
-        st.active_key_handle = Some(key);
-        info!("C_SignInit: Stored key handle {} for session {} (will query daemon in C_Sign)", key, sess);
-        CKR_OK
+        // Look up the key ID from the handle
+        let objects = match OBJECTS.lock() {
+            Ok(o) => o,
+            Err(_) => return CKR_DEVICE_ERROR,
+        };
+
+        match objects.get(&key) {
+            Some(key_id) => {
+                // If key_id has :pub suffix (public key), strip it for signing
+                // pkcs11-tool might pass public key handle but we need private key
+                let signing_key_id = if key_id.ends_with(":pub") {
+                    key_id.trim_end_matches(":pub")
+                } else {
+                    key_id.as_str()
+                };
+
+                st.active_key_handle = Some(key);
+                st.active_key_id = Some(signing_key_id.to_string());
+                info!(
+                    "C_SignInit: Stored key handle {} and key_id {} for session {}",
+                    key, signing_key_id, sess
+                );
+                CKR_OK
+            }
+            None => {
+                error!("C_SignInit: Key handle {} not found in object store", key);
+                CKR_KEY_HANDLE_INVALID
+            }
+        }
     } else {
         CKR_SESSION_INVALID
     }
@@ -1155,92 +1513,69 @@ pub extern "C" fn C_SignInit(sess: CK_SESSION, mech: *const u8, key: u64) -> CK_
 
 #[no_mangle]
 pub extern "C" fn C_Sign(
-    session: CK_SESSION, 
-    data: *const u8, 
-    data_len: CK_ULONG, 
-    signature: *mut u8, 
-    sig_len: *mut CK_ULONG
-) -> CK_RV { 
+    session: CK_SESSION,
+    data: *const u8,
+    data_len: CK_ULONG,
+    signature: *mut u8,
+    sig_len: *mut CK_ULONG,
+) -> CK_RV {
     info!("C_Sign called");
-    
+
     if session == 0 {
         return CKR_SESSION_INVALID;
     }
-    
+
     // Get session data first (needed for key lookup and signing)
-    let (_active_key_handle, passphrase, identity_token) = {
+    let (active_key_handle, identity_token) = {
         let sessions = match SESSIONS.lock() {
             Ok(s) => s,
             Err(_) => return CKR_SESSION_INVALID,
         };
-        
+
         match sessions.get(&session) {
-            Some(st) => (
-                st.active_key_handle,
-                st.passphrase.clone().unwrap_or_default(),
-                st.identity_token.clone()
-            ),
+            Some(st) => (st.active_key_handle, st.identity_token.clone()),
             None => return CKR_SESSION_INVALID,
         }
     };
-    
+
+    // Get the key_id from the handle stored by C_SignInit
+    let key_id = if let Some(handle) = active_key_handle {
+        let objects = match OBJECTS.lock() {
+            Ok(o) => o,
+            Err(_) => return CKR_DEVICE_ERROR,
+        };
+        match objects.get(&handle) {
+            Some(key_id) => {
+                info!("C_Sign: Found key_id '{}' for handle {}", key_id, handle);
+                key_id.clone()
+            }
+            None => {
+                error!("C_Sign: Key handle {} not found in object store", handle);
+                return CKR_KEY_HANDLE_INVALID;
+            }
+        }
+    } else {
+        error!("C_Sign: No active key handle set (C_SignInit not called?)");
+        return CKR_KEY_HANDLE_INVALID;
+    };
+
     // Get data first
     let data_to_sign = if data.is_null() || data_len == 0 {
         return CKR_ARGUMENTS_BAD;
     } else {
         unsafe { std::slice::from_raw_parts(data, data_len as usize).to_vec() }
     };
-    
-    // Create fresh client and runtime for this operation
+
+    // Use REST client for signing
     let daemon_addr = get_daemon_addr();
-    let mut client = DaemonClient::new(&daemon_addr);
-    client.set_passphrase(passphrase.clone());
-    
-    let rt = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(r) => r,
-        Err(_) => return CKR_DEVICE_ERROR,
-    };
-    
-    // ALWAYS query daemon for keys - skip local cache entirely
-    let key_id = if let Some(token) = identity_token.clone() {
-        info!("C_Sign: Querying daemon for keys (skipping local cache)");
-        
-        let keys_result = rt.block_on(async {
-            client.connect().await.map_err(|e| e.to_string())?;
-            client.list_keys_with_identity(&token).await
-                .map_err(|e| format!("Failed to list keys: {}", e))
-        });
-        
-        match keys_result {
-            Ok(keys) => {
-                if keys.is_empty() {
-                    error!("No keys found in daemon");
-                    return CKR_KEY_HANDLE_INVALID;
-                }
-                // Use the first key for signing (pkcs11-tool should have specified which one)
-                info!("Found {} keys in daemon, using first key: {}", keys.len(), keys[0].id);
-                keys[0].id.clone()
-            }
-            Err(e) => {
-                error!("Failed to query daemon for keys: {}", e);
-                return CKR_KEY_HANDLE_INVALID;
-            }
-        }
-    } else {
-        error!("No identity token for key lookup");
-        return CKR_KEY_HANDLE_INVALID;
-    };
-    
+    let client = RestClient::new(&daemon_addr);
+
+    info!("C_Sign: Using key_id '{}' for signing", key_id);
+
     // Sign via daemon with identity token
-    let identity_token_ref = identity_token.as_deref();
-    let sig_result = rt.block_on(async {
-        client.sign(&key_id, &data_to_sign, identity_token_ref).await
-            .map_err(|e| e.to_string())
-    });
-    
+    let identity_token_ref = identity_token.as_deref().unwrap_or("");
+    let sig_result = client.sign(&key_id, &data_to_sign, identity_token_ref);
+
     let sig_bytes = match sig_result {
         Ok(s) => s,
         Err(e) => {
@@ -1248,25 +1583,160 @@ pub extern "C" fn C_Sign(
             return CKR_DEVICE_ERROR;
         }
     };
-    
+
     // Check buffer size
     if signature.is_null() {
-        unsafe { *sig_len = sig_bytes.len() as CK_ULONG; }
+        unsafe {
+            *sig_len = sig_bytes.len() as CK_ULONG;
+        }
         return CKR_BUFFER_TOO_SMALL;
     }
-    
+
     let current_sig_len = unsafe { *sig_len };
     if current_sig_len < sig_bytes.len() as CK_ULONG {
-        unsafe { *sig_len = sig_bytes.len() as CK_ULONG; }
+        unsafe {
+            *sig_len = sig_bytes.len() as CK_ULONG;
+        }
         return CKR_BUFFER_TOO_SMALL;
     }
-    
+
     unsafe {
         std::ptr::copy_nonoverlapping(sig_bytes.as_ptr(), signature, sig_bytes.len());
         *sig_len = sig_bytes.len() as CK_ULONG;
     }
-    
+
     info!("Signed {} bytes with key {}", sig_bytes.len(), key_id);
+    CKR_OK
+}
+
+// Multi-part signing support - accumulate data in session
+#[no_mangle]
+pub extern "C" fn C_SignUpdate(sess: CK_SESSION, data: *const u8, data_len: CK_ULONG) -> CK_RV {
+    info!(
+        "C_SignUpdate called: session={}, data_len={}",
+        sess, data_len
+    );
+
+    if data.is_null() {
+        return CKR_ARGUMENTS_BAD;
+    }
+
+    let data_slice = unsafe { std::slice::from_raw_parts(data, data_len as usize) };
+
+    // Accumulate data in session for later signing
+    let mut sessions = match SESSIONS.lock() {
+        Ok(s) => s,
+        Err(_) => return CKR_SESSION_INVALID,
+    };
+
+    if let Some(st) = sessions.get_mut(&sess) {
+        st.sign_buffer.extend_from_slice(data_slice);
+        info!(
+            "C_SignUpdate: Accumulated {} bytes in session {}",
+            st.sign_buffer.len(),
+            sess
+        );
+        CKR_OK
+    } else {
+        CKR_SESSION_INVALID
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn C_SignFinal(
+    sess: CK_SESSION,
+    signature: *mut u8,
+    sig_len: *mut CK_ULONG,
+) -> CK_RV {
+    info!("C_SignFinal called: session={}", sess);
+
+    let (key_id, identity_token, data_to_sign) = {
+        let mut sessions = match SESSIONS.lock() {
+            Ok(s) => s,
+            Err(_) => return CKR_SESSION_INVALID,
+        };
+
+        if let Some(st) = sessions.get_mut(&sess) {
+            let key_id = match &st.active_key_id {
+                Some(id) => id.clone(),
+                None => {
+                    error!("C_SignFinal: No active key ID");
+                    return CKR_KEY_HANDLE_INVALID;
+                }
+            };
+            let token = st.identity_token.clone();
+            let data = st.sign_buffer.clone();
+            st.sign_buffer.clear(); // Clear buffer after signing
+            info!(
+                "C_SignFinal: Got key_id={}, token={:?}, data_len={}",
+                key_id,
+                token.as_ref().map(|t| &t[..10.min(t.len())]),
+                data.len()
+            );
+            (key_id, token, data)
+        } else {
+            return CKR_SESSION_INVALID;
+        }
+    };
+
+    if data_to_sign.is_empty() {
+        error!("C_SignFinal: No data to sign");
+        return CKR_DATA_INVALID;
+    }
+
+    // Use REST client for signing
+    let daemon_addr = get_daemon_addr();
+    let client = RestClient::new(&daemon_addr);
+
+    let identity_token_ref = identity_token.as_deref().unwrap_or("");
+    info!(
+        "C_SignFinal: Calling REST API with key_id={}, token_len={}, data_len={}",
+        key_id,
+        identity_token_ref.len(),
+        data_to_sign.len()
+    );
+
+    if identity_token_ref.is_empty() {
+        error!("C_SignFinal: No identity token available!");
+        return CKR_USER_NOT_LOGGED_IN;
+    }
+
+    let sig_result = client.sign(&key_id, &data_to_sign, identity_token_ref);
+
+    let sig_bytes = match sig_result {
+        Ok(s) => s,
+        Err(e) => {
+            error!("C_SignFinal: Sign failed: {}", e);
+            return CKR_DEVICE_ERROR;
+        }
+    };
+
+    // Check buffer size
+    if signature.is_null() {
+        unsafe {
+            *sig_len = sig_bytes.len() as CK_ULONG;
+        }
+        return CKR_BUFFER_TOO_SMALL;
+    }
+
+    let current_sig_len = unsafe { *sig_len };
+    if current_sig_len < sig_bytes.len() as CK_ULONG {
+        unsafe {
+            *sig_len = sig_bytes.len() as CK_ULONG;
+        }
+        return CKR_BUFFER_TOO_SMALL;
+    }
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(sig_bytes.as_ptr(), signature, sig_bytes.len());
+        *sig_len = sig_bytes.len() as CK_ULONG;
+    }
+
+    info!(
+        "C_SignFinal: Signed {} bytes with key {}",
+        sig_bytes.len(),
+        key_id
+    );
     CKR_OK
 }
 
@@ -1299,7 +1769,10 @@ pub extern "C" fn C_VerifyInit(sess: CK_SESSION, _mech: *const u8, key: u64) -> 
     if let Some(st) = sessions.get_mut(&sess) {
         st.active_key_handle = Some(key);
         st.active_key_id = Some(key_id);
-        info!("C_VerifyInit: Stored key handle {} and key ID for session {}", key, sess);
+        info!(
+            "C_VerifyInit: Stored key handle {} and key ID for session {}",
+            key, sess
+        );
         CKR_OK
     } else {
         CKR_SESSION_INVALID
@@ -1312,7 +1785,7 @@ pub extern "C" fn C_Verify(
     data: *const u8,
     data_len: CK_ULONG,
     signature: *const u8,
-    sig_len: CK_ULONG
+    sig_len: CK_ULONG,
 ) -> CK_RV {
     info!("C_Verify called");
 
@@ -1362,13 +1835,10 @@ pub extern "C" fn C_Verify(
     };
 
     // Get data and signature
-    let data_to_verify = unsafe {
-        std::slice::from_raw_parts(data, data_len as usize).to_vec()
-    };
+    let data_to_verify = unsafe { std::slice::from_raw_parts(data, data_len as usize).to_vec() };
 
-    let signature_bytes = unsafe {
-        std::slice::from_raw_parts(signature, sig_len as usize).to_vec()
-    };
+    let signature_bytes =
+        unsafe { std::slice::from_raw_parts(signature, sig_len as usize).to_vec() };
 
     // Get passphrase and identity token from session
     let (passphrase, _identity_token) = {
@@ -1379,32 +1849,19 @@ pub extern "C" fn C_Verify(
         if let Some(st) = sessions.get(&session) {
             (
                 st.passphrase.clone().unwrap_or_default(),
-                st.identity_token.clone()
+                st.identity_token.clone(),
             )
         } else {
             return CKR_SESSION_INVALID;
         }
     };
 
-    // Create fresh client and runtime for this operation
+    // Use REST client for verification
     let daemon_addr = get_daemon_addr();
-    let mut client = DaemonClient::new(&daemon_addr);
-    client.set_passphrase(passphrase.clone());
-    
-    let rt = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(r) => r,
-        Err(_) => return CKR_DEVICE_ERROR,
-    };
+    let client = RestClient::new(&daemon_addr);
 
     // Verify via daemon
-    let verify_result = rt.block_on(async {
-        client.connect().await.map_err(|e| e.to_string())?;
-        client.verify(&key_id, &data_to_verify, &signature_bytes).await
-            .map_err(|e| e.to_string())
-    });
+    let verify_result = client.verify(&key_id, &data_to_verify, &signature_bytes);
 
     match verify_result {
         Ok(valid) => {
@@ -1453,7 +1910,7 @@ mod tests {
         // Test C_GetSlotList when called with NULL slot_list (just get count)
         let mut count: CK_ULONG = 0;
         let result = unsafe { C_GetSlotList(0, std::ptr::null_mut(), &mut count as *mut CK_ULONG) };
-        
+
         assert_eq!(result, CKR_OK);
         assert_eq!(count, 1, "Should have exactly 1 slot");
     }
@@ -1463,14 +1920,15 @@ mod tests {
         // Test C_GetSlotList when called with buffer
         let mut count: CK_ULONG = 0;
         let mut slot: CK_ULONG = 999;
-        
+
         // First call to get count
         let result = unsafe { C_GetSlotList(0, std::ptr::null_mut(), &mut count as *mut CK_ULONG) };
         assert_eq!(result, CKR_OK);
         assert_eq!(count, 1);
-        
+
         // Second call with buffer
-        let result = unsafe { C_GetSlotList(0, &mut slot as *mut CK_ULONG, &mut count as *mut CK_ULONG) };
+        let result =
+            unsafe { C_GetSlotList(0, &mut slot as *mut CK_ULONG, &mut count as *mut CK_ULONG) };
         assert_eq!(result, CKR_OK);
         assert_eq!(slot, 0, "Slot 0 should be returned");
     }
@@ -1481,9 +1939,10 @@ mod tests {
         // (returns slot 0 regardless)
         let mut count: CK_ULONG = 0;
         let mut slot: CK_ULONG = 999;
-        
-        let result = unsafe { C_GetSlotList(1, &mut slot as *mut CK_ULONG, &mut count as *mut CK_ULONG) };
-        
+
+        let result =
+            unsafe { C_GetSlotList(1, &mut slot as *mut CK_ULONG, &mut count as *mut CK_ULONG) };
+
         // Current implementation returns OK (it ignores the slot parameter)
         // This is acceptable for a simple implementation
         assert_eq!(result, CKR_OK);
@@ -1493,7 +1952,7 @@ mod tests {
     fn test_get_slot_list_null_count() {
         // Test with NULL count - should fail
         let result = unsafe { C_GetSlotList(0, std::ptr::null_mut(), std::ptr::null_mut()) };
-        
+
         assert_eq!(result, CKR_ARGUMENTS_BAD);
     }
 
@@ -1501,8 +1960,9 @@ mod tests {
     fn test_get_mechanism_list_count_only() {
         // Test C_GetMechanismList when called with NULL list (just get count)
         let mut count: CK_ULONG = 0;
-        let result = unsafe { C_GetMechanismList(0, std::ptr::null_mut(), &mut count as *mut CK_ULONG) };
-        
+        let result =
+            unsafe { C_GetMechanismList(0, std::ptr::null_mut(), &mut count as *mut CK_ULONG) };
+
         assert_eq!(result, CKR_OK);
         assert!(count > 0, "Should have at least 1 mechanism");
     }
@@ -1511,32 +1971,48 @@ mod tests {
     fn test_get_mechanism_list_with_buffer() {
         // Test C_GetMechanismList when called with buffer
         let mut count: CK_ULONG = 0;
-        
+
         // First call to get count
-        let result = unsafe { C_GetMechanismList(0, std::ptr::null_mut(), &mut count as *mut CK_ULONG) };
+        let result =
+            unsafe { C_GetMechanismList(0, std::ptr::null_mut(), &mut count as *mut CK_ULONG) };
         assert_eq!(result, CKR_OK);
-        assert!(count >= 6, "Should have at least 6 mechanisms (ECDSA, EC_KEY_PAIR_GEN, etc.)");
-        
+        assert!(
+            count >= 6,
+            "Should have at least 6 mechanisms (ECDSA, EC_KEY_PAIR_GEN, etc.)"
+        );
+
         // Allocate buffer and get mechanisms
         let mut mechs: Vec<CK_ULONG> = vec![0; count as usize];
-        let result = unsafe { C_GetMechanismList(0, mechs.as_mut_ptr(), &mut count as *mut CK_ULONG) };
+        let result =
+            unsafe { C_GetMechanismList(0, mechs.as_mut_ptr(), &mut count as *mut CK_ULONG) };
         assert_eq!(result, CKR_OK);
-        
+
         // Check for expected mechanisms
         let mech_set: Vec<CK_ULONG> = mechs[..count as usize].to_vec();
-        
+
         // Should contain at least these mechanisms
         assert!(mech_set.contains(&CKM_ECDSA), "Should have CKM_ECDSA");
-        assert!(mech_set.contains(&CKM_EC_KEY_PAIR_GEN), "Should have CKM_EC_KEY_PAIR_GEN");
-        assert!(mech_set.contains(&CKM_ECDSA_SHA256), "Should have CKM_ECDSA_SHA256");
+        assert!(
+            mech_set.contains(&CKM_EC_KEY_PAIR_GEN),
+            "Should have CKM_EC_KEY_PAIR_GEN"
+        );
+        assert!(
+            mech_set.contains(&CKM_ECDSA_SHA256),
+            "Should have CKM_ECDSA_SHA256"
+        );
+        assert!(
+            mech_set.contains(&CKM_ECDSA_SHA224),
+            "Should have CKM_ECDSA_SHA224"
+        );
     }
 
     #[test]
     fn test_get_mechanism_list_invalid_slot() {
         // Test with invalid slot
         let mut count: CK_ULONG = 0;
-        let result = unsafe { C_GetMechanismList(1, std::ptr::null_mut(), &mut count as *mut CK_ULONG) };
-        
+        let result =
+            unsafe { C_GetMechanismList(1, std::ptr::null_mut(), &mut count as *mut CK_ULONG) };
+
         assert_eq!(result, CKR_SLOT_INVALID);
     }
 
@@ -1548,9 +2024,10 @@ mod tests {
             ulMaxKeySize: 0,
             flags: 0,
         };
-        
-        let result = unsafe { C_GetMechanismInfo(0, CKM_ECDSA, &mut info as *mut CK_MECHANISM_INFO) };
-        
+
+        let result =
+            unsafe { C_GetMechanismInfo(0, CKM_ECDSA, &mut info as *mut CK_MECHANISM_INFO) };
+
         assert_eq!(result, CKR_OK);
         assert_eq!(info.ulMinKeySize, 256);
         assert_eq!(info.ulMaxKeySize, 521);
@@ -1566,13 +2043,18 @@ mod tests {
             ulMaxKeySize: 0,
             flags: 0,
         };
-        
-        let result = unsafe { C_GetMechanismInfo(0, CKM_EC_KEY_PAIR_GEN, &mut info as *mut CK_MECHANISM_INFO) };
-        
+
+        let result = unsafe {
+            C_GetMechanismInfo(0, CKM_EC_KEY_PAIR_GEN, &mut info as *mut CK_MECHANISM_INFO)
+        };
+
         assert_eq!(result, CKR_OK);
         assert_eq!(info.ulMinKeySize, 256);
         assert_eq!(info.ulMaxKeySize, 521);
-        assert!(info.flags & CKF_GENERATE_KEY_PAIR != 0, "Should have CKF_GENERATE_KEY_PAIR");
+        assert!(
+            info.flags & CKF_GENERATE_KEY_PAIR != 0,
+            "Should have CKF_GENERATE_KEY_PAIR"
+        );
     }
 
     #[test]
@@ -1583,9 +2065,10 @@ mod tests {
             ulMaxKeySize: 0,
             flags: 0,
         };
-        
-        let result = unsafe { C_GetMechanismInfo(0, CKM_ECDSA_SHA256, &mut info as *mut CK_MECHANISM_INFO) };
-        
+
+        let result =
+            unsafe { C_GetMechanismInfo(0, CKM_ECDSA_SHA256, &mut info as *mut CK_MECHANISM_INFO) };
+
         assert_eq!(result, CKR_OK);
         assert!(info.flags & CKF_SIGN != 0, "Should have CKF_SIGN");
     }
@@ -1598,9 +2081,10 @@ mod tests {
             ulMaxKeySize: 0,
             flags: 0,
         };
-        
-        let result = unsafe { C_GetMechanismInfo(0, CKM_ECDH, &mut info as *mut CK_MECHANISM_INFO) };
-        
+
+        let result =
+            unsafe { C_GetMechanismInfo(0, CKM_ECDH, &mut info as *mut CK_MECHANISM_INFO) };
+
         assert_eq!(result, CKR_OK);
         assert!(info.flags & CKF_DERIVE != 0, "Should have CKF_DERIVE");
     }
@@ -1613,10 +2097,10 @@ mod tests {
             ulMaxKeySize: 0,
             flags: 0,
         };
-        
+
         // Use an unknown mechanism
         let result = unsafe { C_GetMechanismInfo(0, 0x9999, &mut info as *mut CK_MECHANISM_INFO) };
-        
+
         assert_eq!(result, CKR_MECHANISM_INVALID);
     }
 
@@ -1624,7 +2108,7 @@ mod tests {
     fn test_get_mechanism_info_null_ptr() {
         // Test with NULL info pointer
         let result = unsafe { C_GetMechanismInfo(0, CKM_ECDSA, std::ptr::null_mut()) };
-        
+
         assert_eq!(result, CKR_ARGUMENTS_BAD);
     }
 
@@ -1651,11 +2135,11 @@ mod tests {
             firmware_version: CK_VERSION { major: 0, minor: 0 },
             utc_time: [0; 16],
         };
-        
+
         let result = unsafe { C_GetTokenInfo(0, &mut info as *mut CK_TOKEN_INFO) };
-        
+
         assert_eq!(result, CKR_OK);
-        
+
         // Check label (should be "softKMS")
         let label = String::from_utf8_lossy(&info.label);
         assert!(label.contains("softKMS"), "Label should contain 'softKMS'");
@@ -1665,36 +2149,56 @@ mod tests {
     fn test_open_session() {
         // Test C_OpenSession
         let mut session: CK_SESSION = 0;
-        
-        let result = unsafe { C_OpenSession(0, CKF_RW_SESSION | CKF_SERIAL_SESSION, std::ptr::null_mut(), std::ptr::null(), &mut session as *mut CK_SESSION) };
-        
+
+        let result = unsafe {
+            C_OpenSession(
+                0,
+                CKF_RW_SESSION | CKF_SERIAL_SESSION,
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                &mut session as *mut CK_SESSION,
+            )
+        };
+
         assert_eq!(result, CKR_OK);
         assert!(session != 0, "Session handle should be non-zero");
-        
+
         // Clean up - close session
-        unsafe { C_CloseSession(session); }
+        unsafe {
+            C_CloseSession(session);
+        }
     }
 
     #[test]
     fn test_open_session_invalid_slot() {
         // Test with invalid slot
         let mut session: CK_SESSION = 0;
-        
-        let result = unsafe { C_OpenSession(1, CKF_RW_SESSION | CKF_SERIAL_SESSION, std::ptr::null_mut(), std::ptr::null(), &mut session as *mut CK_SESSION) };
-        
+
+        let result = unsafe {
+            C_OpenSession(
+                1,
+                CKF_RW_SESSION | CKF_SERIAL_SESSION,
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                &mut session as *mut CK_SESSION,
+            )
+        };
+
         assert_eq!(result, CKR_SLOT_INVALID);
     }
 
     #[test]
     fn test_constants() {
-        // Verify mechanism constants
+        // Verify mechanism constants (matching PKCS#11 spec and pkcs11-tool expectations)
         assert_eq!(CKM_ECDSA, 0x1001);
-        assert_eq!(CKM_EC_KEY_PAIR_GEN, 0x1040);  // Updated per PKCS#11 spec
-        assert_eq!(CKM_ECDSA_SHA256, 0x1041);
-        assert_eq!(CKM_ECDSA_SHA384, 0x1042);
-        assert_eq!(CKM_ECDH, 0x1040);  // Same as CKM_EC_KEY_PAIR_GEN
-        assert_eq!(CKM_ECDH1_DERIVE, 0x1050);  // Updated per PKCS#11 spec
-        
+        assert_eq!(CKM_EC_KEY_PAIR_GEN, 0x1040);
+        assert_eq!(CKM_ECDSA_SHA1, 0x1041);
+        assert_eq!(CKM_ECDSA_SHA224, 0x1042); // Note: SHA224, not SHA256!
+        assert_eq!(CKM_ECDSA_SHA256, 0x1043);
+        assert_eq!(CKM_ECDSA_SHA384, 0x1044);
+        assert_eq!(CKM_ECDH, 0x1040); // Same as CKM_EC_KEY_PAIR_GEN
+        assert_eq!(CKM_ECDH1_DERIVE, 0x1050);
+
         // Verify flag constants
         assert_eq!(CKF_SIGN, 0x00000002);
         assert_eq!(CKF_VERIFY, 0x00000004);

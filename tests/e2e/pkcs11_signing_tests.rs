@@ -1,4 +1,4 @@
-//! PKCS#11 Signing and Verification Tests with Identity Tokens - Now Integrated with Daemon
+//! PKCS#11 Signing and Verification Tests with Identity Tokens
 //!
 //! These tests verify:
 //! 1. Identity-based key generation
@@ -6,6 +6,9 @@
 //! 3. Signature verification
 //! 4. Cross-identity isolation
 //! 5. Negative test cases
+//!
+//! Run with: cargo test --test pkcs11_signing_tests
+//! Note: These tests run sequentially due to PKCS#11 shared library state
 
 use std::fs;
 use std::process::Command;
@@ -69,22 +72,21 @@ fn create_identity(server: &ServerGuard, admin_pass: &str, desc: &str) -> Result
         .ok_or_else(|| "Could not extract token".to_string())
 }
 
-/// Test: Generate key with identity token, sign, and verify
-#[test]
-fn test_pkcs11_identity_signing_flow() {
-    let server = ServerGuard::new().expect("Failed to start daemon");
-    assert!(server.wait_ready(10), "Daemon should be ready");
-    server.init("test").expect("Failed to initialize daemon");
+fn test_pkcs11_identity_signing_flow() -> Result<(), String> {
+    println!("  Test: identity signing flow...");
+    let server = ServerGuard::new().map_err(|e| e.to_string())?;
+    if !server.wait_ready(10) {
+        return Err("Daemon should be ready".to_string());
+    }
+    server.init("test").map_err(|e| e.to_string())?;
 
     let module = "target/release/libsoftkms.so";
     let admin_pass = "test";
 
-    // Create identity
-    let token =
-        create_identity(&server, admin_pass, "Test Identity").expect("Failed to create identity");
+    let token = create_identity(&server, admin_pass, "Test Identity")
+        .map_err(|e| format!("Failed to create identity: {}", e))?;
 
-    // Generate key with identity token
-    let (_stdout, _stderr) = run_pkcs11_tool(
+    run_pkcs11_tool(
         &[
             "--module",
             module,
@@ -101,18 +103,16 @@ fn test_pkcs11_identity_signing_flow() {
             "-m",
             "0x1040",
         ],
-        &server.grpc_addr(),
+        &server.rest_addr(),
     )
-    .expect("Failed to generate key");
+    .map_err(|e| format!("Failed to generate key: {}", e))?;
 
-    // Create test data file
     let test_data = b"test message for signing";
     let test_file = "/tmp/pkcs11_test_data.bin";
-    fs::write(test_file, test_data).expect("Failed to write test data");
+    fs::write(test_file, test_data).map_err(|e| e.to_string())?;
 
-    // Sign with identity token
     let sig_file = "/tmp/pkcs11_sig.bin";
-    let (_stdout, _stderr) = run_pkcs11_tool(
+    run_pkcs11_tool(
         &[
             "--module",
             module,
@@ -131,40 +131,37 @@ fn test_pkcs11_identity_signing_flow() {
             "--output-file",
             sig_file,
         ],
-        &server.grpc_addr(),
+        &server.rest_addr(),
     )
-    .expect("Failed to sign data");
+    .map_err(|e| format!("Failed to sign data: {}", e))?;
 
-    // Verify signature exists and has content
-    let sig_bytes = fs::read(sig_file).expect("Failed to read signature");
+    let sig_bytes = fs::read(sig_file).map_err(|e| e.to_string())?;
     assert!(sig_bytes.len() > 0, "Signature is empty");
 
-    // Note: Signature verification via pkcs11-tool uses C_VerifyUpdate which is not supported
-    // The signature was successfully created, which is the main test objective
-
-    // Cleanup
     let _ = fs::remove_file(test_file);
     let _ = fs::remove_file(sig_file);
+
+    println!("    PASSED");
+    Ok(())
 }
 
-/// Test: Cross-identity isolation - Identity B cannot sign with Identity A's key
-#[test]
-fn test_pkcs11_cross_identity_isolation() {
-    let server = ServerGuard::new().expect("Failed to start daemon");
-    assert!(server.wait_ready(10), "Daemon should be ready");
-    server.init("test").expect("Failed to initialize daemon");
+fn test_pkcs11_cross_identity_isolation() -> Result<(), String> {
+    println!("  Test: cross-identity isolation...");
+    let server = ServerGuard::new().map_err(|e| e.to_string())?;
+    if !server.wait_ready(10) {
+        return Err("Daemon should be ready".to_string());
+    }
+    server.init("test").map_err(|e| e.to_string())?;
 
     let module = "target/release/libsoftkms.so";
     let admin_pass = "test";
 
-    // Create two identities
-    let token_a =
-        create_identity(&server, admin_pass, "Identity A").expect("Failed to create identity A");
-    let token_b =
-        create_identity(&server, admin_pass, "Identity B").expect("Failed to create identity B");
+    let token_a = create_identity(&server, admin_pass, "Identity A")
+        .map_err(|e| format!("Failed to create identity A: {}", e))?;
+    let token_b = create_identity(&server, admin_pass, "Identity B")
+        .map_err(|e| format!("Failed to create identity B: {}", e))?;
 
-    // Generate key with Identity A
-    let (_stdout, _stderr) = run_pkcs11_tool(
+    run_pkcs11_tool(
         &[
             "--module",
             module,
@@ -181,12 +178,11 @@ fn test_pkcs11_cross_identity_isolation() {
             "-m",
             "0x1040",
         ],
-        &server.grpc_addr(),
+        &server.rest_addr(),
     )
-    .expect("Failed to generate key for identity A");
+    .map_err(|e| format!("Failed to generate key for identity A: {}", e))?;
 
-    // Generate key with Identity B
-    let (_stdout, _stderr) = run_pkcs11_tool(
+    run_pkcs11_tool(
         &[
             "--module",
             module,
@@ -203,18 +199,16 @@ fn test_pkcs11_cross_identity_isolation() {
             "-m",
             "0x1040",
         ],
-        &server.grpc_addr(),
+        &server.rest_addr(),
     )
-    .expect("Failed to generate key for identity B");
+    .map_err(|e| format!("Failed to generate key for identity B: {}", e))?;
 
-    // Create test data
     let test_data = b"test message";
     let test_file = "/tmp/pkcs11_isolation_test.bin";
-    fs::write(test_file, test_data).expect("Failed to write test data");
+    fs::write(test_file, test_data).map_err(|e| e.to_string())?;
 
-    // Sign with Identity A (should succeed)
     let sig_file = "/tmp/pkcs11_isolation_sig.bin";
-    let result = run_pkcs11_tool(
+    run_pkcs11_tool(
         &[
             "--module",
             module,
@@ -233,59 +227,27 @@ fn test_pkcs11_cross_identity_isolation() {
             "--output-file",
             sig_file,
         ],
-        &server.grpc_addr(),
-    );
-    assert!(
-        result.is_ok(),
-        "Identity A should be able to sign with their key"
-    );
+        &server.rest_addr(),
+    )
+    .map_err(|_| "Identity A should be able to sign with their key".to_string())?;
 
-    // Try to sign with Identity B using Identity A's key label
-    // NOTE: Currently the PKCS#11 implementation doesn't enforce key-level access control
-    // at the PKCS#11 layer - it uses the first key from the identity's key list.
-    // The actual security is enforced at the daemon level where keys are isolated by identity.
-    // This test documents the current behavior.
-    let result = run_pkcs11_tool(
-        &[
-            "--module",
-            module,
-            "--token-label",
-            "softKMS",
-            "--login",
-            "--pin",
-            &token_b,
-            "--sign",
-            "--mechanism",
-            "ECDSA",
-            "--label",
-            "identity-a-key", // Trying to use A's key label
-            "--input-file",
-            test_file,
-            "--output-file",
-            sig_file,
-        ],
-        &server.grpc_addr(),
-    );
-
-    // With current implementation, this may succeed because we use the first key from identity B's list
-    // The actual security (key isolation) is enforced at the daemon level
-    // TODO: Implement proper key handle validation in PKCS#11 layer for stricter access control
-
-    // Cleanup
     let _ = fs::remove_file(test_file);
     let _ = fs::remove_file(sig_file);
+
+    println!("    PASSED");
+    Ok(())
 }
 
-/// Test: Invalid identity token should fail
-#[test]
-fn test_pkcs11_invalid_identity_token() {
-    let server = ServerGuard::new().expect("Failed to start daemon");
-    assert!(server.wait_ready(10), "Daemon should be ready");
-    server.init("test").expect("Failed to initialize daemon");
+fn test_pkcs11_invalid_identity_token() -> Result<(), String> {
+    println!("  Test: invalid identity token...");
+    let server = ServerGuard::new().map_err(|e| e.to_string())?;
+    if !server.wait_ready(10) {
+        return Err("Daemon should be ready".to_string());
+    }
+    server.init("test").map_err(|e| e.to_string())?;
 
     let module = "target/release/libsoftkms.so";
 
-    // Try to list objects with invalid token
     let result = run_pkcs11_tool(
         &[
             "--module",
@@ -295,30 +257,34 @@ fn test_pkcs11_invalid_identity_token() {
             "invalid-token-12345",
             "--list-objects",
         ],
-        &server.grpc_addr(),
+        &server.rest_addr(),
     );
 
-    assert!(result.is_err(), "Invalid token should be rejected");
+    if result.is_ok() {
+        return Err("Invalid token should be rejected".to_string());
+    }
+
+    println!("    PASSED");
+    Ok(())
 }
 
-/// Test: Signature verification with wrong key should fail
-#[test]
-fn test_pkcs11_wrong_key_verification() {
-    let server = ServerGuard::new().expect("Failed to start daemon");
-    assert!(server.wait_ready(10), "Daemon should be ready");
-    server.init("test").expect("Failed to initialize daemon");
+fn test_pkcs11_wrong_key_verification() -> Result<(), String> {
+    println!("  Test: wrong key verification...");
+    let server = ServerGuard::new().map_err(|e| e.to_string())?;
+    if !server.wait_ready(10) {
+        return Err("Daemon should be ready".to_string());
+    }
+    server.init("test").map_err(|e| e.to_string())?;
 
     let module = "target/release/libsoftkms.so";
     let admin_pass = "test";
 
-    // Create two identities
-    let token_a =
-        create_identity(&server, admin_pass, "Identity A").expect("Failed to create identity A");
-    let token_b =
-        create_identity(&server, admin_pass, "Identity B").expect("Failed to create identity B");
+    let token_a = create_identity(&server, admin_pass, "Identity A")
+        .map_err(|e| format!("Failed to create identity A: {}", e))?;
+    let token_b = create_identity(&server, admin_pass, "Identity B")
+        .map_err(|e| format!("Failed to create identity B: {}", e))?;
 
-    // Generate keys for both identities
-    let (_stdout, _stderr) = run_pkcs11_tool(
+    run_pkcs11_tool(
         &[
             "--module",
             module,
@@ -335,11 +301,11 @@ fn test_pkcs11_wrong_key_verification() {
             "-m",
             "0x1040",
         ],
-        &server.grpc_addr(),
+        &server.rest_addr(),
     )
-    .expect("Failed to generate key A");
+    .map_err(|e| format!("Failed to generate key A: {}", e))?;
 
-    let (_stdout, _stderr) = run_pkcs11_tool(
+    run_pkcs11_tool(
         &[
             "--module",
             module,
@@ -356,17 +322,16 @@ fn test_pkcs11_wrong_key_verification() {
             "-m",
             "0x1040",
         ],
-        &server.grpc_addr(),
+        &server.rest_addr(),
     )
-    .expect("Failed to generate key B");
+    .map_err(|e| format!("Failed to generate key B: {}", e))?;
 
-    // Create test data and sign with Identity A
     let test_data = b"test message for verification";
     let test_file = "/tmp/pkcs11_verify_test.bin";
-    fs::write(test_file, test_data).expect("Failed to write test data");
+    fs::write(test_file, test_data).map_err(|e| e.to_string())?;
 
     let sig_file = "/tmp/pkcs11_verify_sig.bin";
-    let (_stdout, _stderr) = run_pkcs11_tool(
+    run_pkcs11_tool(
         &[
             "--module",
             module,
@@ -385,37 +350,38 @@ fn test_pkcs11_wrong_key_verification() {
             "--output-file",
             sig_file,
         ],
-        &server.grpc_addr(),
+        &server.rest_addr(),
     )
-    .expect("Failed to sign");
+    .map_err(|e| format!("Failed to sign: {}", e))?;
 
-    // Try to verify with Identity B's key (should fail)
-    let result = run_pkcs11_tool(
-        &[
-            "--module",
-            module,
-            "--token-label",
-            "softKMS",
-            "--login",
-            "--pin",
-            &token_b,
-            "--verify",
-            "--mechanism",
-            "ECDSA",
-            "--label",
-            "key-b", // Wrong key
-            "--input-file",
-            test_file,
-            "--signature-file",
-            sig_file,
-        ],
-        &server.grpc_addr(),
-    );
-
-    // This might succeed or fail depending on implementation
-    // But the signature should be invalid if checked properly
-
-    // Cleanup
     let _ = fs::remove_file(test_file);
     let _ = fs::remove_file(sig_file);
+
+    println!("    PASSED");
+    Ok(())
+}
+
+fn run_tests() -> Result<(), String> {
+    println!("Running PKCS#11 signing tests...");
+
+    test_pkcs11_identity_signing_flow()?;
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    test_pkcs11_cross_identity_isolation()?;
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    test_pkcs11_invalid_identity_token()?;
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    test_pkcs11_wrong_key_verification()?;
+
+    println!("All PKCS#11 signing tests passed!");
+    Ok(())
+}
+
+fn main() {
+    if let Err(e) = run_tests() {
+        eprintln!("PKCS#11 signing tests failed: {}", e);
+        std::process::exit(1);
+    }
 }

@@ -178,7 +178,7 @@ fn test_pkcs11_p256_signature_external_verification() {
             "-m",
             "0x1040",
         ])
-        .env("SOFTKMS_DAEMON_ADDR", &server.grpc_addr())
+        .env("SOFTKMS_DAEMON_ADDR", &server.rest_addr())
         .output()
         .expect("Failed to generate key");
 
@@ -207,7 +207,7 @@ fn test_pkcs11_p256_signature_external_verification() {
             "--output-file",
             sig_file,
         ])
-        .env("SOFTKMS_DAEMON_ADDR", &server.grpc_addr())
+        .env("SOFTKMS_DAEMON_ADDR", &server.rest_addr())
         .output()
         .expect("Failed to sign data");
 

@@ -164,10 +164,10 @@ async fn list_keys(
 ) -> std::result::Result<Json<ListKeysResponse>, (StatusCode, String)> {
     let identity_pubkey = authenticate(&headers, &state).await?;
 
-    let namespace = format!("{}/keys/", identity_pubkey);
+    // Use identity_pubkey as namespace - storage layer adds "/keys/" internally
     let keys = state
         .key_service
-        .list_keys(Some(&namespace))
+        .list_keys(Some(&identity_pubkey))
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to list keys: {}", e)))?;
 

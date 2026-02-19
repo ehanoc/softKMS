@@ -46,6 +46,7 @@ path = "tests/e2e/pkcs11_e2e_tests.rs"
 [[test]]
 name = "pkcs11_signing_tests"
 path = "tests/e2e/pkcs11_signing_tests.rs"
+harness = false
 
 [[test]]
 name = "cli_integration_tests"
@@ -145,6 +146,9 @@ hex = "0.4"
 
 # Encoding
 base64 = "0.22"
+
+# HTTP client for PKCS#11
+reqwest = { version = "0.11", features = ["blocking", "json"] }
 
 [build-dependencies]
 tonic-build = "0.11"

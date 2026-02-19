@@ -25,6 +25,8 @@ pub struct SessionState {
     pub identity_pubkey: Option<String>,
     /// Whether this is an identity-based session (vs admin)
     pub is_identity_session: bool,
+    /// Buffer for accumulating data in multi-part signing
+    pub sign_buffer: Vec<u8>,
 }
 
 impl SessionState {
@@ -41,6 +43,7 @@ impl SessionState {
             identity_token: None,
             identity_pubkey: None,
             is_identity_session: false,
+            sign_buffer: Vec::new(),
         }
     }
 }

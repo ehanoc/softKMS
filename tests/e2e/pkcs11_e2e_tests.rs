@@ -20,7 +20,7 @@ fn test_pkcs11_e2e_smoke() {
     // Simple list slots test
     let output = Command::new("pkcs11-tool")
         .args(&["--module", "target/release/libsoftkms.so", "--list-slots"])
-        .env("SOFTKMS_DAEMON_ADDR", server.grpc_addr())
+        .env("SOFTKMS_DAEMON_ADDR", server.rest_addr())
         .output()
         .expect("pkcs11-tool should work");
 
@@ -93,7 +93,7 @@ fn test_pkcs11_e2e_keygen() {
             "-m",
             "0x1040",
         ])
-        .env("SOFTKMS_DAEMON_ADDR", server.grpc_addr())
+        .env("SOFTKMS_DAEMON_ADDR", server.rest_addr())
         .output()
         .expect("pkcs11-tool should work");
 
@@ -154,7 +154,7 @@ fn test_pkcs11_e2e_sign() {
             "-m",
             "0x1040",
         ])
-        .env("SOFTKMS_DAEMON_ADDR", server.grpc_addr())
+        .env("SOFTKMS_DAEMON_ADDR", server.rest_addr())
         .output()
         .expect("Failed to generate key");
 
@@ -189,7 +189,7 @@ fn test_pkcs11_e2e_sign() {
             "-m",
             "0x1001",
         ])
-        .env("SOFTKMS_DAEMON_ADDR", server.grpc_addr())
+        .env("SOFTKMS_DAEMON_ADDR", server.rest_addr())
         .output()
         .expect("pkcs11-tool should work");
 
@@ -262,7 +262,7 @@ fn test_pkcs11_e2e_multiple_keys() {
                 "-m",
                 "0x1040",
             ])
-            .env("SOFTKMS_DAEMON_ADDR", server.grpc_addr())
+            .env("SOFTKMS_DAEMON_ADDR", server.rest_addr())
             .output()
             .expect("pkcs11-tool should work");
 
@@ -283,11 +283,14 @@ fn test_pkcs11_e2e_multiple_keys() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Should have multiple keys (PKCS#11 creates them with label "pkcs11-key")
-    let key_count = stdout.matches("pkcs11-key").count();
+    // Should have multiple keys with labels "key-0", "key-1", etc.
+    let key_count = (0..3)
+        .filter(|i| stdout.contains(&format!("key-{}", i)))
+        .count();
     assert!(
         key_count >= 2,
-        "Should have multiple keys, found {}",
-        key_count
+        "Should have multiple keys, found {}\nOutput:\n{}",
+        key_count,
+        stdout
     );
 }

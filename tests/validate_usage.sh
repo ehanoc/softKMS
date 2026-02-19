@@ -19,6 +19,7 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEMP_DIR=$(mktemp -d)
 PORT=$((40000 + RANDOM % 10000))
 GRPC_ADDR="127.0.0.1:$PORT"
+REST_ADDR="127.0.0.1:$((PORT + 1))"
 ADMIN_PASS="admin-test-passphrase-123"
 
 # Find binaries
@@ -33,8 +34,8 @@ else
     exit 1
 fi
 
-# Export daemon address for PKCS#11 library
-export SOFTKMS_DAEMON_ADDR="$GRPC_ADDR"
+# Export REST address for PKCS#11 library
+export SOFTKMS_DAEMON_ADDR="$REST_ADDR"
 
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}   softKMS Usage Validation${NC}"
@@ -68,8 +69,8 @@ mkdir -p "$TEMP_DIR/run"
 PID_FILE="$TEMP_DIR/run/softkms.pid"
 
 echo -e "${YELLOW}[SETUP]${NC} Starting daemon..."
-echo -e "${CYAN}[CMD]${NC} $DAEMON --storage-path \"$TEMP_DIR/storage\" --grpc-addr \"$GRPC_ADDR\" --pid-file \"$PID_FILE\" --foreground &"
-$DAEMON --storage-path "$TEMP_DIR/storage" --grpc-addr "$GRPC_ADDR" --pid-file "$PID_FILE" --foreground &
+echo -e "${CYAN}[CMD]${NC} $DAEMON --storage-path \"$TEMP_DIR/storage\" --grpc-addr \"$GRPC_ADDR\" --rest-addr \"$REST_ADDR\" --pid-file \"$PID_FILE\" --foreground &"
+$DAEMON --storage-path "$TEMP_DIR/storage" --grpc-addr "$GRPC_ADDR" --rest-addr "$REST_ADDR" --pid-file "$PID_FILE" --foreground &
 DAEMON_PID=$!
 echo "  Daemon PID: $DAEMON_PID"
 sleep 2
@@ -550,8 +551,8 @@ else
     echo "  Identity A: ${TOKEN_A:0:30}..."
     echo "  Identity B: ${TOKEN_B:0:30}..."
     
-    # Export daemon address for PKCS#11 module
-    export SOFTKMS_DAEMON_ADDR="$GRPC_ADDR"
+    # Export REST address for PKCS#11 module
+    export SOFTKMS_DAEMON_ADDR="$REST_ADDR"
     
     # Test 16e: Generate key with Identity A token
     echo ""
@@ -586,9 +587,9 @@ else
     # Test 16g: Cross-identity isolation via CLI (more reliable than pkcs11-tool list)
     echo ""
     echo "  [TEST 16g] Cross-identity isolation - Identity A can only see their own keys via CLI"
-    echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"<TOKEN_A>\" list"
+    echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -t \"<TOKEN_A>\" list"
     OUTPUT=""
-    if OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$TOKEN_A" list 2>&1); then
+    if OUTPUT=$($CLI --server "http://$GRPC_ADDR" -t "$TOKEN_A" list 2>&1); then
         echo -e "${GREEN}[OUTPUT]${NC}"
         echo "$OUTPUT" | sed 's/^/    /'
         # Identity A should only see their key
@@ -609,9 +610,9 @@ else
     # Test 16h: Cross-identity isolation - Identity B should only see their key
     echo ""
     echo "  [TEST 16h] Cross-identity isolation - Identity B can only see their own keys via CLI"
-    echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"<TOKEN_B>\" list"
+    echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -t \"<TOKEN_B>\" list"
     OUTPUT=""
-    if OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$TOKEN_B" list 2>&1); then
+    if OUTPUT=$($CLI --server "http://$GRPC_ADDR" -t "$TOKEN_B" list 2>&1); then
         echo -e "${GREEN}[OUTPUT]${NC}"
         echo "$OUTPUT" | sed 's/^/    /'
         # Identity B should only see their key
