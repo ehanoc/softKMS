@@ -826,12 +826,13 @@ impl IdentityService for GrpcIdentityService {
             _ => IdentityKeyType::Ed25519,
         };
         
-        // Map client type
+        // Map client type (matching softkms::ClientType enum values)
         let client_type = match req.client_type {
-            0 => ClientType::AiAgent,
-            1 => ClientType::Service,
-            2 => ClientType::User,
-            3 => ClientType::Pkcs11,
+            0 => ClientType::AiAgent, // Unspecified defaults to AiAgent
+            1 => ClientType::AiAgent,
+            2 => ClientType::Service,
+            3 => ClientType::User,
+            4 => ClientType::Pkcs11,
             _ => ClientType::AiAgent,
         };
         

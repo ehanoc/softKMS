@@ -59,6 +59,11 @@ path = "tests/integration/pkcs11_tests.rs"
 name = "signature_verification_tests"
 path = "tests/e2e/signature_verification_tests.rs"
 
+[[test]]
+name = "rest_tests"
+path = "tests/integration/rest_tests.rs"
+harness = false
+
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -150,6 +155,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.4"
 mockall = "0.12"
 tempfile = "3.10"
+reqwest = { version = "0.11", features = ["blocking"] }
 
 # PKCS#11 C library
 [package.metadata.cbindgen]

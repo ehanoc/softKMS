@@ -232,8 +232,10 @@ impl Daemon {
         // Start REST server if enabled
         if let Some(ref _rest_addr) = self.config.api.rest_addr {
             let config = self.config.clone();
+            let key_service = self.key_service.clone();
+            let identity_store = self.identity_store.clone();
             tokio::spawn(async move {
-                if let Err(e) = crate::api::rest::start(&config).await {
+                if let Err(e) = crate::api::rest::start(&config, key_service, identity_store).await {
                     error!("REST server error: {}", e);
                 }
             });
