@@ -1,5 +1,6 @@
 //! API module - gRPC and REST implementations
 
+pub mod auth;
 pub mod grpc;
 pub mod rest;
 

@@ -17,8 +17,8 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing::{error, info};
 
+use crate::api::auth::{self, extract_bearer_token};
 use crate::identity::storage::IdentityStore;
-use crate::identity::validation::validate_token;
 use crate::key_service::KeyService;
 use crate::{Config, KeyId, Result};
 
@@ -118,26 +118,7 @@ async fn status(State(state): State<RestState>) -> Json<StatusResponse> {
     })
 }
 
-/// Extract Bearer token from Authorization header
-fn extract_bearer_token(headers: &HeaderMap) -> Option<String> {
-    // First try Authorization header with Bearer prefix
-    if let Some(val) = headers.get("authorization").and_then(|v| v.to_str().ok()) {
-        // Try with Bearer prefix
-        if let Some(token) = val.strip_prefix("Bearer ") {
-            return Some(token.to_string());
-        }
-        // No Bearer prefix - return as-is (for compatibility)
-        return Some(val.to_string());
-    }
-    
-    // Fallback to x-softkms-token header
-    headers
-        .get("x-softkms-token")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string())
-}
-
-/// Authenticate request and return identity public key
+/// Authenticate request using shared auth module
 async fn authenticate(
     headers: &HeaderMap,
     state: &RestState,
@@ -145,16 +126,10 @@ async fn authenticate(
     let token = extract_bearer_token(headers)
         .ok_or_else(|| (StatusCode::UNAUTHORIZED, "Authorization header required".to_string()))?;
 
-    let identity = validate_token(&state.identity_store, &token)
+    auth::authenticate(&token, &state.identity_store)
         .await
-        .map_err(|e| {
-            (
-                StatusCode::UNAUTHORIZED,
-                format!("Invalid identity token: {}", e),
-            )
-        })?;
-
-    Ok(identity.public_key)
+        .map_err(|e| (StatusCode::UNAUTHORIZED, e))
+        .map(|user| user.identity_pubkey)
 }
 
 /// List keys endpoint

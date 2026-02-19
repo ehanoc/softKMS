@@ -578,7 +578,7 @@ impl KeyStore for GrpcKeyStore {
 
         let response = DeriveP256Response {
             key_id: metadata.id.to_string(),
-            public_key: base64::encode(&public_key),
+            public_key: BASE64.encode(&public_key),
             algorithm: "p256".to_string(),
             created_at: metadata.created_at.to_rfc3339(),
         };
@@ -706,7 +706,7 @@ impl KeyStore for GrpcKeyStore {
             .await
             .map_err(map_error)?;
 
-        let public_key_b64 = base64::encode(&public_key);
+        let public_key_b64 = BASE64.encode(&public_key);
 
         let response = DerivePublicResponse {
             key_id: key_id.to_string(),
@@ -809,7 +809,7 @@ impl IdentityService for GrpcIdentityService {
         let secret: [u8; SECRET_KEY_LENGTH] = signing_key.to_bytes();
         let public_key: [u8; PUBLIC_KEY_LENGTH] = verifying_key.to_bytes();
         
-        let public_key_b64 = base64::encode(&public_key);
+        let public_key_b64 = BASE64.encode(&public_key);
         let public_key_str = format!("ed25519:{}", public_key_b64);
         
         // Generate token with Token struct
