@@ -224,8 +224,8 @@ async fn test_key_lifecycle_with_passphrase() {
     let _wrong_result = service.sign(metadata.id, data, "wrong_passphrase", None).await;
     // Result depends on cache state - may succeed if cached, fail if not
 
-    // 8. Delete key
-    service.delete_key(metadata.id).await.unwrap();
+    // 8. Delete key (admin = None)
+    service.delete_key(metadata.id, None).await.unwrap();
     let remaining = service.list_keys(None).await.unwrap();
     assert_eq!(remaining.len(), 1);
 }

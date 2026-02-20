@@ -139,8 +139,8 @@ async fn test_delete_key_removes_key() {
     // Key exists
     assert!(service.get_key(metadata.id).await.unwrap().is_some());
 
-    // Delete it
-    service.delete_key(metadata.id).await.unwrap();
+    // Delete it (admin = None)
+    service.delete_key(metadata.id, None).await.unwrap();
 
     // Key gone
     assert!(service.get_key(metadata.id).await.unwrap().is_none());

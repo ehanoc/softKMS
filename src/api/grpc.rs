@@ -252,8 +252,11 @@ impl KeyStore for GrpcKeyStore {
         let key_id = KeyId::parse_str(&req.key_id)
             .map_err(|_| Status::invalid_argument("Invalid key ID"))?;
         
+        // Extract identity to check - identities are NOT allowed to delete keys
+        let requesting_identity = extract_identity(&req.auth_token, &self.identity_store).await?;
+        
         self.key_service
-            .delete_key(key_id)
+            .delete_key(key_id, requesting_identity.as_deref())
             .await
             .map_err(map_error)?;
         

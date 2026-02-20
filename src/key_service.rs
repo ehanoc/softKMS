@@ -734,7 +734,16 @@ impl KeyService {
         Ok((key_id, address, derived.public_key))
     }
 
-    pub async fn delete_key(&self, key_id: KeyId) -> Result<()> {
+    pub async fn delete_key(
+        &self, 
+        key_id: KeyId,
+        requesting_identity: Option<&str>,
+    ) -> Result<()> {
+        // Only admin can delete keys - identity-based requests are denied
+        if requesting_identity.is_some() {
+            return Err(Error::AccessDenied);
+        }
+        
         info!("Deleting key {}", key_id);
         self.storage.delete_key(key_id).await?;
         Ok(())
@@ -860,7 +869,8 @@ mod tests {
             None,
         ).await.unwrap();
 
-        service.delete_key(metadata.id).await.unwrap();
+        // Admin delete (None = admin)
+        service.delete_key(metadata.id, None).await.unwrap();
 
         let result = service.get_key(metadata.id).await.unwrap();
         assert!(result.is_none());

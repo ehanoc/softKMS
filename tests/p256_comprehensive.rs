@@ -303,8 +303,8 @@ mod p256_tests {
         let keys_before = service.list_keys(None).await.unwrap();
         assert_eq!(keys_before.len(), 1);
 
-        // Delete
-        service.delete_key(metadata.id).await.unwrap();
+        // Delete (admin = None)
+        service.delete_key(metadata.id, None).await.unwrap();
 
         // Verify gone
         let keys_after = service.list_keys(None).await.unwrap();
@@ -638,8 +638,8 @@ mod integration_tests {
         let sig2 = service.sign(key.id, b"message2", passphrase, None).await.unwrap();
         assert_ne!(sig1.bytes, sig2.bytes); // Different signatures
 
-        // Delete
-        service.delete_key(key.id).await.unwrap();
+        // Delete (admin = None)
+        service.delete_key(key.id, None).await.unwrap();
 
         // Verify deletion
         let after_delete = service.get_key(key.id).await.unwrap();
