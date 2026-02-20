@@ -303,6 +303,48 @@ fn get_auth_credentials(
     Ok((None, Some(passphrase)))
 }
 
+/// Get authentication for gRPC requests - returns (auth_token, passphrase)
+/// Exits with error if neither is provided
+fn get_grpc_auth(
+    cli_token: Option<String>,
+    cli_passphrase: Option<String>,
+) -> Result<(String, String), Box<dyn std::error::Error>> {
+    match get_auth_credentials(cli_token, cli_passphrase)? {
+        (Some(token), _) => Ok((token, String::new())),
+        (_, Some(pass)) => Ok((String::new(), pass)),
+        _ => {
+            eprintln!("Either --token or --passphrase must be provided");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Get passphrase-only auth (for commands that don't support tokens)
+fn get_passphrase_auth(
+    cli_token: Option<String>,
+    cli_passphrase: Option<String>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if let Some(token) = cli_token {
+        if !token.is_empty() {
+            eprintln!("Token-based auth not supported for this operation");
+            std::process::exit(1);
+        }
+    }
+    
+    if let Some(pass) = cli_passphrase {
+        if !pass.is_empty() {
+            return Ok(pass);
+        }
+        return Err("Passphrase cannot be empty".into());
+    }
+    
+    let passphrase = prompt_password("Enter passphrase: ")?;
+    if passphrase.is_empty() {
+        return Err("Passphrase cannot be empty".into());
+    }
+    Ok(passphrase)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -356,18 +398,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
-                // Derive P256 always needs passphrase for now
-                let passphrase = match get_auth_credentials(cli.token.clone(), cli.passphrase.clone())? {
-                    (Some(_), _) => {
-                        eprintln!("Token-based auth not yet supported for HD derivation");
-                        std::process::exit(1);
-                    }
-                    (_, Some(pass)) => pass,
-                    _ => {
-                        eprintln!("Passphrase required for HD key derivation");
-                        std::process::exit(1);
-                    }
-                };
+                let passphrase = get_passphrase_auth(
+                    cli.token.clone(),
+                    cli.passphrase.clone(),
+                )?;
                 
                 let request = tonic::Request::new(DeriveP256Request {
                     seed_id: seed_id.clone(),
@@ -397,18 +431,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             } else {
-                // Use token if provided, otherwise use passphrase
-                let (auth_token, passphrase) = match get_auth_credentials(
+                let (auth_token, passphrase) = get_grpc_auth(
                     cli.token.clone(),
                     cli.passphrase.clone(),
-                )? {
-                    (Some(token), _) => (token, String::new()),
-                    (_, Some(pass)) => (String::new(), pass),
-                    _ => {
-                        eprintln!("Either --token or --passphrase must be provided");
-                        std::process::exit(1);
-                    }
-                };
+                )?;
 
                 let request = tonic::Request::new(CreateKeyRequest {
                     algorithm: algorithm.clone(),
@@ -438,18 +464,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         
         Commands::List { detailed: _ } => {
-            // Use token if provided, otherwise use passphrase
-            let (auth_token, passphrase) = match get_auth_credentials(
+            let (auth_token, _passphrase) = get_grpc_auth(
                 cli.token.clone(),
                 cli.passphrase.clone(),
-            )? {
-                (Some(token), _) => (token, String::new()),
-                (_, Some(pass)) => (String::new(), pass),
-                _ => {
-                    eprintln!("Either --token or --passphrase must be provided");
-                    std::process::exit(1);
-                }
-            };
+            )?;
             
             let request = tonic::Request::new(ListKeysRequest {
                 include_public_keys: true,
@@ -501,18 +519,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             };
             
-            // Use token if provided, otherwise use passphrase
-            let (auth_token, passphrase) = match get_auth_credentials(
+            let (auth_token, passphrase) = get_grpc_auth(
                 cli.token.clone(),
                 cli.passphrase.clone(),
-            )? {
-                (Some(token), _) => (token, String::new()),
-                (_, Some(pass)) => (String::new(), pass),
-                _ => {
-                    eprintln!("Either --token or --passphrase must be provided");
-                    std::process::exit(1);
-                }
-            };
+            )?;
 
             let data_bytes = if let Ok(decoded) = BASE64.decode(&data) {
                 decoded
@@ -607,18 +617,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             };
 
-            // Use token if provided, otherwise use passphrase
-            let (auth_token, passphrase) = match get_auth_credentials(
+            let (auth_token, _passphrase) = get_grpc_auth(
                 cli.token.clone(),
                 cli.passphrase.clone(),
-            )? {
-                (Some(token), _) => (token, String::new()),
-                (_, Some(pass)) => (String::new(), pass),
-                _ => {
-                    eprintln!("Either --token or --passphrase must be provided");
-                    std::process::exit(1);
-                }
-            };
+            )?;
 
             let request = tonic::Request::new(GetKeyRequest {
                 key_id: key_id.clone(),
@@ -655,17 +657,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         Commands::Init { confirm } => {
-            let passphrase = match get_auth_credentials(cli.token.clone(), cli.passphrase.clone())? {
-                (Some(_), _) => {
-                    eprintln!("Initialization requires passphrase, not token");
-                    std::process::exit(1);
-                }
-                (_, Some(pass)) => pass,
-                _ => {
-                    eprintln!("Passphrase required for initialization");
-                    std::process::exit(1);
-                }
-            };
+            let passphrase = get_passphrase_auth(
+                cli.token.clone(),
+                cli.passphrase.clone(),
+            )?;
 
             if confirm {
                 let confirm_pass = prompt_password("Confirm passphrase: ")?;
@@ -696,15 +691,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         Commands::ImportSeed { mnemonic, label } => {
-            // Import seed supports both identity token and admin passphrase
-            let (auth_token, passphrase) = match get_auth_credentials(cli.token.clone(), cli.passphrase.clone())? {
-                (Some(token), _) => (token, String::new()),
-                (_, Some(pass)) => (String::new(), pass),
-                _ => {
-                    eprintln!("Either --token or --passphrase must be provided");
-                    std::process::exit(1);
-                }
-            };
+            let (auth_token, passphrase) = get_grpc_auth(
+                cli.token.clone(),
+                cli.passphrase.clone(),
+            )?;
 
             let request = tonic::Request::new(ImportSeedRequest {
                 mnemonic,
@@ -728,15 +718,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         Commands::Derive { algorithm, seed, path, scheme, origin, user_handle, counter, label } => {
-            // Derive supports both identity token and admin passphrase
-            let (auth_token, passphrase) = match get_auth_credentials(cli.token.clone(), cli.passphrase.clone())? {
-                (Some(token), _) => (token, String::new()),
-                (_, Some(pass)) => (String::new(), pass),
-                _ => {
-                    eprintln!("Either --token or --passphrase must be provided");
-                    std::process::exit(1);
-                }
-            };
+            let (auth_token, passphrase) = get_grpc_auth(
+                cli.token.clone(),
+                cli.passphrase.clone(),
+            )?;
 
             let derivation_scheme = match scheme.as_str() {
                 "v2" => DerivationScheme::V2,
@@ -815,18 +800,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Identity { command } => {
             match command {
                 IdentityCommands::Create { r#type, description } => {
-                    // Identity creation needs passphrase for auth
-                    let passphrase = match get_auth_credentials(cli.token.clone(), cli.passphrase.clone())? {
-                        (Some(_), _) => {
-                            eprintln!("Token-based auth not supported for identity creation");
-                            std::process::exit(1);
-                        }
-                        (_, Some(pass)) => pass,
-                        _ => {
-                            eprintln!("Passphrase required for identity creation");
-                            std::process::exit(1);
-                        }
-                    };
+                    let passphrase = get_passphrase_auth(
+                        cli.token.clone(),
+                        cli.passphrase.clone(),
+                    )?;
 
                     let client_type = match r#type.as_str() {
                         "ai-agent" => ClientType::AiAgent,
@@ -869,18 +846,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 IdentityCommands::List { include_inactive } => {
-                    // Identity listing needs passphrase for auth
-                    let passphrase = match get_auth_credentials(cli.token.clone(), cli.passphrase.clone())? {
-                        (Some(_), _) => {
-                            eprintln!("Token-based auth not supported for identity listing");
-                            std::process::exit(1);
-                        }
-                        (_, Some(pass)) => pass,
-                        _ => {
-                            eprintln!("Passphrase required for identity listing");
-                            std::process::exit(1);
-                        }
-                    };
+                    let passphrase = get_passphrase_auth(
+                        cli.token.clone(),
+                        cli.passphrase.clone(),
+                    )?;
 
                     let request = tonic::Request::new(ListIdentitiesRequest {
                         include_inactive,
@@ -967,18 +936,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         std::process::exit(1);
                     }
 
-                    // Identity revocation needs passphrase for auth
-                    let passphrase = match get_auth_credentials(cli.token.clone(), cli.passphrase.clone())? {
-                        (Some(_), _) => {
-                            eprintln!("Token-based auth not supported for identity revocation");
-                            std::process::exit(1);
-                        }
-                        (_, Some(pass)) => pass,
-                        _ => {
-                            eprintln!("Passphrase required for identity revocation");
-                            std::process::exit(1);
-                        }
-                    };
+                    let passphrase = get_passphrase_auth(
+                        cli.token.clone(),
+                        cli.passphrase.clone(),
+                    )?;
 
                     let request = tonic::Request::new(RevokeIdentityRequest {
                         public_key: public_key.clone(),
