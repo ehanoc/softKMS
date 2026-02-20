@@ -87,6 +87,33 @@ fn key_type_to_string(kt: KeyType) -> String {
     }
 }
 
+/// Extract identity public key from auth token if present
+/// Returns Ok(Some(public_key)) for valid tokens, Ok(None) for admin operations,
+/// or Err(Status) for invalid tokens
+async fn extract_identity(
+    auth_token: &str,
+    identity_store: &IdentityStore,
+) -> Result<Option<String>, Status> {
+    if auth_token.is_empty() {
+        return Ok(None);
+    }
+
+    let token = Token::parse(auth_token).map_err(|_| {
+        Status::permission_denied("Invalid identity token format")
+    })?;
+
+    let identity = identity_store
+        .load(&token.public_key)
+        .await
+        .map_err(|_| Status::permission_denied("Identity not found"))?;
+
+    if token.verify(&identity.token_hash) && identity.is_active {
+        Ok(Some(token.public_key))
+    } else {
+        Err(Status::permission_denied("Invalid or inactive identity token"))
+    }
+}
+
 fn metadata_to_key_info(metadata: &KeyMetadata, include_public_key: bool) -> KeyInfo {
     KeyInfo {
         key_id: metadata.id.to_string(),
@@ -145,32 +172,7 @@ impl KeyStore for GrpcKeyStore {
         
         let req = request.into_inner();
         
-        // Determine owner identity from auth_token if present
-        let owner_identity = if !req.auth_token.is_empty() {
-            // Validate the identity token and get the public key
-            match Token::parse(&req.auth_token) {
-                Ok(token) => {
-                    // Load identity to verify token is valid
-                    match self.identity_store.load(&token.public_key).await {
-                        Ok(identity) => {
-                            if token.verify(&identity.token_hash) && identity.is_active {
-                                Some(token.public_key)
-                            } else {
-                                return Err(Status::permission_denied("Invalid or inactive identity token"));
-                            }
-                        }
-                        Err(_) => {
-                            return Err(Status::permission_denied("Identity not found"));
-                        }
-                    }
-                }
-                Err(_) => {
-                    return Err(Status::permission_denied("Invalid identity token format"));
-                }
-            }
-        } else {
-            None // Admin creates keys without owner
-        };
+        let owner_identity = extract_identity(&req.auth_token, &self.identity_store).await?;
         
         let metadata = self.key_service
             .create_key(req.algorithm, req.label, req.attributes, &req.passphrase, owner_identity)
@@ -180,7 +182,7 @@ impl KeyStore for GrpcKeyStore {
         let response = CreateKeyResponse {
             key_id: metadata.id.to_string(),
             algorithm: metadata.algorithm,
-            public_key: "".to_string(), // TODO: Store and return public key
+            public_key: "".to_string(),
             created_at: metadata.created_at.to_rfc3339(),
             label: metadata.label.unwrap_or_default(),
         };
@@ -196,43 +198,9 @@ impl KeyStore for GrpcKeyStore {
         debug!("Received ListKeys request");
         
         let req = request.into_inner();
-        let auth_token = req.auth_token;
         
-        // Determine namespace based on auth token
-        let namespace: Option<String> = if !auth_token.is_empty() {
-            // Try to parse as identity token
-            match Token::parse(&auth_token) {
-                Ok(token) => {
-                    // It's a valid identity token - verify and extract namespace
-                    match self.identity_store.load(&token.public_key).await {
-                        Ok(identity) => {
-                            if token.verify(&identity.token_hash) && identity.is_active {
-                                // Use the identity's public key as namespace
-                                Some(token.public_key.clone())
-                            } else {
-                                // Invalid or inactive token - return empty
-                                let response = ListKeysResponse { keys: vec![] };
-                                return Ok(Response::new(response));
-                            }
-                        }
-                        Err(_) => {
-                            // Identity not found - return empty
-                            let response = ListKeysResponse { keys: vec![] };
-                            return Ok(Response::new(response));
-                        }
-                    }
-                }
-                Err(_) => {
-                    // Not an identity token - treat as admin (no namespace filter)
-                    None
-                }
-            }
-        } else {
-            // No auth_token - treat as admin (no namespace filter)
-            None
-        };
+        let namespace = extract_identity(&req.auth_token, &self.identity_store).await?;
         
-        // List keys from specific namespace or all admin keys
         let metadatas = self.key_service
             .list_keys(namespace.as_deref())
             .await
@@ -310,34 +278,8 @@ impl KeyStore for GrpcKeyStore {
         let key_id = KeyId::parse_str(&req.key_id)
             .map_err(|_| Status::invalid_argument("Invalid key ID"))?;
 
-        // Determine requesting identity from auth_token
-        let requesting_identity = if !req.auth_token.is_empty() {
-            // Validate the identity token
-            match Token::parse(&req.auth_token) {
-                Ok(token) => {
-                    // Load identity to verify token is valid
-                    match self.identity_store.load(&token.public_key).await {
-                        Ok(identity) => {
-                            if token.verify(&identity.token_hash) && identity.is_active {
-                                Some(token.public_key)
-                            } else {
-                                return Err(Status::permission_denied("Invalid or inactive identity token"));
-                            }
-                        }
-                        Err(_) => {
-                            return Err(Status::permission_denied("Identity not found"));
-                        }
-                    }
-                }
-                Err(_) => {
-                    return Err(Status::permission_denied("Invalid identity token format"));
-                }
-            }
-        } else {
-            None // Admin signs without identity restriction
-        };
+        let requesting_identity = extract_identity(&req.auth_token, &self.identity_store).await?;
 
-        // Pass identity for ownership check, use cached master key
         let signature = self.key_service
             .sign(key_id, &req.data, &req.passphrase, requesting_identity.as_deref())
             .await
@@ -469,27 +411,7 @@ impl KeyStore for GrpcKeyStore {
             Self::mnemonic_to_seed(&req.mnemonic)?
         };
         
-        // Extract owner identity from auth_token if provided
-        let owner_identity = if !req.auth_token.is_empty() {
-            match Token::parse(&req.auth_token) {
-                Ok(token) => {
-                    // Verify token is valid
-                    match self.identity_store.load(&token.public_key).await {
-                        Ok(identity) => {
-                            if token.verify(&identity.token_hash) && identity.is_active {
-                                Some(token.public_key)
-                            } else {
-                                None
-                            }
-                        }
-                        Err(_) => None,
-                    }
-                }
-                Err(_) => None,
-            }
-        } else {
-            None
-        };
+        let owner_identity = extract_identity(&req.auth_token, &self.identity_store).await?;
         
         let metadata = self.key_service
             .import_seed(seed_bytes, req.label, &req.passphrase, owner_identity)
