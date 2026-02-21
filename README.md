@@ -11,7 +11,6 @@ A secure, modern alternative to SoftHSM with HD wallet support, written in Rust.
 
 | Feature | SoftHSM | softKMS |
 |---------|---------|---------|
-| **Status** | Abandoned | Actively maintained |
 | **Language** | C | Rust (memory-safe) |
 | **HD Wallets** | ❌ | ✅ BIP32/44 |
 | **Crypto** | Fixed (RSA/ECC) | Pluggable (Ed25519, P-256, Falcon-512, Falcon-1024) |

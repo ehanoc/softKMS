@@ -44,6 +44,9 @@ pub struct ListKeysRequest {
     /// Identity token for client auth
     #[prost(string, tag = "2")]
     pub auth_token: ::prost::alloc::string::String,
+    /// Admin passphrase for admin auth
+    #[prost(string, tag = "3")]
+    pub passphrase: ::prost::alloc::string::String,
 }
 /// Key info
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -86,6 +89,9 @@ pub struct GetKeyRequest {
     /// Identity token for client auth
     #[prost(string, tag = "3")]
     pub auth_token: ::prost::alloc::string::String,
+    /// Admin passphrase for admin auth
+    #[prost(string, tag = "4")]
+    pub passphrase: ::prost::alloc::string::String,
 }
 /// Get key response
 #[allow(clippy::derive_partial_eq_without_eq)]

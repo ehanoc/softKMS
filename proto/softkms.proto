@@ -114,6 +114,7 @@ message CreateKeyResponse {
 message ListKeysRequest {
   bool include_public_keys = 1;
   string auth_token = 2;  // Identity token for client auth
+  string passphrase = 3;  // Admin passphrase for admin auth
 }
 
 // Key info
@@ -137,6 +138,7 @@ message GetKeyRequest {
   string key_id = 1;
   bool include_public_key = 2;
   string auth_token = 3;  // Identity token for client auth
+  string passphrase = 4;  // Admin passphrase for admin auth
 }
 
 // Get key response

@@ -77,6 +77,17 @@ impl KeyService {
     ) -> Result<KeyMetadata> {
         info!("Creating new {} key", algorithm);
 
+        // Check for duplicate label if label is provided
+        if let Some(ref label_str) = label {
+            let existing_keys = self.storage.list_keys(owner_identity.as_deref()).await?;
+            if let Some(existing) = existing_keys.iter().find(|k| k.label.as_ref() == Some(label_str)) {
+                return Err(Error::InvalidParams(format!(
+                    "A key with label '{}' already exists (key_id: {})",
+                    label_str, existing.id
+                )));
+            }
+        }
+
         let key_id = KeyId::new_v4();
         let created_at = Utc::now();
 
@@ -933,6 +944,41 @@ mod tests {
         let sig2 = service.sign(key2.id, data, passphrase, None).await.unwrap();
 
         assert_ne!(sig1.bytes, sig2.bytes);
+    }
+
+    #[tokio::test]
+    async fn test_duplicate_label_rejected() {
+        let passphrase = "test_passphrase_123";
+        let test = create_test_service_with_init(passphrase).await;
+        let service = &test.service;
+
+        // Create first key with label
+        let key1 = service.create_key(
+            "ed25519".to_string(),
+            Some("duplicate-label".to_string()),
+            std::collections::HashMap::new(),
+            passphrase,
+            None,
+        ).await.unwrap();
+
+        assert_eq!(key1.label, Some("duplicate-label".to_string()));
+
+        // Attempt to create second key with same label - should fail
+        let result = service.create_key(
+            "ed25519".to_string(),
+            Some("duplicate-label".to_string()),
+            std::collections::HashMap::new(),
+            passphrase,
+            None,
+        ).await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("A key with label 'duplicate-label' already exists"));
+
+        // Verify only one key exists
+        let keys = service.list_keys(None).await.unwrap();
+        assert_eq!(keys.len(), 1);
     }
 
     #[tokio::test]

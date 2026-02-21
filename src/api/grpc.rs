@@ -114,6 +114,33 @@ async fn extract_identity(
     }
 }
 
+/// Validate authentication - either via identity token OR admin passphrase
+/// Returns Ok(Some(public_key)) for valid identity tokens, Ok(None) for admin (passphrase auth),
+/// or Err(Status) for invalid authentication
+async fn validate_auth(
+    auth_token: &str,
+    passphrase: &str,
+    identity_store: &IdentityStore,
+    security_manager: &SecurityManager,
+) -> Result<Option<String>, Status> {
+    // If token provided, validate it
+    if !auth_token.is_empty() {
+        return extract_identity(auth_token, identity_store).await;
+    }
+    
+    // If no token, require passphrase for admin access
+    if passphrase.is_empty() {
+        return Err(Status::unauthenticated("Authentication required: provide either --token or --passphrase"));
+    }
+    
+    // Validate passphrase
+    match security_manager.verify_passphrase(passphrase) {
+        Ok(true) => Ok(None), // Admin access - no namespace filter
+        Ok(false) => Err(Status::permission_denied("Invalid admin passphrase")),
+        Err(e) => Err(Status::internal(format!("Authentication error: {}", e))),
+    }
+}
+
 fn metadata_to_key_info(metadata: &KeyMetadata, include_public_key: bool) -> KeyInfo {
     KeyInfo {
         key_id: metadata.id.to_string(),
@@ -199,7 +226,12 @@ impl KeyStore for GrpcKeyStore {
         
         let req = request.into_inner();
         
-        let namespace = extract_identity(&req.auth_token, &self.identity_store).await?;
+        let namespace = validate_auth(
+            &req.auth_token,
+            &req.passphrase,
+            &self.identity_store,
+            &self.security_manager,
+        ).await?;
         
         let metadatas = self.key_service
             .list_keys(namespace.as_deref())

@@ -248,10 +248,13 @@ enum IdentityCommands {
 async fn lookup_key_by_label(
     client: &mut KeyStoreClient<tonic::transport::Channel>,
     label: &str,
+    auth_token: String,
+    passphrase: String,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let request = tonic::Request::new(ListKeysRequest {
         include_public_keys: false,
-        auth_token: String::new(),
+        auth_token,
+        passphrase,
     });
 
     let response = client.list_keys(request).await?;
@@ -477,7 +480,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         
         Commands::List { detailed: _ } => {
-            let (auth_token, _passphrase) = get_grpc_auth(
+            let (auth_token, passphrase) = get_grpc_auth(
                 cli.token.clone(),
                 cli.passphrase.clone(),
             )?;
@@ -485,6 +488,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let request = tonic::Request::new(ListKeysRequest {
                 include_public_keys: true,
                 auth_token,
+                passphrase,
             });
             
             match client.list_keys(request).await {
@@ -517,10 +521,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         Commands::Sign { key, label, data, encoding: _ } => {
+            // Get auth first (needed for lookup_key_by_label)
+            let (auth_token, passphrase) = get_grpc_auth(
+                cli.token.clone(),
+                cli.passphrase.clone(),
+            )?;
+            
             let key_id = if let Some(kid) = key {
                 kid
             } else if let Some(lbl) = label {
-                match lookup_key_by_label(&mut client, &lbl).await {
+                match lookup_key_by_label(&mut client, &lbl, auth_token.clone(), passphrase.clone()).await {
                     Ok(id) => id,
                     Err(e) => {
                         eprintln!("{}", e);
@@ -532,11 +542,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             };
             
-            let (auth_token, passphrase) = get_grpc_auth(
-                cli.token.clone(),
-                cli.passphrase.clone(),
-            )?;
-
             let data_bytes = if let Ok(decoded) = BASE64.decode(&data) {
                 decoded
             } else {
@@ -563,19 +568,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        Commands::Verify { key, label, data, signature, encoding: _ } => {
+        Commands::Verify { key, label: _, data, signature, encoding: _ } => {
+            // Verify doesn't require authentication - it's a public operation
+            // Only --key is supported (not --label)
             let key_id = if let Some(kid) = key {
                 kid
-            } else if let Some(lbl) = label {
-                match lookup_key_by_label(&mut client, &lbl).await {
-                    Ok(id) => id,
-                    Err(e) => {
-                        eprintln!("{}", e);
-                        std::process::exit(1);
-                    }
-                }
             } else {
-                eprintln!("Either --key or --label must be specified");
+                eprintln!("--key is required for verify");
                 std::process::exit(1);
             };
 
@@ -615,10 +614,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         Commands::Info { key, label } => {
+            // Get auth first (needed for lookup_key_by_label)
+            let (auth_token, passphrase) = get_grpc_auth(
+                cli.token.clone(),
+                cli.passphrase.clone(),
+            )?;
+            
             let key_id = if let Some(kid) = key {
                 kid
             } else if let Some(lbl) = label {
-                match lookup_key_by_label(&mut client, &lbl).await {
+                match lookup_key_by_label(&mut client, &lbl, auth_token.clone(), passphrase.clone()).await {
                     Ok(id) => id,
                     Err(e) => {
                         eprintln!("{}", e);
@@ -630,15 +635,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             };
 
-            let (auth_token, _passphrase) = get_grpc_auth(
-                cli.token.clone(),
-                cli.passphrase.clone(),
-            )?;
-
             let request = tonic::Request::new(GetKeyRequest {
                 key_id: key_id.clone(),
                 include_public_key: true,
                 auth_token,
+                passphrase,
             });
 
             match client.get_key(request).await {

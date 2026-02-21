@@ -30,25 +30,25 @@ Complete guide for using softKMS v0.2.0 via CLI, PKCS#11, and HD wallet operatio
 ### 2. Initialize the Keystore (First Time Only)
 
 ```bash
-# Initialize with passphrase
-./target/release/softkms -p "your-secure-passphrase" init
-
-# Or non-interactive (default passphrase: "admin")
-./target/release/softkms -p "admin" init
+# Initialize with passphrase (will prompt for passphrase)
+./target/release/softkms init
 ```
 
 **Output:**
 ```
+Enter passphrase: ********
+Confirm passphrase: ********
 Keystore initialized successfully.
 ```
 
 ### 3. Create Your First Key
 
 ```bash
-# Create Ed25519 key
-./target/release/softkms -p "your-passphrase" generate --algorithm ed25519 --label "my-first-key"
+# Create Ed25519 key (will prompt for passphrase)
+./target/release/softkms generate --algorithm ed25519 --label "my-first-key"
 
 # Output:
+# Enter passphrase: ********
 # Key generated successfully:
 #   ID: 550e8400-e29b-41d4-a716-446655440000
 #   Algorithm: ed25519
@@ -58,7 +58,8 @@ Keystore initialized successfully.
 ### 4. List Keys
 
 ```bash
-./target/release/softkms -p "your-passphrase" list
+# List keys (will prompt for passphrase)
+./target/release/softkms list
 ```
 
 **Output:**
@@ -83,53 +84,53 @@ All key operations currently require **admin passphrase** authentication.
 
 ```bash
 # Create Ed25519 key (recommended for most use cases)
-./target/release/softkms -p "passphrase" generate --algorithm ed25519 --label "ed25519-key"
+./target/release/softkms generate --algorithm ed25519 --label "ed25519-key"
 
 # Create P-256 key (for FIDO2/WebAuthn compatibility)
-./target/release/softkms -p "passphrase" generate --algorithm p256 --label "p256-key"
+./target/release/softkms generate --algorithm p256 --label "p256-key"
 
 # Create Falcon-512 key (post-quantum)
-./target/release/softkms -p "passphrase" generate --algorithm falcon512 --label "falcon512-key"
+./target/release/softkms generate --algorithm falcon512 --label "falcon512-key"
 
 # Create Falcon-1024 key (post-quantum, higher security)
-./target/release/softkms -p "passphrase" generate --algorithm falcon1024 --label "falcon1024-key"
+./target/release/softkms generate --algorithm falcon1024 --label "falcon1024-key"
 ```
 
 ### List Keys
 
 ```bash
 # List all keys
-./target/release/softkms -p "passphrase" list
+./target/release/softkms list
 
 # With detailed output
-./target/release/softkms -p "passphrase" list --detailed
+./target/release/softkms list --detailed
 ```
 
 ### Sign Data
 
 ```bash
 # Sign with specific key
-./target/release/softkms -p "passphrase" sign --key "key-uuid" --data "Hello World"
+./target/release/softkms sign --key "key-uuid" --data "Hello World"
 
 # Sign with key by label
-./target/release/softkms -p "passphrase" sign --label "my-key" --data "Hello World"
+./target/release/softkms sign --label "my-key" --data "Hello World"
 ```
 
 ### Delete Keys
 
 ```bash
 # Delete by key ID
-./target/release/softkms -p "passphrase" delete --key "key-uuid"
+./target/release/softkms delete --key "key-uuid"
 
 # Force delete without confirmation
-./target/release/softkms -p "passphrase" delete --key "key-uuid" --force
+./target/release/softkms delete --key "key-uuid" --force
 ```
 
 ### Get Key Info
 
 ```bash
 # Get key details
-./target/release/softkms -p "passphrase" info --key "key-uuid"
+./target/release/softkms info --key "key-uuid"
 ```
 
 ---
@@ -142,7 +143,7 @@ Create and manage identities for future token-based authentication.
 
 ```bash
 # Create Ed25519 identity for AI agent
-./target/release/softkms -p "passphrase" identity create --type ai-agent --description "Trading Bot"
+./target/release/softkms identity create --type ai-agent --description "Trading Bot"
 
 # Output:
 # Identity created successfully:
@@ -166,7 +167,7 @@ Create and manage identities for future token-based authentication.
 ### List Identities (Admin Only)
 
 ```bash
-./target/release/softkms -p "passphrase" identity list
+./target/release/softkms identity list
 ```
 
 **Output:**
@@ -184,7 +185,7 @@ Identities:
 
 ```bash
 # Revoke an identity
-./target/release/softkms -p "passphrase" identity revoke --public-key "ed25519:abc123..." --force
+./target/release/softkms identity revoke --public-key "ed25519:abc123..." --force
 
 # Output:
 # Identity revoked successfully.
@@ -214,7 +215,7 @@ Identities:
 Initialize the keystore with admin passphrase.
 
 ```bash
-softkms -p "passphrase" init
+softkms init
 ```
 
 **Options:**
@@ -225,7 +226,7 @@ softkms -p "passphrase" init
 Generate a new signing key.
 
 ```bash
-softkms -p "passphrase" generate [OPTIONS]
+softkms generate [OPTIONS]
 ```
 
 **Options:**
@@ -237,7 +238,7 @@ softkms -p "passphrase" generate [OPTIONS]
 List all stored keys.
 
 ```bash
-softkms -p "passphrase" list
+softkms list
 ```
 
 **Options:**
@@ -248,7 +249,7 @@ softkms -p "passphrase" list
 Sign data with a stored key.
 
 ```bash
-softkms -p "passphrase" sign [OPTIONS]
+softkms sign [OPTIONS]
 ```
 
 **Options:**
@@ -261,7 +262,7 @@ softkms -p "passphrase" sign [OPTIONS]
 Delete a key from storage.
 
 ```bash
-softkms -p "passphrase" delete [OPTIONS]
+softkms delete [OPTIONS]
 ```
 
 **Options:**
@@ -273,7 +274,7 @@ softkms -p "passphrase" delete [OPTIONS]
 Get detailed information about a key.
 
 ```bash
-softkms -p "passphrase" info --key <ID>
+softkms info --key <ID>
 ```
 
 #### `import-seed` - Import BIP39 Seed
@@ -281,7 +282,7 @@ softkms -p "passphrase" info --key <ID>
 Import a BIP39 mnemonic phrase as a master seed.
 
 ```bash
-softkms -p "passphrase" import-seed [OPTIONS]
+softkms import-seed [OPTIONS]
 ```
 
 **Options:**
@@ -293,7 +294,7 @@ softkms -p "passphrase" import-seed [OPTIONS]
 Derive a P-256 key from a seed for FIDO2/WebAuthn.
 
 ```bash
-softkms -p "passphrase" derive-p256 [OPTIONS]
+softkms derive-p256 [OPTIONS]
 ```
 
 **Options:**
@@ -308,7 +309,7 @@ softkms -p "passphrase" derive-p256 [OPTIONS]
 Derive an Ed25519 key from a seed using BIP44 path.
 
 ```bash
-softkms -p "passphrase" derive-ed25519 [OPTIONS]
+softkms derive-ed25519 [OPTIONS]
 ```
 
 **Options:**
@@ -324,7 +325,7 @@ softkms -p "passphrase" derive-ed25519 [OPTIONS]
 Create a new identity for token-based auth (admin only).
 
 ```bash
-softkms -p "passphrase" identity create [OPTIONS]
+softkms identity create [OPTIONS]
 ```
 
 **Options:**
@@ -337,7 +338,7 @@ softkms -p "passphrase" identity create [OPTIONS]
 List all identities (admin only).
 
 ```bash
-softkms -p "passphrase" identity list [OPTIONS]
+softkms identity list [OPTIONS]
 ```
 
 **Options:**
@@ -348,7 +349,7 @@ softkms -p "passphrase" identity list [OPTIONS]
 Revoke an identity (admin only).
 
 ```bash
-softkms -p "passphrase" identity revoke [OPTIONS]
+softkms identity revoke [OPTIONS]
 ```
 
 **Options:**
@@ -406,7 +407,7 @@ openssl pkeyutl -sign -in data.txt -out data.sig -pkcs11 -inkey "pkcs11:..."
 
 ```bash
 # Import 12-word mnemonic
-./target/release/softkms -p "passphrase" import-seed \
+./target/release/softkms import-seed \
   --mnemonic "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" \
   --label "my-wallet"
 
@@ -418,7 +419,7 @@ openssl pkeyutl -sign -in data.txt -out data.sig -pkcs11 -inkey "pkcs11:..."
 
 ```bash
 # Derive first key from seed
-./target/release/softkms -p "passphrase" derive-ed25519 \
+./target/release/softkms derive-ed25519 \
   --seed "550e8400-e29b-41d4-a716-446655440000" \
   --path "m/44'/283'/0'/0/0" \
   --store-key \
@@ -431,7 +432,7 @@ openssl pkeyutl -sign -in data.txt -out data.sig -pkcs11 -inkey "pkcs11:..."
 ### Derive P-256 Key (for FIDO2/WebAuthn)
 
 ```bash
-./target/release/softkms -p "passphrase" derive-p256 \
+./target/release/softkms derive-p256 \
   --seed "550e8400-e29b-41d4-a716-446655440000" \
   --origin "example.com" \
   --user-handle "user123" \
@@ -455,41 +456,41 @@ openssl pkeyutl -sign -in data.txt -out data.sig -pkcs11 -inkey "pkcs11:..."
 ./target/release/softkms-daemon --foreground &
 
 # 2. Initialize keystore
-./target/release/softkms -p "admin-secret-123" init
+./target/release/softkms init
 
 # 3. Create Ed25519 key
-./target/release/softkms -p "admin-secret-123" generate \
+./target/release/softkms generate \
   --algorithm ed25519 \
   --label "signing-key"
 
 # 4. Sign data
-./target/release/softkms -p "admin-secret-123" sign \
+./target/release/softkms sign \
   --label "signing-key" \
   --data "Hello World"
 
 # 5. Create identity for service
-./target/release/softkms -p "admin-secret-123" identity create \
+./target/release/softkms identity create \
   --type service \
   --description "Payment API"
 # Save the token output!
 
 # 6. Import seed for HD wallet
-./target/release/softkms -p "admin-secret-123" import-seed \
+./target/release/softkms import-seed \
   --mnemonic "abandon abandon ... about" \
   --label "master-seed"
 
 # 7. Derive key from seed
-./target/release/softkms -p "admin-secret-123" derive-ed25519 \
+./target/release/softkms derive-ed25519 \
   --seed "seed-uuid-from-step-6" \
   --path "m/44'/283'/0'/0/0" \
   --store-key \
   --label "derived-key-0"
 
 # 8. List all keys
-./target/release/softkms -p "admin-secret-123" list
+./target/release/softkms list
 
 # 9. Check identities
-./target/release/softkms -p "admin-secret-123" identity list
+./target/release/softkms identity list
 
 # 10. Health check
 ./target/release/softkms health
@@ -505,7 +506,7 @@ openssl pkeyutl -sign -in data.txt -out data.sig -pkcs11 -inkey "pkcs11:..."
 
 **Solution:**
 ```bash
-./target/release/softkms -p "your-passphrase" init
+./target/release/softkms init
 ```
 
 ### "Invalid admin passphrase"
@@ -533,7 +534,7 @@ openssl pkeyutl -sign -in data.txt -out data.sig -pkcs11 -inkey "pkcs11:..."
 **Solution:** Use only one:
 ```bash
 # Admin operations (current)
-./target/release/softkms -p "passphrase" generate --algorithm ed25519
+./target/release/softkms generate --algorithm ed25519
 
 # Token operations (Phase 2)
 ./target/release/softkms -t "token" generate --algorithm ed25519

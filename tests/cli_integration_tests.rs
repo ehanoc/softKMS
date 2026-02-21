@@ -161,7 +161,19 @@ fn test_cli_p256_sign_and_verify() {
         "SignVerifyKey",
     ]);
 
+    let gen_stdout = String::from_utf8_lossy(&gen_output.stdout);
     assert!(gen_output.status.success(), "Key generation failed");
+
+    // Extract key ID for verify
+    let key_id = gen_stdout
+        .lines()
+        .find(|l| l.starts_with("  ID:"))
+        .expect("No key ID in output")
+        .split(":")
+        .nth(1)
+        .expect("Could not extract key ID")
+        .trim()
+        .to_string();
 
     let sign_output = test.run_cli(&[
         "--passphrase",
@@ -199,8 +211,8 @@ fn test_cli_p256_sign_and_verify() {
 
     let verify_output = test.run_cli(&[
         "verify",
-        "--label",
-        "SignVerifyKey",
+        "--key",
+        &key_id,
         "--data",
         "Hello, World!",
         "--signature",
@@ -271,6 +283,17 @@ fn test_cli_ed25519_sign_and_verify() {
         sign_stdout
     );
 
+    // Extract key ID for verify
+    let key_id = gen_stdout
+        .lines()
+        .find(|l| l.starts_with("  ID:"))
+        .expect("No key ID in output")
+        .split(":")
+        .nth(1)
+        .expect("Could not extract key ID")
+        .trim()
+        .to_string();
+
     let signature_line = sign_stdout
         .lines()
         .find(|l| l.contains("Signature (base64):"))
@@ -284,8 +307,8 @@ fn test_cli_ed25519_sign_and_verify() {
 
     let verify_output = test.run_cli(&[
         "verify",
-        "--label",
-        "Ed25519SignKey",
+        "--key",
+        &key_id,
         "--data",
         "Test message for Ed25519",
         "--signature",
@@ -317,7 +340,7 @@ fn test_cli_verify_invalid_signature() {
 
     let _ = test.run_cli(&["--passphrase", "test123", "init", "--confirm", "false"]);
 
-    let _ = test.run_cli(&[
+    let gen_output = test.run_cli(&[
         "--passphrase",
         "test123",
         "generate",
@@ -326,6 +349,19 @@ fn test_cli_verify_invalid_signature() {
         "--label",
         "InvalidSigKey",
     ]);
+
+    let gen_stdout = String::from_utf8_lossy(&gen_output.stdout);
+
+    // Extract key ID for verify
+    let key_id = gen_stdout
+        .lines()
+        .find(|l| l.starts_with("  ID:"))
+        .expect("No key ID in output")
+        .split(":")
+        .nth(1)
+        .expect("Could not extract key ID")
+        .trim()
+        .to_string();
 
     let sign_output = test.run_cli(&[
         "--passphrase",
@@ -351,8 +387,8 @@ fn test_cli_verify_invalid_signature() {
 
     let verify_output = test.run_cli(&[
         "verify",
-        "--label",
-        "InvalidSigKey",
+        "--key",
+        &key_id,
         "--data",
         "Different data",
         "--signature",
