@@ -211,6 +211,44 @@ else
     fail_test "Key creation via REST failed"
 fi
 
+# TEST 8a: Create Falcon-512 key via REST
+# =============================================================================
+echo -e "${YELLOW}[TEST 8a]${NC} Create Falcon-512 key via REST"
+FALCON512_CREATE_RESPONSE=$(curl -s -X POST \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"algorithm": "falcon512", "label": "rest-falcon512-key"}' \
+    "$REST_URL/v1/keys")
+
+FALCON512_KEY_ID=$(echo "$FALCON512_CREATE_RESPONSE" | grep -oE '"key_id":"[^"]+"' | cut -d'"' -f4)
+
+if [ -n "$FALCON512_KEY_ID" ]; then
+    pass_test "Falcon-512 key created via REST: $FALCON512_KEY_ID"
+else
+    echo -e "${RED}[OUTPUT]${NC}"
+    echo "$FALCON512_CREATE_RESPONSE"
+    fail_test "Falcon-512 key creation via REST failed"
+fi
+
+# TEST 8b: Create Falcon-1024 key via REST
+# =============================================================================
+echo -e "${YELLOW}[TEST 8b]${NC} Create Falcon-1024 key via REST"
+FALCON1024_CREATE_RESPONSE=$(curl -s -X POST \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"algorithm": "falcon1024", "label": "rest-falcon1024-key"}' \
+    "$REST_URL/v1/keys")
+
+FALCON1024_KEY_ID=$(echo "$FALCON1024_CREATE_RESPONSE" | grep -oE '"key_id":"[^"]+"' | cut -d'"' -f4)
+
+if [ -n "$FALCON1024_KEY_ID" ]; then
+    pass_test "Falcon-1024 key created via REST: $FALCON1024_KEY_ID"
+else
+    echo -e "${RED}[OUTPUT]${NC}"
+    echo "$FALCON1024_CREATE_RESPONSE"
+    fail_test "Falcon-1024 key creation via REST failed"
+fi
+
 # =============================================================================
 # TEST 9: Get key details via REST
 # =============================================================================

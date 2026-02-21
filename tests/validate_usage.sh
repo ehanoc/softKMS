@@ -192,6 +192,38 @@ else
     fail_test "List keys failed"
 fi
 
+# Test 5a: Create Falcon-512 key
+echo ""
+echo "[TEST 5a] Create Falcon-512 key"
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"$ADMIN_PASS\" generate --algorithm falcon512 --label \"falcon512-key\""
+OUTPUT=""
+if OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" generate --algorithm falcon512 --label "falcon512-key" 2>&1); then
+    echo -e "${GREEN}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    FALCON512_KEY_ID=$(echo "$OUTPUT" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | head -1)
+    pass_test "Create Falcon-512 key (ID: ${FALCON512_KEY_ID:0:8}...)"
+else
+    echo -e "${RED}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    fail_test "Create Falcon-512 key failed"
+fi
+
+# Test 5b: Create Falcon-1024 key
+echo ""
+echo "[TEST 5b] Create Falcon-1024 key"
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"$ADMIN_PASS\" generate --algorithm falcon1024 --label \"falcon1024-key\""
+OUTPUT=""
+if OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" generate --algorithm falcon1024 --label "falcon1024-key" 2>&1); then
+    echo -e "${GREEN}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    FALCON1024_KEY_ID=$(echo "$OUTPUT" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | head -1)
+    pass_test "Create Falcon-1024 key (ID: ${FALCON1024_KEY_ID:0:8}...)"
+else
+    echo -e "${RED}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    fail_test "Create Falcon-1024 key failed"
+fi
+
 # =============================================================================
 # PHASE 2: Security Tests
 # =============================================================================
@@ -246,6 +278,86 @@ else
     echo -e "${YELLOW}[OUTPUT]${NC}"
     echo "$OUTPUT" | sed 's/^/  /'
     pass_test "Wrong passphrase rejected for sign"
+fi
+
+# Test 8a: Sign data with Falcon-512 key
+echo ""
+echo "[TEST 8a] Sign data with Falcon-512 key"
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"$ADMIN_PASS\" sign --key \"$FALCON512_KEY_ID\" --data \"Hello Falcon\""
+OUTPUT=""
+if OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" sign --key "$FALCON512_KEY_ID" --data "Hello Falcon" 2>&1); then
+    echo -e "${GREEN}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    pass_test "Sign data with Falcon-512 key"
+else
+    echo -e "${RED}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    fail_test "Falcon-512 sign failed"
+fi
+
+# Test 8b: Sign data with Falcon-1024 key
+echo ""
+echo "[TEST 8b] Sign data with Falcon-1024 key"
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"$ADMIN_PASS\" sign --key \"$FALCON1024_KEY_ID\" --data \"Hello Falcon\""
+OUTPUT=""
+if OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" sign --key "$FALCON1024_KEY_ID" --data "Hello Falcon" 2>&1); then
+    echo -e "${GREEN}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    pass_test "Sign data with Falcon-1024 key"
+else
+    echo -e "${RED}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    fail_test "Falcon-1024 sign failed"
+fi
+
+# Test 8c: Verify Falcon-512 signature
+echo ""
+echo "[TEST 8c] Verify Falcon-512 signature"
+# First sign to get a signature
+FALCON512_SIG=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" sign --key "$FALCON512_KEY_ID" --data "Hello Falcon" 2>&1 | grep "Signature (base64):" | awk '{print $3}')
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" verify --key \"$FALCON512_KEY_ID\" --data \"Hello Falcon\" --signature \"$FALCON512_SIG\""
+OUTPUT=""
+if OUTPUT=$($CLI --server "http://$GRPC_ADDR" verify --key "$FALCON512_KEY_ID" --data "Hello Falcon" --signature "$FALCON512_SIG" 2>&1); then
+    echo -e "${GREEN}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    pass_test "Verify Falcon-512 signature"
+else
+    echo -e "${RED}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    fail_test "Falcon-512 verify failed"
+fi
+
+# Test 8d: Verify Falcon-1024 signature
+echo ""
+echo "[TEST 8d] Verify Falcon-1024 signature"
+# First sign to get a signature
+FALCON1024_SIG=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" sign --key "$FALCON1024_KEY_ID" --data "Hello Falcon" 2>&1 | grep "Signature (base64):" | awk '{print $3}')
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" verify --key \"$FALCON1024_KEY_ID\" --data \"Hello Falcon\" --signature \"$FALCON1024_SIG\""
+OUTPUT=""
+if OUTPUT=$($CLI --server "http://$GRPC_ADDR" verify --key "$FALCON1024_KEY_ID" --data "Hello Falcon" --signature "$FALCON1024_SIG" 2>&1); then
+    echo -e "${GREEN}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    pass_test "Verify Falcon-1024 signature"
+else
+    echo -e "${RED}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    fail_test "Falcon-1024 verify failed"
+fi
+
+# Test 8e: Verify Falcon signature with wrong data fails
+echo ""
+echo "[TEST 8e] Verify Falcon signature with wrong data fails"
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" verify --key \"$FALCON512_KEY_ID\" --data \"Wrong Data\" --signature \"$FALCON512_SIG\""
+OUTPUT=""
+if OUTPUT=$($CLI --server "http://$GRPC_ADDR" verify --key "$FALCON512_KEY_ID" --data "Wrong Data" --signature "$FALCON512_SIG" 2>&1); then
+    echo -e "${RED}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    fail_test "Falcon signature should be invalid for wrong data"
+else
+    echo -e "${YELLOW}[EXPECTED FAILURE]${NC}"
+    echo -e "${YELLOW}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    pass_test "Falcon signature correctly rejected for wrong data"
 fi
 
 # =============================================================================

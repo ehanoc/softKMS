@@ -164,13 +164,43 @@ OUTPUT=$($CLI -s "http://$GRPC_ADDR" -p "$ADMIN_PASS" generate --algorithm p256 
 echo "$OUTPUT"
 log_success "P-256 key created"
 
-log_step "List all keys (should show 2 keys)"
+log_step "Create Falcon-512 key"
+OUTPUT=$($CLI -s "http://$GRPC_ADDR" -p "$ADMIN_PASS" generate --algorithm falcon512 --label "admin-falcon512-key" 2>&1) || true
+echo "$OUTPUT"
+ADMIN_FALCON512_KEY_ID=$(echo "$OUTPUT" | grep -oP 'ID: \K[^ ]+' | head -1 || echo "")
+log_success "Falcon-512 key created"
+
+log_step "Create Falcon-1024 key"
+OUTPUT=$($CLI -s "http://$GRPC_ADDR" -p "$ADMIN_PASS" generate --algorithm falcon1024 --label "admin-falcon1024-key" 2>&1) || true
+echo "$OUTPUT"
+log_success "Falcon-1024 key created"
+
+log_step "List all keys (should show 4 keys)"
 OUTPUT=$($CLI -s "http://$GRPC_ADDR" -p "$ADMIN_PASS" list 2>&1) || true
 echo "$OUTPUT"
-if echo "$OUTPUT" | grep -q "ed25519" && echo "$OUTPUT" | grep -q "p256"; then
-    log_success "Key listing shows both keys"
+if echo "$OUTPUT" | grep -q "ed25519" && echo "$OUTPUT" | grep -q "p256" && echo "$OUTPUT" | grep -q "falcon512" && echo "$OUTPUT" | grep -q "falcon1024"; then
+    log_success "Key listing shows all key types"
 else
     log_failure "Key listing missing expected keys"
+fi
+
+log_step "Sign with Falcon-512 key"
+OUTPUT=$($CLI -s "http://$GRPC_ADDR" -p "$ADMIN_PASS" sign --key "$ADMIN_FALCON512_KEY_ID" --data "Hello Falcon" 2>&1) || true
+echo "$OUTPUT"
+log_success "Falcon-512 signing works"
+
+log_step "Verify Falcon-512 signature"
+FALCON512_SIG=$(echo "$OUTPUT" | grep "Signature (base64):" | awk '{print $3}' | head -1 || echo "")
+if [ -n "$FALCON512_SIG" ]; then
+    VERIFY_OUTPUT=$($CLI -s "http://$GRPC_ADDR" verify --key "$ADMIN_FALCON512_KEY_ID" --data "Hello Falcon" --signature "$FALCON512_SIG" 2>&1) || true
+    echo "$VERIFY_OUTPUT"
+    if echo "$VERIFY_OUTPUT" | grep -qi "VALID"; then
+        log_success "Falcon-512 signature verified"
+    else
+        log_failure "Falcon-512 signature verification failed"
+    fi
+else
+    log_failure "Could not extract Falcon-512 signature"
 fi
 
 log_step "Import BIP39 seed"

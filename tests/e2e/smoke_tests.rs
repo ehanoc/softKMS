@@ -352,3 +352,64 @@ fn test_daemon_health_endpoint() {
         || config.api.grpc_addr.starts_with("[::1]:")
         || config.api.grpc_addr.starts_with("localhost:"));
 }
+
+/// Test Falcon key creation and signing
+#[tokio::test]
+async fn test_falcon_key_operations() {
+    use softkms::key_service::KeyService;
+    use softkms::storage::file::FileStorage;
+    use softkms::storage::StorageBackend;
+    use softkms::security::{SecurityConfig, SecurityManager, create_cache};
+    use softkms::Config;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let storage = Arc::new(FileStorage::new(temp_dir.path().to_path_buf(), Config::default()));
+    storage.init().await.unwrap();
+
+    let security_config = SecurityConfig::new();
+    let cache = create_cache(300);
+    let security_manager = Arc::new(SecurityManager::new(cache, security_config, temp_dir.path().to_path_buf()));
+    security_manager.init_with_passphrase("test_passphrase").unwrap();
+    
+    let config = Config::default();
+    let service = KeyService::new(storage, security_manager, config);
+
+    let passphrase = "test_passphrase";
+
+    // Create Falcon-512 key
+    let metadata = service.create_key(
+        "falcon512".to_string(),
+        Some("Falcon512 Key".to_string()),
+        std::collections::HashMap::new(),
+        passphrase,
+        None,
+    ).await.unwrap();
+
+    assert_eq!(metadata.algorithm, "falcon512");
+    assert_eq!(metadata.public_key.len(), 897);
+
+    // Sign with Falcon-512 key
+    let data = b"Hello, Falcon!";
+    let signature = service.sign(metadata.id, data, passphrase, None).await.unwrap();
+    assert_eq!(signature.algorithm, "falcon512");
+    assert!(signature.bytes.len() <= 752);
+
+    // Create Falcon-1024 key
+    let metadata2 = service.create_key(
+        "falcon1024".to_string(),
+        Some("Falcon1024 Key".to_string()),
+        std::collections::HashMap::new(),
+        passphrase,
+        None,
+    ).await.unwrap();
+
+    assert_eq!(metadata2.algorithm, "falcon1024");
+    assert_eq!(metadata2.public_key.len(), 1793);
+
+    // Sign with Falcon-1024 key
+    let signature2 = service.sign(metadata2.id, data, passphrase, None).await.unwrap();
+    assert_eq!(signature2.algorithm, "falcon1024");
+    assert!(signature2.bytes.len() <= 1462);
+}

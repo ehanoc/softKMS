@@ -376,6 +376,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.command {
         Commands::Generate { algorithm, label, from_seed, origin, user_handle, counter } => {
+            if let Some(_) = from_seed {
+                if algorithm != "p256" {
+                    eprintln!("--from-seed only supported with --algorithm p256");
+                    std::process::exit(1);
+                }
+            }
+            
+            // Reject Falcon algorithms for seed derivation (not supported)
+            if algorithm.starts_with("falcon") && from_seed.is_some() {
+                eprintln!("Falcon keys cannot be derived from seed");
+                std::process::exit(1);
+            }
+            
             if let Some(seed_id) = from_seed {
                 if algorithm != "p256" {
                     eprintln!("--from-seed only supported with --algorithm p256");
@@ -789,6 +802,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             std::process::exit(1);
                         }
                     }
+                }
+                alg if alg.starts_with("falcon") => {
+                    eprintln!("Falcon keys cannot be derived from seed");
+                    std::process::exit(1);
                 }
                 _ => {
                     eprintln!("Unsupported algorithm for derivation: {}", algorithm);

@@ -359,6 +359,23 @@ fn run_tests() -> Result<(), String> {
     Ok(())
 }
 
+#[tokio::test]
+async fn test_falcon512_key_creation_via_rest() {
+    let (service, _temp) = setup_test_env().await;
+    let passphrase = "test_passphrase";
+
+    let metadata = service.create_key(
+        "falcon512".to_string(),
+        Some("Falcon512 Key".to_string()),
+        std::collections::HashMap::new(),
+        passphrase,
+        None,
+    ).await.unwrap();
+
+    assert_eq!(metadata.algorithm, "falcon512");
+    assert_eq!(metadata.public_key.len(), 897);
+}
+
 fn main() {
     if let Err(e) = run_tests() {
         eprintln!("REST tests failed: {}", e);

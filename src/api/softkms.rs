@@ -526,6 +526,8 @@ pub enum Algorithm {
     EcdsaSecp256k1 = 2,
     EcdsaSecp256r1 = 3,
     Rsa = 4,
+    Falcon512 = 5,
+    Falcon1024 = 6,
 }
 impl Algorithm {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -539,6 +541,8 @@ impl Algorithm {
             Algorithm::EcdsaSecp256k1 => "ALGORITHM_ECDSA_SECP256K1",
             Algorithm::EcdsaSecp256r1 => "ALGORITHM_ECDSA_SECP256R1",
             Algorithm::Rsa => "ALGORITHM_RSA",
+            Algorithm::Falcon512 => "ALGORITHM_FALCON_512",
+            Algorithm::Falcon1024 => "ALGORITHM_FALCON_1024",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -549,6 +553,8 @@ impl Algorithm {
             "ALGORITHM_ECDSA_SECP256K1" => Some(Self::EcdsaSecp256k1),
             "ALGORITHM_ECDSA_SECP256R1" => Some(Self::EcdsaSecp256r1),
             "ALGORITHM_RSA" => Some(Self::Rsa),
+            "ALGORITHM_FALCON_512" => Some(Self::Falcon512),
+            "ALGORITHM_FALCON_1024" => Some(Self::Falcon1024),
             _ => None,
         }
     }

@@ -313,6 +313,16 @@ async fn verify(
                 use crate::crypto::p256::DeterministicP256;
                 DeterministicP256::verify(&metadata.public_key, &data, &signature).is_ok()
             }
+            "falcon512" => {
+                use crate::crypto::falcon::{FalconEngine, FalconVariant};
+                let engine = FalconEngine::new(FalconVariant::Falcon512);
+                engine.verify(&metadata.public_key, &data, &signature).unwrap_or(false)
+            }
+            "falcon1024" => {
+                use crate::crypto::falcon::{FalconEngine, FalconVariant};
+                let engine = FalconEngine::new(FalconVariant::Falcon1024);
+                engine.verify(&metadata.public_key, &data, &signature).unwrap_or(false)
+            }
             _ => false,
         }
     } else {

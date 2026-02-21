@@ -157,6 +157,30 @@ else
     fail_test "Create P-256 key failed"
 fi
 
+# Test 5a: Create Falcon-512 key
+echo ""
+echo "[TEST 5a/15] Create Falcon-512 key"
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"$ADMIN_PASS\" generate --algorithm falcon512 --label \"falcon512-key\""
+OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" generate --algorithm falcon512 --label "falcon512-key" 2>&1)
+FALCON512_KEY_ID=$(echo "$OUTPUT" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | head -1)
+if [ -n "$FALCON512_KEY_ID" ]; then
+    pass_test "Create Falcon-512 key (ID: ${FALCON512_KEY_ID:0:8}...)"
+else
+    fail_test "Create Falcon-512 key failed"
+fi
+
+# Test 5b: Create Falcon-1024 key
+echo ""
+echo "[TEST 5b/15] Create Falcon-1024 key"
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"$ADMIN_PASS\" generate --algorithm falcon1024 --label \"falcon1024-key\""
+OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" generate --algorithm falcon1024 --label "falcon1024-key" 2>&1)
+FALCON1024_KEY_ID=$(echo "$OUTPUT" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | head -1)
+if [ -n "$FALCON1024_KEY_ID" ]; then
+    pass_test "Create Falcon-1024 key (ID: ${FALCON1024_KEY_ID:0:8}...)"
+else
+    fail_test "Create Falcon-1024 key failed"
+fi
+
 # Test 6: List keys
 echo ""
 echo "[TEST 6/15] List keys"
@@ -177,6 +201,52 @@ if echo "$OUTPUT" | grep -qi "signature"; then
     pass_test "Sign with Ed25519 key"
 else
     fail_test "Sign with Ed25519 key failed"
+fi
+
+# Test 7a: Sign with Falcon-512 key
+echo ""
+echo "[TEST 7a/15] Sign with Falcon-512 key"
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"$ADMIN_PASS\" sign --key \"$FALCON512_KEY_ID\" --data \"Hello Falcon\""
+OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" sign --key "$FALCON512_KEY_ID" --data "Hello Falcon" 2>&1)
+if echo "$OUTPUT" | grep -qi "signature"; then
+    pass_test "Sign with Falcon-512 key"
+else
+    fail_test "Sign with Falcon-512 key failed"
+fi
+
+# Test 7b: Sign with Falcon-1024 key
+echo ""
+echo "[TEST 7b/15] Sign with Falcon-1024 key"
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"$ADMIN_PASS\" sign --key \"$FALCON1024_KEY_ID\" --data \"Hello Falcon\""
+OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" sign --key "$FALCON1024_KEY_ID" --data "Hello Falcon" 2>&1)
+if echo "$OUTPUT" | grep -qi "signature"; then
+    pass_test "Sign with Falcon-1024 key"
+else
+    fail_test "Sign with Falcon-1024 key failed"
+fi
+
+# Test 7c: Verify Falcon-512 signature
+echo ""
+echo "[TEST 7c/15] Verify Falcon-512 signature"
+FALCON512_SIG=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" sign --key "$FALCON512_KEY_ID" --data "Verify Test" 2>&1 | grep "Signature (base64):" | awk '{print $3}')
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" verify --key \"$FALCON512_KEY_ID\" --data \"Verify Test\" --signature \"$FALCON512_SIG\""
+OUTPUT=$($CLI --server "http://$GRPC_ADDR" verify --key "$FALCON512_KEY_ID" --data "Verify Test" --signature "$FALCON512_SIG" 2>&1)
+if echo "$OUTPUT" | grep -qi "VALID"; then
+    pass_test "Verify Falcon-512 signature"
+else
+    fail_test "Verify Falcon-512 signature failed"
+fi
+
+# Test 7d: Verify Falcon-1024 signature
+echo ""
+echo "[TEST 7d/15] Verify Falcon-1024 signature"
+FALCON1024_SIG=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" sign --key "$FALCON1024_KEY_ID" --data "Verify Test" 2>&1 | grep "Signature (base64):" | awk '{print $3}')
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" verify --key \"$FALCON1024_KEY_ID\" --data \"Verify Test\" --signature \"$FALCON1024_SIG\""
+OUTPUT=$($CLI --server "http://$GRPC_ADDR" verify --key "$FALCON1024_KEY_ID" --data "Verify Test" --signature "$FALCON1024_SIG" 2>&1)
+if echo "$OUTPUT" | grep -qi "VALID"; then
+    pass_test "Verify Falcon-1024 signature"
+else
+    fail_test "Verify Falcon-1024 signature failed"
 fi
 
 # Test 8: Get key info

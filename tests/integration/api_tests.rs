@@ -337,3 +337,43 @@ async fn test_storage_persistence() {
         assert_eq!("ed25519", "ed25519");
     }
 }
+
+/// Test create Falcon-512 key via API
+#[tokio::test]
+async fn test_create_falcon512_key() {
+    let (service, _temp) = setup_test_env().await;
+    let passphrase = "test_passphrase";
+
+    let metadata = service.create_key(
+        "falcon512".to_string(),
+        Some("Falcon512 Key".to_string()),
+        std::collections::HashMap::new(),
+        passphrase,
+        None,
+    ).await.unwrap();
+
+    assert_eq!(metadata.algorithm, "falcon512");
+    assert_eq!(metadata.label, Some("Falcon512 Key".to_string()));
+    // Falcon-512 public key is 897 bytes
+    assert_eq!(metadata.public_key.len(), 897);
+}
+
+/// Test create Falcon-1024 key via API
+#[tokio::test]
+async fn test_create_falcon1024_key() {
+    let (service, _temp) = setup_test_env().await;
+    let passphrase = "test_passphrase";
+
+    let metadata = service.create_key(
+        "falcon1024".to_string(),
+        Some("Falcon1024 Key".to_string()),
+        std::collections::HashMap::new(),
+        passphrase,
+        None,
+    ).await.unwrap();
+
+    assert_eq!(metadata.algorithm, "falcon1024");
+    assert_eq!(metadata.label, Some("Falcon1024 Key".to_string()));
+    // Falcon-1024 public key is 1793 bytes
+    assert_eq!(metadata.public_key.len(), 1793);
+}

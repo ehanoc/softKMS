@@ -12,6 +12,7 @@
 //! plaintext in memory for the minimum time necessary.
 
 use crate::crypto::ed25519::{Ed25519Engine, ED25519_SECRET_KEY_SIZE};
+use crate::crypto::falcon::{FalconEngine, FalconVariant};
 use crate::crypto::hd_ed25519::{HdEd25519Engine, HdDerivationScheme, encode_bech32};
 use crate::crypto::p256::DeterministicP256;
 use crate::storage::StorageBackend;
@@ -107,6 +108,16 @@ impl KeyService {
                 let material = secret_bytes.to_vec();
                 let public_key = signing_key.verifying_key().to_encoded_point(false).as_bytes().to_vec();
                 (material, public_key)
+            }
+            "falcon512" => {
+                let engine = FalconEngine::new(FalconVariant::Falcon512);
+                let (secret, public_key) = engine.generate_key()?;
+                (secret.expose_secret().to_vec(), public_key)
+            }
+            "falcon1024" => {
+                let engine = FalconEngine::new(FalconVariant::Falcon1024);
+                let (secret, public_key) = engine.generate_key()?;
+                (secret.expose_secret().to_vec(), public_key)
             }
             _ => {
                 return Err(Error::Crypto(format!("Unsupported algorithm: {}", algorithm)));
@@ -256,6 +267,22 @@ impl KeyService {
                 Signature {
                     bytes: sig,
                     algorithm: "p256".to_string(),
+                }
+            }
+            "falcon512" => {
+                let engine = FalconEngine::new(FalconVariant::Falcon512);
+                let sig = engine.sign(&key_material, data)?;
+                Signature {
+                    bytes: sig,
+                    algorithm: "falcon512".to_string(),
+                }
+            }
+            "falcon1024" => {
+                let engine = FalconEngine::new(FalconVariant::Falcon1024);
+                let sig = engine.sign(&key_material, data)?;
+                Signature {
+                    bytes: sig,
+                    algorithm: "falcon1024".to_string(),
                 }
             }
             _ => {
@@ -1055,5 +1082,89 @@ mod tests {
         // Verify we have 2 keys (1 seed + 1 derived)
         let keys = service.list_keys(None).await.unwrap();
         assert_eq!(keys.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_falcon512_key_creation() {
+        let passphrase = "test_passphrase_123";
+        let test = create_test_service_with_init(passphrase).await;
+        let service = &test.service;
+
+        let metadata = service.create_key(
+            "falcon512".to_string(),
+            Some("Falcon512 Key".to_string()),
+            std::collections::HashMap::new(),
+            passphrase,
+            None,
+        ).await.unwrap();
+
+        assert_eq!(metadata.algorithm, "falcon512");
+        assert_eq!(metadata.label, Some("Falcon512 Key".to_string()));
+        // Falcon-512 public key is 897 bytes
+        assert_eq!(metadata.public_key.len(), 897);
+    }
+
+    #[tokio::test]
+    async fn test_falcon1024_key_creation() {
+        let passphrase = "test_passphrase_123";
+        let test = create_test_service_with_init(passphrase).await;
+        let service = &test.service;
+
+        let metadata = service.create_key(
+            "falcon1024".to_string(),
+            Some("Falcon1024 Key".to_string()),
+            std::collections::HashMap::new(),
+            passphrase,
+            None,
+        ).await.unwrap();
+
+        assert_eq!(metadata.algorithm, "falcon1024");
+        assert_eq!(metadata.label, Some("Falcon1024 Key".to_string()));
+        // Falcon-1024 public key is 1793 bytes
+        assert_eq!(metadata.public_key.len(), 1793);
+    }
+
+    #[tokio::test]
+    async fn test_falcon512_sign() {
+        let passphrase = "test_passphrase_123";
+        let test = create_test_service_with_init(passphrase).await;
+        let service = &test.service;
+
+        let metadata = service.create_key(
+            "falcon512".to_string(),
+            Some("Falcon512 Signing Key".to_string()),
+            std::collections::HashMap::new(),
+            passphrase,
+            None,
+        ).await.unwrap();
+
+        let data = b"Hello, Falcon!";
+        let signature = service.sign(metadata.id, data, passphrase, None).await.unwrap();
+
+        assert_eq!(signature.algorithm, "falcon512");
+        // Falcon-512 signature is variable but max 752 bytes
+        assert!(signature.bytes.len() <= 752);
+    }
+
+    #[tokio::test]
+    async fn test_falcon1024_sign() {
+        let passphrase = "test_passphrase_123";
+        let test = create_test_service_with_init(passphrase).await;
+        let service = &test.service;
+
+        let metadata = service.create_key(
+            "falcon1024".to_string(),
+            Some("Falcon1024 Signing Key".to_string()),
+            std::collections::HashMap::new(),
+            passphrase,
+            None,
+        ).await.unwrap();
+
+        let data = b"Hello, Falcon!";
+        let signature = service.sign(metadata.id, data, passphrase, None).await.unwrap();
+
+        assert_eq!(signature.algorithm, "falcon1024");
+        // Falcon-1024 signature is variable but max 1462 bytes
+        assert!(signature.bytes.len() <= 1462);
     }
 }

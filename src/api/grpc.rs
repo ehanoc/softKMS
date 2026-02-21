@@ -360,6 +360,18 @@ impl KeyStore for GrpcKeyStore {
                 Ed25519Engine::verify(&public_key, &req.data, &req.signature)
                     .map_err(|e| Status::internal(format!("Verification error: {}", e)))?
             }
+            "falcon512" => {
+                use crate::crypto::falcon::{FalconEngine, FalconVariant};
+                let engine = FalconEngine::new(FalconVariant::Falcon512);
+                engine.verify(&public_key, &req.data, &req.signature)
+                    .map_err(|e| Status::internal(format!("Verification error: {}", e)))?
+            }
+            "falcon1024" => {
+                use crate::crypto::falcon::{FalconEngine, FalconVariant};
+                let engine = FalconEngine::new(FalconVariant::Falcon1024);
+                engine.verify(&public_key, &req.data, &req.signature)
+                    .map_err(|e| Status::internal(format!("Verification error: {}", e)))?
+            }
             _ => {
                 return Err(Status::unimplemented(
                     format!("Verify not implemented for algorithm: {}", metadata.algorithm)
