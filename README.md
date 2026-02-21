@@ -14,7 +14,7 @@ A secure, modern alternative to SoftHSM with HD wallet support, written in Rust.
 | **Status** | Abandoned | Actively maintained |
 | **Language** | C | Rust (memory-safe) |
 | **HD Wallets** | ❌ | ✅ BIP32/44 |
-| **Crypto** | Fixed (RSA/ECC) | Pluggable (Ed25519, P-256) |
+| **Crypto** | Fixed (RSA/ECC) | Pluggable (Ed25519, P-256, Falcon-512, Falcon-1024) |
 | **APIs** | PKCS#11 only | PKCS#11 + gRPC + CLI |
 | **Deployment** | Manual | Docker + systemd |
 | **Identity** | Single user | Multi-identity with isolation |
@@ -85,7 +85,8 @@ See [Identity Management](docs/IDENTITIES.md) for complete documentation.
 - **👥 Identity Isolation** - Multi-tenant with ECC-based identities (Ed25519 default, P-256 optional)
 - **🎟️ Bearer Tokens** - Simple token-based auth with ownership isolation
 - **🌳 HD Wallet Support** - BIP32/BIP44 hierarchical deterministic keys (Ed25519)
-- **🔌 Multiple APIs** - PKCS#11, gRPC, and CLI interfaces
+- **🛡️ Post-Quantum Crypto** - Falcon-512 and Falcon-1024 signatures (NIST PQC standard)
+- **🔌 Multiple APIs** - PKCS#11, gRPC, REST, and CLI interfaces
 - **🚀 Modern Architecture** - Async Rust with pluggable storage backends
 - **🐳 Container-Ready** - Docker and Kubernetes support
 - **📊 Memory Safe** - Zeroization of sensitive data, secure memory handling
@@ -200,11 +201,12 @@ cargo test --test pkcs11_e2e_tests
 
 ## Project Status
 
-**Version:** v0.2 - Functional with Tests
+**Version:** v0.1 - Functional with Tests
 
 **Implemented:**
-- ✅ Daemon with gRPC API
+- ✅ Daemon with gRPC and REST APIs
 - ✅ Ed25519 and P-256 crypto engines
+- ✅ Falcon-512 and Falcon-1024 post-quantum signatures
 - ✅ HD wallet derivation (BIP32/44)
 - ✅ PKCS#11 compatibility layer
 - ✅ Encrypted file storage

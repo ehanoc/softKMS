@@ -210,7 +210,7 @@ message CreateKeyRequest {
     }
     
     // Key configuration
-    string algorithm = 3;          // "ed25519" or "p256"
+    string algorithm = 3;          // "ed25519", "p256", "falcon512", or "falcon1024"
     optional string label = 4;     // Human-readable label
     map<string, string> attributes = 5; // Custom metadata
 }
@@ -624,7 +624,11 @@ package softkms;
 enum Algorithm {
     UNSPECIFIED = 0;
     ED25519 = 1;
-    P256 = 2;
+    ECDSA_SECP256K1 = 2;
+    ECDSA_SECP256R1 = 3;
+    RSA = 4;
+    FALCON_512 = 5;
+    FALCON_1024 = 6;
 }
 
 enum KeyType {

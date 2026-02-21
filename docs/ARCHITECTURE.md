@@ -37,6 +37,8 @@ flowchart TB
     subgraph "Crypto Layer"
         ED[Ed25519 Engine]
         P256[P-256 Engine]
+        F512[Falcon-512 Engine]
+        F1024[Falcon-1024 Engine]
     end
     
     subgraph "Storage Layer"
@@ -52,6 +54,8 @@ flowchart TB
     POL --> KS
     KS --> ED
     KS --> P256
+    KS --> F512
+    KS --> F1024
     KS --> HD
     KS --> SEC
     SEC --> FS

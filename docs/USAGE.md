@@ -87,6 +87,12 @@ All key operations currently require **admin passphrase** authentication.
 
 # Create P-256 key (for FIDO2/WebAuthn compatibility)
 ./target/release/softkms -p "passphrase" generate --algorithm p256 --label "p256-key"
+
+# Create Falcon-512 key (post-quantum)
+./target/release/softkms -p "passphrase" generate --algorithm falcon512 --label "falcon512-key"
+
+# Create Falcon-1024 key (post-quantum, higher security)
+./target/release/softkms -p "passphrase" generate --algorithm falcon1024 --label "falcon1024-key"
 ```
 
 ### List Keys
@@ -196,12 +202,10 @@ Identities:
 ```
 -s, --server <URL>      gRPC server URL [default: http://127.0.0.1:50051]
 -p, --passphrase <PASS> Admin passphrase (required for most operations)
--t, --token <TOKEN>     Identity token (for token-based auth - NOT YET IMPLEMENTED)
+-t, --token <TOKEN>     Identity token (for token-based authentication)
 -h, --help              Print help
 -V, --version           Print version
 ```
-
-**Note:** Currently only admin passphrase authentication is fully implemented. Token-based auth infrastructure is in place but not yet wired to key operations.
 
 ### Commands
 
@@ -225,7 +229,7 @@ softkms -p "passphrase" generate [OPTIONS]
 ```
 
 **Options:**
-- `-a, --algorithm <ALG>` - Algorithm: ed25519 or p256 [default: ed25519]
+- `-a, --algorithm <ALG>` - Algorithm: ed25519, p256, falcon512, or falcon1024 [default: ed25519]
 - `-l, --label <LABEL>` - Key label for identification
 
 #### `list` - List Keys
@@ -548,24 +552,25 @@ openssl pkeyutl -sign -in data.txt -out data.sig -pkcs11 -inkey "pkcs11:..."
 
 ## What's Working vs Planned
 
-### ✅ Working Today (v0.2.0)
+### ✅ Working Today (v0.1.0)
 
 - Admin passphrase authentication
-- Key generation (Ed25519, P-256)
-- Key signing
+- Token-based authentication
+- Key generation (Ed25519, P-256, Falcon-512, Falcon-1024)
+- Key signing and verification (all algorithms)
 - Key listing/deletion
 - Identity creation/revocation
 - BIP39 seed import
 - HD key derivation
 - PKCS#11 basic operations
+- REST API
+- gRPC API
 
-### ⏳ Phase 2 (Token-Based Auth)
+### ⏳ Future Features
 
-- Token-based key operations
-- Identity-owned keys
-- Identity-scoped key listing
-- PKCS#11 PIN-to-identity
 - Custom policies
+- TPM 2.0 binding
+- Hardware token support
 
 ---
 

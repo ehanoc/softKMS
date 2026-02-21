@@ -532,6 +532,7 @@ echo $SOFTKMS_TOKEN > config.txt  # Oops!
 - **Ed25519** - RFC 8032
 - **P-256** - NIST SP 800-186
 - **SHA-256** - FIPS 180-4
+- **Falcon-512/1024** - NIST PQC Standard (FIPS 204)
 
 ### Audit Requirements
 
