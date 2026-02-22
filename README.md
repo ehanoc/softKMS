@@ -174,7 +174,7 @@ softkms identity create --type ai-agent
 softkms --token <token> import-seed --mnemonic "word1 word2 ..." --label wallet
 
 # Derive child keys
-softkms --token <token> derive --seed wallet --path "m/44'/283'/0'/0/0" --label algo-key
+softkms --token <token> derive --algorithm ed25519 --seed wallet --path "m/44'/283'/0'/0/0" --label derived-key
 
 # Sign and verify
 softkms --token <token> sign --label mykey --data "message"
