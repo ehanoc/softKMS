@@ -493,6 +493,7 @@ pub struct ExportGpgResponse {
     pub key_id: String,
     pub user_id: String,
     pub algorithm: String,
+    pub armored_key: String,
 }
 
 /// Export SSH key endpoint
@@ -563,7 +564,7 @@ async fn export_gpg(
         return Err((StatusCode::FORBIDDEN, "Access denied to this key".to_string()));
     }
 
-    let user_id = state
+    let (user_id, armored_key) = state
         .key_service
         .export_gpg_key(
             key_uuid,
@@ -577,6 +578,7 @@ async fn export_gpg(
         key_id,
         user_id,
         algorithm: metadata.algorithm,
+        armored_key,
     }))
 }
 

@@ -345,6 +345,7 @@ message ExportGpgKeyResponse {
   string key_id = 1;
   string user_id = 2;
   string algorithm = 3;
+  string armored_key = 4;
 }
 
 // Identity client types

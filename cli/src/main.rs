@@ -944,7 +944,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
 
             let request = tonic::Request::new(ExportGpgKeyRequest {
-                key_id,
+                key_id: key_id.clone(),
                 admin_passphrase: passphrase,
                 user_id: uid,
                 auth_token,
@@ -953,9 +953,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             match client.export_gpg_key(request).await {
                 Ok(response) => {
                     let resp = response.into_inner();
+                    
+                    // Write to file
+                    let filename = format!("{}.asc", key_id);
+                    std::fs::write(&filename, &resp.armored_key)
+                        .map_err(|e| format!("Failed to write key file: {}", e))?;
+                    
                     println!("GPG key exported successfully:");
+                    println!("  File: {}", filename);
                     println!("  User ID: {}", resp.user_id);
                     println!("  Algorithm: {}", resp.algorithm);
+                    
+                    // Automatically import to GPG
+                    println!("  Importing to GPG...");
+                    let output = std::process::Command::new("gpg")
+                        .args(["--import", &filename])
+                        .output()
+                        .map_err(|e| format!("Failed to run gpg: {}", e))?;
+                    
+                    if !output.status.success() {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        // Delete the file on import failure
+                        let _ = std::fs::remove_file(&filename);
+                        eprintln!("  GPG import failed: {}", stderr);
+                        std::process::exit(1);
+                    }
+                    
+                    println!("  Imported to GPG successfully!");
+                    // Delete the file after successful import
+                    let _ = std::fs::remove_file(&filename);
                 }
                 Err(e) => {
                     eprintln!("Failed to export GPG key: {}", e);

@@ -1001,7 +1001,7 @@ impl KeyService {
         key_id: KeyId,
         admin_passphrase: &str,
         user_id: Option<&str>,
-    ) -> Result<String> {
+    ) -> Result<(String, String)> {
         info!("Exporting GPG key {}", key_id);
 
         // Retrieve key
@@ -1036,7 +1036,7 @@ impl KeyService {
 
         // Generate GPG key in ASCII armored format
         let armored_key = match metadata.algorithm.as_str() {
-            "ed25519" => self.generate_gpg_ed25519(&key_material, &metadata.public_key, uid)?,
+            "ed25519" => self.generate_gpg_ed25519(&key_material, uid)?,
             "p256" => self.generate_gpg_p256(&key_material, &metadata.public_key, uid)?,
             _ => return Err(Error::InvalidParams("Unsupported algorithm for GPG export".to_string())),
         };
@@ -1072,42 +1072,36 @@ impl KeyService {
         drop(master_key);
 
         info!("GPG key imported for user: {}", gpg_user_id);
-        Ok(gpg_user_id)
+        Ok((gpg_user_id, armored_key))
     }
 
-    fn generate_gpg_ed25519(&self, private_key: &[u8], public_key: &[u8], user_id: &str) -> Result<String> {
-        use ed25519_dalek::{SigningKey, VerifyingKey, SECRET_KEY_LENGTH};
+    fn generate_gpg_ed25519(&self, key_data: &[u8], user_id: &str) -> Result<String> {
+        use sequoia_openpgp::cert::prelude::*;
+        use sequoia_openpgp::packet::key::{Key4, SecretParts, UnspecifiedRole};
+        use sequoia_openpgp::types::KeyFlags;
+        use sequoia_openpgp::serialize::SerializeInto;
 
-        if private_key.len() != 32 {
-            return Err(Error::Crypto(format!("Invalid Ed25519 private key length: {}", private_key.len())));
-        }
+        let scalar: [u8; 32] = match key_data.len() {
+            32 => key_data.try_into().unwrap(),
+            64 | 96 => key_data[0..32].try_into().unwrap(),
+            _ => return Err(Error::Crypto(format!("Invalid key length: {}", key_data.len()))),
+        };
 
-        let mut secret_bytes = [0u8; SECRET_KEY_LENGTH];
-        secret_bytes.copy_from_slice(private_key);
-        let signing_key = SigningKey::from_bytes(&secret_bytes);
-        let verifying_key = signing_key.verifying_key();
+        let _key: Key4<SecretParts, UnspecifiedRole> = Key4::import_secret_ed25519(&scalar, None)
+            .map_err(|e| Error::Crypto(format!("Failed to import key: {}", e)))?;
 
-        // Create a simple GPG-style ASCII armored key
-        // This is a simplified version - for production, consider using a proper GPG library
-        let mut gpg_key = String::new();
-        gpg_key.push_str("-----BEGIN PGP PRIVATE KEY BLOCK-----\n\n");
-        
-        // Add user ID
-        gpg_key.push_str(&format!("{}\n\n", user_id));
-        
-        // Add public key (just base64 encoded for now as a placeholder)
-        let pubkey_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, public_key);
-        gpg_key.push_str("-----BEGIN PGP PUBLIC KEY BLOCK-----\n\n");
-        gpg_key.push_str(&format!("Version: softKMS\n\n"));
-        gpg_key.push_str(&pubkey_b64);
-        gpg_key.push_str("\n\n-----END PGP PUBLIC KEY BLOCK-----\n");
-        
-        // Add private key
-        let privkey_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, private_key);
-        gpg_key.push_str(&privkey_b64);
-        gpg_key.push_str("\n\n-----END PGP PRIVATE KEY BLOCK-----\n");
+        let (cert, _) = CertBuilder::new()
+            .add_userid(user_id)
+            .add_signing_subkey()
+            .add_transport_encryption_subkey()
+            .set_primary_key_flags(KeyFlags::empty().set_certification().set_signing())
+            .generate()
+            .map_err(|e| Error::Crypto(format!("Failed to generate cert: {}", e)))?;
 
-        Ok(gpg_key)
+        let armored = cert.as_tsk().armored().to_vec()
+            .map_err(|e| Error::Crypto(format!("Failed to serialize: {}", e)))?;
+        String::from_utf8(armored)
+            .map_err(|e| Error::Crypto(format!("Invalid UTF-8: {}", e)))
     }
 
     fn generate_gpg_p256(&self, private_key: &[u8], public_key: &[u8], user_id: &str) -> Result<String> {
@@ -1167,6 +1161,68 @@ mod tests {
             _temp_dir: temp_dir,
             service,
         }
+    }
+
+    #[tokio::test]
+    async fn test_gpg_export() {
+        let user_id = "Test User";
+
+        let passphrase = "test_passphrase_123";
+        let test = create_test_service_with_init(passphrase).await;
+        let service = &test.service;
+
+        // Test 32-byte key (raw scalar)
+        let key_data_32: [u8; 32] = [0x01; 32];
+        let result_32 = service.generate_gpg_ed25519(&key_data_32, user_id).unwrap();
+        assert!(result_32.contains("-----BEGIN PGP PRIVATE KEY BLOCK-----"));
+        assert!(result_32.contains(user_id));
+        assert!(result_32.contains("-----END PGP PRIVATE KEY BLOCK-----"));
+        
+        // Test 64-byte key (scalar + public)
+        let key_data_64: [u8; 64] = [0x02; 64];
+        let result_64 = service.generate_gpg_ed25519(&key_data_64, user_id).unwrap();
+        assert!(result_64.contains("-----BEGIN PGP PRIVATE KEY BLOCK-----"));
+        assert!(result_64.contains(user_id));
+        
+        // Test 96-byte key (HD derived - scalar + public + chain)
+        let key_data_96: [u8; 96] = [0x03; 96];
+        let result_96 = service.generate_gpg_ed25519(&key_data_96, user_id).unwrap();
+        assert!(result_96.contains("-----BEGIN PGP PRIVATE KEY BLOCK-----"));
+        assert!(result_96.contains(user_id));
+        
+        // Test invalid key length
+        let key_data_invalid: [u8; 100] = [0xFF; 100];
+        let result = service.generate_gpg_ed25519(&key_data_invalid, user_id);
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_export_gpg_key_integration() {
+        let passphrase = "test_passphrase_123";
+        let test = create_test_service_with_init(passphrase).await;
+        let service = &test.service;
+
+        // Create an Ed25519 key
+        let metadata = service.create_key(
+            "ed25519".to_string(),
+            Some("GPG Test Key".to_string()),
+            std::collections::HashMap::new(),
+            passphrase,
+            None,
+        ).await.unwrap();
+
+        assert_eq!(metadata.algorithm, "ed25519");
+
+        // Export the key to GPG format
+        let (user_id, armored_key) = service.export_gpg_key(
+            metadata.id.clone(),
+            passphrase,
+            Some("Integration Test <test@example.com>"),
+        ).await.unwrap();
+
+        assert!(armored_key.contains("-----BEGIN PGP PRIVATE KEY BLOCK-----"));
+        assert!(armored_key.contains("Integration Test"));
+        assert!(armored_key.contains("-----END PGP PRIVATE KEY BLOCK-----"));
     }
 
     #[tokio::test]

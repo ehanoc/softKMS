@@ -457,6 +457,8 @@ pub struct ExportGpgKeyResponse {
     pub user_id: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
     pub algorithm: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub armored_key: ::prost::alloc::string::String,
 }
 /// Create identity request
 #[allow(clippy::derive_partial_eq_without_eq)]

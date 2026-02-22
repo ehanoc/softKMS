@@ -794,7 +794,7 @@ impl KeyStore for GrpcKeyStore {
 
         let user_id = req.user_id.as_ref().map(|s| s.as_str());
 
-        let user_id_result = self.key_service
+        let (user_id_result, armored_key) = self.key_service
             .export_gpg_key(key_id, &req.admin_passphrase, user_id)
             .await
             .map_err(map_error)?;
@@ -810,6 +810,7 @@ impl KeyStore for GrpcKeyStore {
             key_id: req.key_id.clone(),
             user_id: user_id_result,
             algorithm: metadata.algorithm,
+            armored_key,
         };
 
         info!("GPG key {} exported via gRPC", req.key_id);
