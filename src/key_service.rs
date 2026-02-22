@@ -389,17 +389,27 @@ impl KeyService {
         );
 
         // Check if we already have a derived key with these parameters
-        // We store the derivation params in attributes for lookup
         let keys = self.list_keys(None).await?;
         let derivation_id = format!("{}:{}:{}:{}", seed_id, origin, user_handle, counter);
         
+        // Determine what label we'll use for this key
+        let final_label = label.clone().unwrap_or_else(|| derivation_id.clone());
+        
+        // Check if key with these derivation params AND this label already exists
         for key in &keys {
             if key.algorithm == "p256" {
-                if let Some(existing_label) = &key.label {
-                    if existing_label == &derivation_id {
-                        info!("P-256 key already exists for these parameters, returning existing");
-                        return Ok(key.clone());
-                    }
+                // Check if derivation params match
+                let params_match = key.attributes.get("seed_id") == Some(&seed_id.to_string())
+                    && key.attributes.get("origin") == Some(&origin)
+                    && key.attributes.get("user_handle") == Some(&user_handle)
+                    && key.attributes.get("counter") == Some(&counter.to_string());
+                
+                // Check if label matches (either explicitly provided or default)
+                let label_match = key.label.as_ref() == Some(&final_label);
+                
+                if params_match && label_match {
+                    info!("P-256 key already exists for these parameters, returning existing");
+                    return Ok(key.clone());
                 }
             }
         }
@@ -455,12 +465,12 @@ impl KeyService {
         attributes.insert("origin".to_string(), origin.clone());
         attributes.insert("user_handle".to_string(), user_handle.clone());
         attributes.insert("counter".to_string(), counter.to_string());
-        // Store derivation ID in label for easy lookup
-        let derivation_label = derivation_id.clone();
+        // Use provided label if given, otherwise use derivation_id format (seed_id:origin:handle:counter)
+        let final_label = label.unwrap_or_else(|| derivation_id.clone());
 
         let metadata = KeyMetadata {
             id: key_id,
-            label: Some(derivation_label),
+            label: Some(final_label),
             algorithm: "p256".to_string(),
             key_type: KeyType::Derived,
             created_at,

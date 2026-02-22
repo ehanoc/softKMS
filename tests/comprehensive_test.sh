@@ -300,8 +300,8 @@ fi
 # Test 12: Derive P-256 key from seed
 echo ""
 echo "[TEST 12/15] Derive P-256 key from seed"
-echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"$ADMIN_PASS\" derive --algorithm p256 --seed \"$SEED_ID\" --path \"m/44'/283'/0'/0/0\" --origin \"example.com\" --user-handle \"user123\" --counter 0 --label \"derived-p256\""
-OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" derive --algorithm p256 --seed "$SEED_ID" --path "m/44'/283'/0'/0/0" --origin "example.com" --user-handle "user123" --counter 0 --label "derived-p256" 2>&1)
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"$ADMIN_PASS\" derive --algorithm p256 --seed \"$SEED_ID\" --origin \"example.com\" --user-handle \"user123\" --counter 0 --label \"derived-p256\""
+OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" derive --algorithm p256 --seed "$SEED_ID" --origin "example.com" --user-handle "user123" --counter 0 --label "derived-p256" 2>&1)
 DERIVED_P256_ID=$(echo "$OUTPUT" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | head -1)
 if [ -n "$DERIVED_P256_ID" ]; then
     pass_test "Derive P-256 key (ID: ${DERIVED_P256_ID:0:8}...)"

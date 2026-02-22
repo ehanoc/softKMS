@@ -290,36 +290,33 @@ softkms import-seed [OPTIONS]
 - `-m, --mnemonic <PHRASE>` - BIP39 mnemonic phrase (12-24 words)
 - `-l, --label <LABEL>` - Seed label
 
-#### `derive-p256` - Derive P-256 Key
+#### `derive` - Derive Key from Seed
 
-Derive a P-256 key from a seed for FIDO2/WebAuthn.
+Derive a key from a BIP32 seed. Supports Ed25519 (BIP44) and P-256 (FIDO2/WebAuthn).
 
 ```bash
-softkms derive-p256 [OPTIONS]
+softkms derive [OPTIONS]
 ```
 
 **Options:**
-- `--seed <ID>` - Seed ID to derive from
-- `-o, --origin <URL>` - Origin URL (e.g., example.com)
-- `-u, --user-handle <ID>` - User handle
-- `-c, --counter <N>` - Signature counter [default: 0]
+- `-a, --algorithm <ALGORITHM>` - Algorithm: ed25519 or p256
+- `-s, --seed <ID>` - Seed ID to derive from
+- `-p, --path <PATH>` - Derivation path for Ed25519 (e.g., "m/44'/283'/0'/0/0")
+- `--scheme <SCHEME>` - Derivation scheme for Ed25519: v2 or peikert
+- `--origin <ORIGIN>` - Origin/domain for P-256 (e.g., "github.com")
+- `--user-handle <HANDLE>` - User handle for P-256
+- `--counter <N>` - Counter for P-256 [default: 0]
 - `-l, --label <LABEL>` - Key label
 
-#### `derive-ed25519` - Derive Ed25519 Key
-
-Derive an Ed25519 key from a seed using BIP44 path.
+**Examples:**
 
 ```bash
-softkms derive-ed25519 [OPTIONS]
-```
+# Derive Ed25519 key (BIP44 style)
+softkms derive --algorithm ed25519 --seed <seed-id> --path "m/44'/283'/0'/0/0" --label "hd-key"
 
-**Options:**
-- `--seed <ID>` - Seed ID to derive from
-- `-p, --path <PATH>` - Derivation path [default: m/44'/283'/0'/0/0]
-- `-t, --coin-type <TYPE>` - Coin type [default: 283]
-- `--scheme <SCHEME>` - Derivation scheme: peikert or v2
-- `--store-key` - Store the derived key
-- `-l, --label <LABEL>` - Key label
+# Derive P-256 key (FIDO2/WebAuthn style)
+softkms derive --algorithm p256 --seed <seed-id> --origin "github.com" --user-handle "user123" --label "fido2-key"
+```
 
 #### `export-ssh` - Export Key to SSH Format
 
@@ -479,20 +476,21 @@ openssl pkeyutl -sign -in data.txt -out data.sig -pkcs11 -inkey "pkcs11:..."
 
 ```bash
 # Derive first key from seed
-./target/release/softkms derive-ed25519 \
+./target/release/softkms derive \
+  --algorithm ed25519 \
   --seed "550e8400-e29b-41d4-a716-446655440000" \
   --path "m/44'/283'/0'/0/0" \
-  --store-key \
   --label "account-0-key-0"
 
 # Output:
-# Ed25519 key 660e8400-e29b-41d4-a716-446655440001 derived and stored with path m/44'/283'/0'/0/0
+# Ed25519 key 660e8400-e29b-41d4-a716-446655440001 derived successfully
 ```
 
 ### Derive P-256 Key (for FIDO2/WebAuthn)
 
 ```bash
-./target/release/softkms derive-p256 \
+./target/release/softkms derive \
+  --algorithm p256 \
   --seed "550e8400-e29b-41d4-a716-446655440000" \
   --origin "example.com" \
   --user-handle "user123" \
@@ -539,11 +537,11 @@ openssl pkeyutl -sign -in data.txt -out data.sig -pkcs11 -inkey "pkcs11:..."
   --mnemonic "abandon abandon ... about" \
   --label "master-seed"
 
-# 7. Derive key from seed
-./target/release/softkms derive-ed25519 \
+# 7. Derive Ed25519 key from seed
+./target/release/softkms derive \
+  --algorithm ed25519 \
   --seed "seed-uuid-from-step-6" \
   --path "m/44'/283'/0'/0/0" \
-  --store-key \
   --label "derived-key-0"
 
 # 8. List all keys
@@ -605,10 +603,10 @@ Export HD-derived keys to SSH/GPG:
   --label "master-seed"
 
 # 2. Derive Ed25519 key from seed
-./target/release/softkms derive-ed25519 \
+./target/release/softkms derive \
+  --algorithm ed25519 \
   --seed "seed-uuid" \
   --path "m/44'/283'/0'/0/0" \
-  --store-key \
   --label "hd-key-0"
 
 # 3. Export HD key to GPG (supports 96-byte HD keys)

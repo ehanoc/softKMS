@@ -174,23 +174,23 @@ enum Commands {
         #[arg(short, long)]
         seed: String,
 
-        /// Derivation path (e.g., "m/44'/283'/0'/0/0")
-        #[arg(short, long)]
-        path: String,
+        /// Derivation path for Ed25519 (e.g., "m/44'/283'/0'/0/0")
+        #[arg(short = 'p', long)]
+        path: Option<String>,
 
-        /// Derivation scheme: v2 or peikert
-        #[arg(long, default_value = "v2")]
-        scheme: String,
+        /// Derivation scheme for Ed25519: v2 or peikert
+        #[arg(long)]
+        scheme: Option<String>,
 
-        /// Origin/domain for derivation (e.g., "github.com")
+        /// Origin/domain for P-256 (e.g., "github.com")
         #[arg(long)]
         origin: Option<String>,
 
-        /// User handle for derivation
+        /// User handle for P-256
         #[arg(long)]
         user_handle: Option<String>,
 
-        /// Counter for multiple keys per origin
+        /// Counter for multiple keys per origin (P-256)
         #[arg(long, default_value = "0")]
         counter: u32,
 
@@ -809,15 +809,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 cli.passphrase.clone(),
             )?;
 
-            let derivation_scheme = match scheme.as_str() {
-                "v2" => DerivationScheme::V2,
-                _ => DerivationScheme::Peikert,
-            };
-
             match algorithm.as_str() {
                 "p256" => {
-                    let origin = origin.unwrap_or_default();
-                    let user_handle = user_handle.unwrap_or_default();
+                    // P-256 requires origin and user_handle (FIDO2/WebAuthn style)
+                    let origin = match origin {
+                        Some(o) => o,
+                        None => {
+                            eprintln!("Error: --origin is required for P-256 derivation");
+                            eprintln!("Usage: softkms derive --algorithm p256 --seed <id> --origin <domain> --user-handle <handle>");
+                            std::process::exit(1);
+                        }
+                    };
+                    let user_handle = match user_handle {
+                        Some(u) => u,
+                        None => {
+                            eprintln!("Error: --user-handle is required for P-256 derivation");
+                            eprintln!("Usage: softkms derive --algorithm p256 --seed <id> --origin <domain> --user-handle <handle>");
+                            std::process::exit(1);
+                        }
+                    };
                     
                     let request = tonic::Request::new(DeriveP256Request {
                         seed_id: seed,
@@ -845,6 +855,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 "ed25519" => {
+                    // Ed25519 requires path (BIP44 derivation)
+                    let path = match path {
+                        Some(p) => p,
+                        None => {
+                            eprintln!("Error: --path is required for Ed25519 derivation");
+                            eprintln!("Usage: softkms derive --algorithm ed25519 --seed <id> --path \"m/44'/283'/0'/0/0\"");
+                            std::process::exit(1);
+                        }
+                    };
+                    
+                    let derivation_scheme = match scheme.as_deref().unwrap_or("v2") {
+                        "v2" => DerivationScheme::V2,
+                        _ => DerivationScheme::Peikert,
+                    };
+                    
                     // Extract coin type from BIP44 path (m/44'/coin_type'/...)
                     let coin_type: u32 = path.split('/').nth(2)
                         .and_then(|s| s.trim_end_matches('\'').parse().ok())
