@@ -61,6 +61,12 @@ service KeyStore {
   // Change keystore passphrase
   rpc ChangePassphrase(ChangePassphraseRequest) returns (ChangePassphraseResponse);
 
+  // Export SSH key
+  rpc ExportSshKey(ExportSshKeyRequest) returns (ExportSshKeyResponse);
+
+  // Export GPG key
+  rpc ExportGpgKey(ExportGpgKeyRequest) returns (ExportGpgKeyResponse);
+
   // Health check
   rpc Health(HealthRequest) returns (HealthResponse);
 }
@@ -308,6 +314,37 @@ message ChangePassphraseResponse {
   bool success = 1;
   int32 keys_updated = 2;  // Number of keys re-encrypted
   string message = 3;
+}
+
+// Export SSH key request
+message ExportSshKeyRequest {
+  string key_id = 1;
+  string passphrase = 2;       // Passphrase to protect the exported key
+  string admin_passphrase = 3; // Keystore passphrase for authentication
+  optional string output_path = 4; // Default: ~/.ssh/id_ed25519
+  string auth_token = 5;      // Identity token for client auth (alternative to admin_passphrase)
+}
+
+// Export SSH key response
+message ExportSshKeyResponse {
+  string key_id = 1;
+  string output_path = 2;
+  string algorithm = 3;
+}
+
+// Export GPG key request
+message ExportGpgKeyRequest {
+  string key_id = 1;
+  string admin_passphrase = 2; // Keystore passphrase for authentication
+  optional string user_id = 3; // GPG user ID (e.g., "User <user@example.com>")
+  string auth_token = 4;      // Identity token for client auth (alternative to admin_passphrase)
+}
+
+// Export GPG key response
+message ExportGpgKeyResponse {
+  string key_id = 1;
+  string user_id = 2;
+  string algorithm = 3;
 }
 
 // Identity client types

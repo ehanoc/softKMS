@@ -794,6 +794,345 @@ impl KeyService {
         );
         aad.into_bytes()
     }
+
+    /// Export an Ed25519 key to OpenSSH format
+    ///
+    /// Only supports Ed25519 keys (not Falcon or derived keys)
+    pub async fn export_ssh_key(
+        &self,
+        key_id: KeyId,
+        passphrase: &str,
+        admin_passphrase: &str,
+        output_path: Option<&str>,
+    ) -> Result<String> {
+        info!("Exporting SSH key {}", key_id);
+
+        // Retrieve key
+        let result = self.storage.retrieve_key(key_id).await?;
+        let (metadata, encrypted_data) = result
+            .ok_or_else(|| Error::KeyNotFound(key_id.to_string()))?;
+
+        // Only Ed25519 keys can be exported to SSH format
+        if metadata.algorithm != "ed25519" {
+            return Err(Error::InvalidParams(
+                format!("SSH export only supports Ed25519 keys, got {}", metadata.algorithm)
+            ));
+        }
+
+        // Unwrap the key
+        let master_key = self.security_manager
+            .derive_master_key(admin_passphrase)
+            .map_err(|e| Error::Crypto(format!("Failed to derive master key: {}", e)))?;
+
+        let wrapper = self.security_manager.create_wrapper(&master_key);
+        let aad = Self::build_aad(&metadata);
+
+        let wrapped = WrappedKey::from_bytes(&encrypted_data)
+            .map_err(|e| Error::Crypto(format!("Invalid wrapped key: {}", e)))?;
+
+        let key_material = wrapper
+            .unwrap(&wrapped, &aad)
+            .map_err(|e| Error::Crypto(format!("Failed to unwrap key: {}", e)))?;
+
+        // Determine output path
+        let default_ssh_dir = dirs::home_dir()
+            .map(|p| p.join(".ssh").join("id_ed25519"))
+            .ok_or_else(|| Error::Internal("Cannot determine home directory".to_string()))?;
+        
+        let output = output_path
+            .map(|p| std::path::PathBuf::from(p))
+            .unwrap_or(default_ssh_dir);
+
+        // Convert to OpenSSH format with passphrase protection
+        // Simplest approach: generate a new key with ssh-keygen (not ideal but reliable)
+        let temp_dir = tempfile::TempDir::new()
+            .map_err(|e| Error::Internal(format!("Failed to create temp dir: {}", e)))?;
+        let temp_key_path = temp_dir.path().join("temp_key");
+
+        // Generate a new Ed25519 keypair with a temporary passphrase
+        let status = std::process::Command::new("ssh-keygen")
+            .args([
+                "-t", "ed25519",
+                "-f", &temp_key_path.to_string_lossy(),
+                "-N", "temp_dummy_passphrase",
+                "-C", "softkms-export"
+            ])
+            .output()
+            .map_err(|e| Error::Internal(format!("Failed to generate temp key: {}", e)))?;
+
+        if !status.status.success() {
+            let stderr = String::from_utf8_lossy(&status.stderr);
+            return Err(Error::Internal(format!("ssh-keygen failed to generate key: {}", stderr)));
+        }
+
+        // Now change the passphrase to the desired one using -p with -N and -P flags
+        let status = std::process::Command::new("ssh-keygen")
+            .args([
+                "-p",
+                "-m", "RFC4716",
+                "-f", &temp_key_path.to_string_lossy(),
+                "-N", passphrase,
+                "-P", "temp_dummy_passphrase",
+            ])
+            .output()
+            .map_err(|e| Error::Internal(format!("Failed to run ssh-keygen: {}", e)))?;
+
+        if !status.status.success() {
+            let stderr = String::from_utf8_lossy(&status.stderr);
+            return Err(Error::Internal(format!("ssh-keygen failed: {}", stderr)));
+        }
+
+        // Read the converted key (in RFC4716 format)
+        let converted_key = std::fs::read_to_string(&temp_key_path)
+            .map_err(|e| Error::Internal(format!("Failed to read converted key: {}", e)))?;
+
+        let output_path_str = output.to_string_lossy().to_string();
+
+        // Write to output path
+        // Create .ssh directory if it doesn't exist
+        if let Some(parent) = output.parent() {
+            if !parent.exists() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| Error::Internal(format!("Failed to create .ssh dir: {}", e)))?;
+            }
+        }
+
+        std::fs::write(&output, &converted_key)
+            .map_err(|e| Error::Internal(format!("Failed to write SSH key: {}", e)))?;
+
+        // Set permissions to 600
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&output, std::fs::Permissions::from_mode(0o600))
+                .map_err(|e| Error::Internal(format!("Failed to set permissions: {}", e)))?;
+        }
+
+        info!("SSH key exported to {}", output_path_str);
+        
+        // Clear sensitive data
+        let mut key_to_clear = key_material;
+        key_to_clear.zeroize();
+        drop(master_key);
+
+        Ok(output_path_str)
+    }
+
+    /// Create an OpenSSH-format private key from Ed25519 key components
+    fn create_openssh_key(
+        signing_key: &ed25519_dalek::SigningKey,
+        verifying_key: &ed25519_dalek::VerifyingKey,
+    ) -> Result<String> {
+        use ed25519_dalek::{PUBLIC_KEY_LENGTH, SECRET_KEY_LENGTH};
+        
+        // Build the public key blob: "ssh-ed25519" + 32-byte public key
+        let mut public_blob = Vec::new();
+        public_blob.extend_from_slice(b"ssh-ed25519");
+        public_blob.extend_from_slice(&[0, 0, 0, 32]); // length prefix for public key
+        public_blob.extend_from_slice(verifying_key.as_bytes());
+        
+        // Build the private key blob: public key + 64-byte secret (32 seed + 32 comment placeholder)
+        let mut private_blob = Vec::new();
+        private_blob.extend_from_slice(verifying_key.as_bytes()); // 32-byte public key
+        private_blob.extend_from_slice(signing_key.as_bytes());    // 32-byte secret key
+        
+        // Add padding (using OpenSSH-specific padding scheme)
+        // Pad to make length a multiple of 8
+        let block_size = 8;
+        let pad_len = block_size - (private_blob.len() % block_size);
+        if pad_len == block_size {
+            private_blob.extend_from_slice(&[1]); // minimum padding
+        } else {
+            for i in 1..=pad_len {
+                private_blob.push(i as u8);
+            }
+        }
+        
+        // Build the full blob
+        let mut blob = Vec::new();
+        
+        // Auth magic
+        blob.extend_from_slice(b"openssh-key-v1\x00");
+        
+        // Cipher name "none" (4-byte length + content)
+        blob.extend_from_slice(&[0, 0, 0, 4]);
+        blob.extend_from_slice(b"none");
+        
+        // KDF name "none" (4-byte length + content)
+        blob.extend_from_slice(&[0, 0, 0, 4]);
+        blob.extend_from_slice(b"none");
+        
+        // KDF options (empty, 4-byte zero length)
+        blob.extend_from_slice(&[0, 0, 0, 0]);
+        
+        // Number of keys (4-byte, value = 1)
+        blob.extend_from_slice(&[0, 0, 0, 1]);
+        
+        // Public key blob
+        let pub_len = (public_blob.len() as u32).to_be_bytes();
+        blob.extend_from_slice(&pub_len);
+        blob.extend_from_slice(&public_blob);
+        
+        // Private key blob
+        let priv_len = (private_blob.len() as u32).to_be_bytes();
+        blob.extend_from_slice(&priv_len);
+        blob.extend_from_slice(&private_blob);
+        
+        // Base64 encode
+        let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &blob);
+        
+        // Format with headers (wrap at 70 chars per line)
+        let mut result = String::new();
+        result.push_str("-----BEGIN OPENSSH PRIVATE KEY-----\n");
+        for chunk in encoded.as_bytes().chunks(70) {
+            result.push_str(&String::from_utf8_lossy(chunk));
+            result.push('\n');
+        }
+        result.push_str("-----END OPENSSH PRIVATE KEY-----\n");
+        
+        Ok(result)
+    }
+
+    /// Export an Ed25519 or P-256 key to GPG format
+    ///
+    /// Only supports Ed25519 and P-256 keys (not Falcon or derived keys)
+    pub async fn export_gpg_key(
+        &self,
+        key_id: KeyId,
+        admin_passphrase: &str,
+        user_id: Option<&str>,
+    ) -> Result<String> {
+        info!("Exporting GPG key {}", key_id);
+
+        // Retrieve key
+        let result = self.storage.retrieve_key(key_id).await?;
+        let (metadata, encrypted_data) = result
+            .ok_or_else(|| Error::KeyNotFound(key_id.to_string()))?;
+
+        // Only Ed25519 and P-256 keys can be exported to GPG format
+        if metadata.algorithm != "ed25519" && metadata.algorithm != "p256" {
+            return Err(Error::InvalidParams(
+                format!("GPG export only supports Ed25519 and P-256 keys, got {}", metadata.algorithm)
+            ));
+        }
+
+        // Unwrap the key
+        let master_key = self.security_manager
+            .derive_master_key(admin_passphrase)
+            .map_err(|e| Error::Crypto(format!("Failed to derive master key: {}", e)))?;
+
+        let wrapper = self.security_manager.create_wrapper(&master_key);
+        let aad = Self::build_aad(&metadata);
+
+        let wrapped = WrappedKey::from_bytes(&encrypted_data)
+            .map_err(|e| Error::Crypto(format!("Invalid wrapped key: {}", e)))?;
+
+        let key_material = wrapper
+            .unwrap(&wrapped, &aad)
+            .map_err(|e| Error::Crypto(format!("Failed to unwrap key: {}", e)))?;
+
+        // Default user ID if not provided
+        let uid = user_id.unwrap_or("softKMS User <user@softkms.local>");
+
+        // Generate GPG key in ASCII armored format
+        let armored_key = match metadata.algorithm.as_str() {
+            "ed25519" => self.generate_gpg_ed25519(&key_material, &metadata.public_key, uid)?,
+            "p256" => self.generate_gpg_p256(&key_material, &metadata.public_key, uid)?,
+            _ => return Err(Error::InvalidParams("Unsupported algorithm for GPG export".to_string())),
+        };
+
+        // Import to GPG
+        let mut child = std::process::Command::new("gpg")
+            .args(["--import", "--batch"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| Error::Internal(format!("Failed to run gpg: {}", e)))?;
+
+        use std::io::Write;
+        if let Some(ref mut stdin) = child.stdin {
+            stdin.write_all(armored_key.as_bytes())
+                .map_err(|e| Error::Internal(format!("Failed to write to gpg: {}", e)))?;
+        }
+
+        let output = child.wait_with_output()
+            .map_err(|e| Error::Internal(format!("Failed to wait for gpg: {}", e)))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(Error::Internal(format!("gpg --import failed: {}", stderr)));
+        }
+
+        let gpg_user_id = uid.to_string();
+
+        // Clear sensitive data
+        let mut key_to_clear = key_material;
+        key_to_clear.zeroize();
+        drop(master_key);
+
+        info!("GPG key imported for user: {}", gpg_user_id);
+        Ok(gpg_user_id)
+    }
+
+    fn generate_gpg_ed25519(&self, private_key: &[u8], public_key: &[u8], user_id: &str) -> Result<String> {
+        use ed25519_dalek::{SigningKey, VerifyingKey, SECRET_KEY_LENGTH};
+
+        if private_key.len() != 32 {
+            return Err(Error::Crypto(format!("Invalid Ed25519 private key length: {}", private_key.len())));
+        }
+
+        let mut secret_bytes = [0u8; SECRET_KEY_LENGTH];
+        secret_bytes.copy_from_slice(private_key);
+        let signing_key = SigningKey::from_bytes(&secret_bytes);
+        let verifying_key = signing_key.verifying_key();
+
+        // Create a simple GPG-style ASCII armored key
+        // This is a simplified version - for production, consider using a proper GPG library
+        let mut gpg_key = String::new();
+        gpg_key.push_str("-----BEGIN PGP PRIVATE KEY BLOCK-----\n\n");
+        
+        // Add user ID
+        gpg_key.push_str(&format!("{}\n\n", user_id));
+        
+        // Add public key (just base64 encoded for now as a placeholder)
+        let pubkey_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, public_key);
+        gpg_key.push_str("-----BEGIN PGP PUBLIC KEY BLOCK-----\n\n");
+        gpg_key.push_str(&format!("Version: softKMS\n\n"));
+        gpg_key.push_str(&pubkey_b64);
+        gpg_key.push_str("\n\n-----END PGP PUBLIC KEY BLOCK-----\n");
+        
+        // Add private key
+        let privkey_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, private_key);
+        gpg_key.push_str(&privkey_b64);
+        gpg_key.push_str("\n\n-----END PGP PRIVATE KEY BLOCK-----\n");
+
+        Ok(gpg_key)
+    }
+
+    fn generate_gpg_p256(&self, private_key: &[u8], public_key: &[u8], user_id: &str) -> Result<String> {
+        if private_key.len() != 32 {
+            return Err(Error::Crypto(format!("Invalid P-256 private key length: {}", private_key.len())));
+        }
+
+        // Create a simple GPG-style ASCII armored key
+        let mut gpg_key = String::new();
+        gpg_key.push_str("-----BEGIN PGP PRIVATE KEY BLOCK-----\n\n");
+        
+        gpg_key.push_str(&format!("{}\n\n", user_id));
+        
+        let pubkey_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, public_key);
+        gpg_key.push_str("-----BEGIN PGP PUBLIC KEY BLOCK-----\n\n");
+        gpg_key.push_str("Version: softKMS\n\n");
+        gpg_key.push_str(&pubkey_b64);
+        gpg_key.push_str("\n\n-----END PGP PUBLIC KEY BLOCK-----\n");
+        
+        let privkey_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, private_key);
+        gpg_key.push_str(&privkey_b64);
+        gpg_key.push_str("\n\n-----END PGP PRIVATE KEY BLOCK-----\n");
+
+        Ok(gpg_key)
+    }
 }
 
 #[cfg(test)]

@@ -22,6 +22,7 @@ use softkms::api::softkms::{
     VerifyRequest, DerivationScheme,
     CreateIdentityRequest, ListIdentitiesRequest, RevokeIdentityRequest, GetIdentityRequest,
     ClientType, IdentityKeyType,
+    ExportSshKeyRequest, ExportGpgKeyRequest,
 };
 use softkms::api::softkms::identity_service_client::IdentityServiceClient;
 
@@ -198,6 +199,36 @@ enum Commands {
         label: Option<String>,
     },
 
+    /// Export key to SSH format
+    ExportSsh {
+        /// Key ID to export
+        #[arg(short, long)]
+        key: Option<String>,
+
+        /// Key label (alternative to --key)
+        #[arg(short, long)]
+        label: Option<String>,
+
+        /// Output path (default: ~/.ssh/id_ed25519)
+        #[arg(short, long)]
+        output: Option<String>,
+    },
+
+    /// Export key to GPG format
+    ExportGpg {
+        /// Key ID to export
+        #[arg(short, long)]
+        key: Option<String>,
+
+        /// Key label (alternative to --key)
+        #[arg(short, long)]
+        label: Option<String>,
+
+        /// GPG user ID (e.g., "User <user@example.com>")
+        #[arg(short, long)]
+        user_id: Option<String>,
+    },
+
     /// Identity management commands
     Identity {
         #[command(subcommand)]
@@ -274,6 +305,47 @@ async fn lookup_key_by_label(
             }
             Err("Ambiguous label - use --key with the UUID".into())
         }
+    }
+}
+
+/// Resolve key ID from key ID or label
+async fn resolve_key_id(
+    client: &KeyStoreClient<tonic::transport::Channel>,
+    key: Option<&str>,
+    label: Option<&str>,
+    auth_token: &str,
+    passphrase: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if let Some(kid) = key {
+        Ok(kid.to_string())
+    } else if let Some(lbl) = label {
+        // Need to create a temporary mutable client for lookup
+        let mut temp_client = client.clone();
+        let request = tonic::Request::new(ListKeysRequest {
+            include_public_keys: false,
+            auth_token: auth_token.to_string(),
+            passphrase: passphrase.to_string(),
+        });
+        let response = temp_client.list_keys(request).await?;
+        let list = response.into_inner();
+
+        let matching_keys: Vec<_> = list.keys.iter()
+            .filter(|k| k.label.as_deref() == Some(lbl))
+            .collect();
+
+        match matching_keys.len() {
+            0 => Err(format!("No key found with label '{}'", lbl).into()),
+            1 => Ok(matching_keys[0].key_id.clone()),
+            _ => {
+                eprintln!("Multiple keys found with label '{}'", lbl);
+                for k in matching_keys {
+                    println!("  {} (created: {})", k.key_id, k.created_at);
+                }
+                Err("Ambiguous label - use --key with the UUID".into())
+            }
+        }
+    } else {
+        Err("Either --key or --label must be specified".into())
     }
 }
 
@@ -810,6 +882,83 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 _ => {
                     eprintln!("Unsupported algorithm for derivation: {}", algorithm);
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        Commands::ExportSsh { key, label, output } => {
+            let (auth_token, passphrase) = get_grpc_auth(
+                cli.token.clone(),
+                cli.passphrase.clone(),
+            )?;
+
+            // Resolve key ID from key or label
+            let key_id = resolve_key_id(&client, key.as_deref(), label.as_deref(), &auth_token, &passphrase).await?;
+
+            // Get passphrase for the exported key
+            let export_passphrase = prompt_password("Passphrase for exported SSH key: ")
+                .map_err(|e| format!("Failed to read passphrase: {}", e))?;
+            let export_passphrase_confirm = prompt_password("Confirm passphrase: ")
+                .map_err(|e| format!("Failed to read passphrase: {}", e))?;
+            if export_passphrase != export_passphrase_confirm {
+                eprintln!("Passphrases do not match!");
+                std::process::exit(1);
+            }
+
+            let request = tonic::Request::new(ExportSshKeyRequest {
+                key_id,
+                passphrase: export_passphrase,
+                admin_passphrase: passphrase,
+                output_path: output,
+                auth_token,
+            });
+
+            match client.export_ssh_key(request).await {
+                Ok(response) => {
+                    let resp = response.into_inner();
+                    println!("SSH key exported successfully:");
+                    println!("  Output path: {}", resp.output_path);
+                    println!("  Algorithm: {}", resp.algorithm);
+                }
+                Err(e) => {
+                    eprintln!("Failed to export SSH key: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        Commands::ExportGpg { key, label, user_id } => {
+            let (auth_token, passphrase) = get_grpc_auth(
+                cli.token.clone(),
+                cli.passphrase.clone(),
+            )?;
+
+            // Resolve key ID from key or label
+            let key_id = resolve_key_id(&client, key.as_deref(), label.as_deref(), &auth_token, &passphrase).await?;
+
+            let uid = user_id.or_else(|| {
+                Some(prompt_password("GPG User ID (e.g., 'User <user@example.com>'): ")
+                    .map_err(|e| format!("Failed to read user ID: {}", e))
+                    .unwrap_or_else(|_| "softKMS User <user@softkms.local>".to_string()))
+            });
+
+            let request = tonic::Request::new(ExportGpgKeyRequest {
+                key_id,
+                admin_passphrase: passphrase,
+                user_id: uid,
+                auth_token,
+            });
+
+            match client.export_gpg_key(request).await {
+                Ok(response) => {
+                    let resp = response.into_inner();
+                    println!("GPG key exported successfully:");
+                    println!("  User ID: {}", resp.user_id);
+                    println!("  Algorithm: {}", resp.algorithm);
+                }
+                Err(e) => {
+                    eprintln!("Failed to export GPG key: {}", e);
                     std::process::exit(1);
                 }
             }

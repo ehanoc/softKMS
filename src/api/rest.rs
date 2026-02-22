@@ -101,6 +101,8 @@ pub fn create_app() -> Router<RestState> {
         .route("/v1/keys/:id", get(get_key))
         .route("/v1/keys/:id/sign", post(sign))
         .route("/v1/keys/:id/verify", post(verify))
+        .route("/v1/keys/:id/export/ssh", post(export_ssh))
+        .route("/v1/keys/:id/export/gpg", post(export_gpg))
         .route("/v1/identities/me", get(get_identity))
 }
 
@@ -460,6 +462,122 @@ pub struct IdentityResponse {
     created_at: String,
     last_used: String,
     is_active: bool,
+}
+
+/// Export SSH key request
+#[derive(Deserialize)]
+pub struct ExportSshRequest {
+    pub passphrase: String,
+    pub admin_passphrase: String,
+    pub output_path: Option<String>,
+}
+
+/// Export SSH key response
+#[derive(Serialize)]
+pub struct ExportSshResponse {
+    pub key_id: String,
+    pub output_path: String,
+    pub algorithm: String,
+}
+
+/// Export GPG key request
+#[derive(Deserialize)]
+pub struct ExportGpgRequest {
+    pub admin_passphrase: String,
+    pub user_id: Option<String>,
+}
+
+/// Export GPG key response
+#[derive(Serialize)]
+pub struct ExportGpgResponse {
+    pub key_id: String,
+    pub user_id: String,
+    pub algorithm: String,
+}
+
+/// Export SSH key endpoint
+async fn export_ssh(
+    Path(key_id): Path<String>,
+    State(state): State<RestState>,
+    headers: HeaderMap,
+    Json(payload): Json<ExportSshRequest>,
+) -> std::result::Result<Json<ExportSshResponse>, (StatusCode, String)> {
+    let identity_pubkey = authenticate(&headers, &state).await?;
+
+    let key_uuid = KeyId::parse_str(&key_id)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid key ID format".to_string()))?;
+
+    // Get key to verify ownership
+    let metadata = state
+        .key_service
+        .get_key(key_uuid)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to get key: {}", e)))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "Key not found".to_string()))?;
+
+    // Check ownership (admin passphrase can override for testing)
+    if metadata.owner_identity.is_some() && metadata.owner_identity != Some(identity_pubkey.clone()) {
+        return Err((StatusCode::FORBIDDEN, "Access denied to this key".to_string()));
+    }
+
+    let output_path = state
+        .key_service
+        .export_ssh_key(
+            key_uuid,
+            &payload.passphrase,
+            &payload.admin_passphrase,
+            payload.output_path.as_deref(),
+        )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("SSH export failed: {}", e)))?;
+
+    Ok(Json(ExportSshResponse {
+        key_id,
+        output_path,
+        algorithm: metadata.algorithm,
+    }))
+}
+
+/// Export GPG key endpoint
+async fn export_gpg(
+    Path(key_id): Path<String>,
+    State(state): State<RestState>,
+    headers: HeaderMap,
+    Json(payload): Json<ExportGpgRequest>,
+) -> std::result::Result<Json<ExportGpgResponse>, (StatusCode, String)> {
+    let identity_pubkey = authenticate(&headers, &state).await?;
+
+    let key_uuid = KeyId::parse_str(&key_id)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid key ID format".to_string()))?;
+
+    // Get key to verify ownership
+    let metadata = state
+        .key_service
+        .get_key(key_uuid)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to get key: {}", e)))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "Key not found".to_string()))?;
+
+    // Check ownership
+    if metadata.owner_identity.is_some() && metadata.owner_identity != Some(identity_pubkey.clone()) {
+        return Err((StatusCode::FORBIDDEN, "Access denied to this key".to_string()));
+    }
+
+    let user_id = state
+        .key_service
+        .export_gpg_key(
+            key_uuid,
+            &payload.admin_passphrase,
+            payload.user_id.as_deref(),
+        )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("GPG export failed: {}", e)))?;
+
+    Ok(Json(ExportGpgResponse {
+        key_id,
+        user_id,
+        algorithm: metadata.algorithm,
+    }))
 }
 
 // =============================================================================

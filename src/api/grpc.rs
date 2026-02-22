@@ -717,6 +717,104 @@ impl KeyStore for GrpcKeyStore {
         };
         Ok(Response::new(response))
     }
+
+    async fn export_ssh_key(
+        &self,
+        request: Request<ExportSshKeyRequest>,
+    ) -> Result<Response<ExportSshKeyResponse>, Status> {
+        debug!("Received ExportSSHKey request");
+
+        if !self.is_initialized() {
+            return Err(Status::failed_precondition(
+                "Keystore not initialized. Run 'softkms init' first."
+            ));
+        }
+
+        let req = request.into_inner();
+        
+        // Validate authentication
+        let _namespace = validate_auth(
+            &req.auth_token,
+            &req.admin_passphrase,
+            &self.identity_store,
+            &self.security_manager,
+        ).await?;
+
+        let key_id = KeyId::parse_str(&req.key_id)
+            .map_err(|_| Status::invalid_argument("Invalid key ID"))?;
+
+        let output_path = req.output_path.as_ref().map(|s| s.as_str());
+
+        let output = self.key_service
+            .export_ssh_key(key_id, &req.passphrase, &req.admin_passphrase, output_path)
+            .await
+            .map_err(map_error)?;
+
+        // Get key metadata to return algorithm
+        let metadata = self.key_service
+            .get_key(key_id)
+            .await
+            .map_err(map_error)?
+            .ok_or_else(|| Status::not_found("Key not found"))?;
+
+        let response = ExportSshKeyResponse {
+            key_id: req.key_id.clone(),
+            output_path: output,
+            algorithm: metadata.algorithm,
+        };
+
+        info!("SSH key {} exported via gRPC", req.key_id);
+        Ok(Response::new(response))
+    }
+
+    async fn export_gpg_key(
+        &self,
+        request: Request<ExportGpgKeyRequest>,
+    ) -> Result<Response<ExportGpgKeyResponse>, Status> {
+        debug!("Received ExportGPGKey request");
+
+        if !self.is_initialized() {
+            return Err(Status::failed_precondition(
+                "Keystore not initialized. Run 'softkms init' first."
+            ));
+        }
+
+        let req = request.into_inner();
+        
+        // Validate authentication
+        let _namespace = validate_auth(
+            &req.auth_token,
+            &req.admin_passphrase,
+            &self.identity_store,
+            &self.security_manager,
+        ).await?;
+
+        let key_id = KeyId::parse_str(&req.key_id)
+            .map_err(|_| Status::invalid_argument("Invalid key ID"))?;
+
+        let user_id = req.user_id.as_ref().map(|s| s.as_str());
+
+        let user_id_result = self.key_service
+            .export_gpg_key(key_id, &req.admin_passphrase, user_id)
+            .await
+            .map_err(map_error)?;
+
+        // Get key metadata to return algorithm
+        let metadata = self.key_service
+            .get_key(key_id)
+            .await
+            .map_err(map_error)?
+            .ok_or_else(|| Status::not_found("Key not found"))?;
+
+        let response = ExportGpgKeyResponse {
+            key_id: req.key_id.clone(),
+            user_id: user_id_result,
+            algorithm: metadata.algorithm,
+        };
+
+        info!("GPG key {} exported via gRPC", req.key_id);
+        Ok(Response::new(response))
+    }
 }
 
 use super::softkms::identity_service_server::{IdentityService, IdentityServiceServer};

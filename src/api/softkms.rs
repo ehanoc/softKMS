@@ -401,6 +401,63 @@ pub struct ChangePassphraseResponse {
     #[prost(string, tag = "3")]
     pub message: ::prost::alloc::string::String,
 }
+/// Export SSH key request
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ExportSshKeyRequest {
+    #[prost(string, tag = "1")]
+    pub key_id: ::prost::alloc::string::String,
+    /// Passphrase to protect the exported key
+    #[prost(string, tag = "2")]
+    pub passphrase: ::prost::alloc::string::String,
+    /// Keystore passphrase for authentication
+    #[prost(string, tag = "3")]
+    pub admin_passphrase: ::prost::alloc::string::String,
+    /// Default: ~/.ssh/id_ed25519
+    #[prost(string, optional, tag = "4")]
+    pub output_path: ::core::option::Option<::prost::alloc::string::String>,
+    /// Identity token for client auth (alternative to admin_passphrase)
+    #[prost(string, tag = "5")]
+    pub auth_token: ::prost::alloc::string::String,
+}
+/// Export SSH key response
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ExportSshKeyResponse {
+    #[prost(string, tag = "1")]
+    pub key_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub output_path: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub algorithm: ::prost::alloc::string::String,
+}
+/// Export GPG key request
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ExportGpgKeyRequest {
+    #[prost(string, tag = "1")]
+    pub key_id: ::prost::alloc::string::String,
+    /// Keystore passphrase for authentication
+    #[prost(string, tag = "2")]
+    pub admin_passphrase: ::prost::alloc::string::String,
+    /// GPG user ID (e.g., "User <user@example.com>")
+    #[prost(string, optional, tag = "3")]
+    pub user_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Identity token for client auth (alternative to admin_passphrase)
+    #[prost(string, tag = "4")]
+    pub auth_token: ::prost::alloc::string::String,
+}
+/// Export GPG key response
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ExportGpgKeyResponse {
+    #[prost(string, tag = "1")]
+    pub key_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub user_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub algorithm: ::prost::alloc::string::String,
+}
 /// Create identity request
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1317,6 +1374,58 @@ pub mod key_store_client {
                 .insert(GrpcMethod::new("softkms.KeyStore", "ChangePassphrase"));
             self.inner.unary(req, path, codec).await
         }
+        /// Export SSH key
+        pub async fn export_ssh_key(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ExportSshKeyRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ExportSshKeyResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/softkms.KeyStore/ExportSshKey",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("softkms.KeyStore", "ExportSshKey"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Export GPG key
+        pub async fn export_gpg_key(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ExportGpgKeyRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ExportGpgKeyResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/softkms.KeyStore/ExportGpgKey",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("softkms.KeyStore", "ExportGpgKey"));
+            self.inner.unary(req, path, codec).await
+        }
         /// Health check
         pub async fn health(
             &mut self,
@@ -1792,6 +1901,22 @@ pub mod key_store_server {
             request: tonic::Request<super::ChangePassphraseRequest>,
         ) -> std::result::Result<
             tonic::Response<super::ChangePassphraseResponse>,
+            tonic::Status,
+        >;
+        /// Export SSH key
+        async fn export_ssh_key(
+            &self,
+            request: tonic::Request<super::ExportSshKeyRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ExportSshKeyResponse>,
+            tonic::Status,
+        >;
+        /// Export GPG key
+        async fn export_gpg_key(
+            &self,
+            request: tonic::Request<super::ExportGpgKeyRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ExportGpgKeyResponse>,
             tonic::Status,
         >;
         /// Health check
@@ -2499,6 +2624,98 @@ pub mod key_store_server {
                     let fut = async move {
                         let inner = inner.0;
                         let method = ChangePassphraseSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/softkms.KeyStore/ExportSshKey" => {
+                    #[allow(non_camel_case_types)]
+                    struct ExportSshKeySvc<T: KeyStore>(pub Arc<T>);
+                    impl<
+                        T: KeyStore,
+                    > tonic::server::UnaryService<super::ExportSshKeyRequest>
+                    for ExportSshKeySvc<T> {
+                        type Response = super::ExportSshKeyResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ExportSshKeyRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as KeyStore>::export_ssh_key(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = ExportSshKeySvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/softkms.KeyStore/ExportGpgKey" => {
+                    #[allow(non_camel_case_types)]
+                    struct ExportGpgKeySvc<T: KeyStore>(pub Arc<T>);
+                    impl<
+                        T: KeyStore,
+                    > tonic::server::UnaryService<super::ExportGpgKeyRequest>
+                    for ExportGpgKeySvc<T> {
+                        type Response = super::ExportGpgKeyResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ExportGpgKeyRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as KeyStore>::export_gpg_key(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = ExportGpgKeySvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
