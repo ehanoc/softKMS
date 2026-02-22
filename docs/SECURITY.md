@@ -93,6 +93,48 @@ flowchart LR
     KS --> AUDIT
 ```
 
+## Key Export Security
+
+When exporting keys from softKMS to external formats (SSH, GPG), several security measures are in place:
+
+### Key Material Handling
+
+- **In-Memory Unwrapping**: Keys are decrypted (unwrapped) in memory only at the moment of export
+- **Immediate Clearing**: Key material is zeroized immediately after export completes
+- **No Persistent Decryption**: Exported keys are copies; the original remains encrypted in the keystore
+
+### Authentication Requirements
+
+- **Admin Access**: Export requires admin passphrase or identity token
+- **Ownership Verification**: Clients can only export keys they own
+- **Audit Logging**: All export operations are logged to the audit trail
+
+### SSH Export Security
+
+- **File Permissions**: Private keys are written with mode 0600 (owner read/write only)
+- **Format**: Standard OpenSSH private key format
+- **Supported Algorithms**: Ed25519 only (for SSH compatibility)
+
+### GPG Export Security
+
+- **Auto-Import**: Keys are automatically imported to GPG keyring via subprocess
+- **Temporary File Handling**: 
+  - Key written to temporary file (`{key_id}.asc`)
+  - File deleted immediately after successful import
+  - On import failure, file is deleted and error returned
+- **Format**: ASCII-armored PGP private key block (RFC 4880)
+- **Supported Algorithms**: Ed25519 and P-256
+- **HD Key Support**: HD-derived keys (96 bytes) are handled - first 32 bytes (scalar) extracted
+
+### Export vs. Key Recovery
+
+| Aspect | Export | Key Recovery |
+|--------|--------|--------------|
+| Key leaves keystore | Yes (copy) | No |
+| Original key encrypted | Yes, unchanged | Yes |
+| Requires auth | Yes | Yes (admin) |
+| Reversible | No | Yes (with backup) |
+
 ## Identity Security Model
 
 ### Authentication Flow

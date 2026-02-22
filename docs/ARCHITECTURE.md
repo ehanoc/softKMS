@@ -233,15 +233,64 @@ pub struct KeyMetadata {
         └── {key_id}.json
 ```
 
+### Key Export Pipeline
+
+The export pipeline converts encrypted keys to external formats:
+
+```mermaid
+flowchart TD
+    subgraph "Export Request"
+        A[CLI: export-ssh/export-gpg] --> B[gRPC Request]
+    end
+    
+    subgraph "Key Service"
+        B --> C[Auth: Verify token/passphrase]
+        C --> D[Storage: Retrieve encrypted key]
+        D --> E[Security Manager: Unwrap key]
+        E --> F{Export Type}
+    end
+    
+    subgraph "SSH Export"
+        F -->|SSH| G[OpenSSH Formatter]
+        G --> H[Write to file]
+        H --> I[Set permissions 0600]
+    end
+    
+    subgraph "GPG Export"
+        F -->|GPG| J[Sequoia OpenPGP]
+        J --> K[Create PGP Certificate]
+        K --> L[ASCII Armor]
+        L --> M[Import to GPG]
+        M --> N[Delete temp file]
+    end
+    
+    E --> F
+```
+
+**Components:**
+- **OpenSSH Formatter**: Converts Ed25519 key to OpenSSH private key format
+- **Sequoia OpenPGP**: Rust library for GPG/PGP key generation
+- **GPG Import**: Subprocess that imports key to system GPG keyring
+
+**Supported Export Formats:**
+
+| Format | Algorithm | Key Lengths | Library |
+|--------|-----------|-------------|---------|
+| SSH | Ed25519 | 32 bytes | Built-in |
+| GPG | Ed25519 | 32/64/96 bytes | sequoia-openpgp |
+| GPG | P-256 | 32 bytes | sequoia-openpgp |
+
 ### 5. CLI Client (`cli/src/main.rs`)
 
-**Enhanced** - Supports identity operations.
+**Enhanced** - Supports identity operations and key export.
 
 **New Commands:**
 ```rust
 Commands::IdentityCreate { key_type, description }  // Create new identity
 Commands::IdentityList                              // List identities (admin)
 Commands::IdentityRevoke { public_key }             // Revoke identity (admin)
+Commands::ExportSsh { key, label, output }          // Export to SSH format
+Commands::ExportGpg { key, label, user_id }         // Export to GPG format
 ```
 
 **Token Usage:**

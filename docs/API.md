@@ -338,6 +338,72 @@ message DeleteKeyResponse {
 - Admin: Can delete any key
 - Returns `PERMISSION_DENIED` if not owner
 
+#### ExportSshKey
+
+Export an Ed25519 key to OpenSSH private key format.
+
+```protobuf
+rpc ExportSshKey(ExportSshKeyRequest) returns (ExportSshKeyResponse);
+
+message ExportSshKeyRequest {
+    oneof auth {
+        string token = 1;
+        string passphrase = 2;
+    }
+    string key_id = 3;
+    bool include_public_key = 4;
+}
+
+message ExportSshKeyResponse {
+    string key_id = 1;
+    string algorithm = 2;
+    string private_key = 3;  // OpenSSH format
+}
+```
+
+**Access Control:**
+- Client: Can only export own keys
+- Admin: Can export any key
+
+**Notes:**
+- Only Ed25519 keys are supported
+- Returns OpenSSH format private key
+
+#### ExportGpgKey
+
+Export a key to GPG (OpenPGP) format.
+
+```protobuf
+rpc ExportGpgKey(ExportGpgKeyRequest) returns (ExportGpgKeyResponse);
+
+message ExportGpgKeyRequest {
+    oneof auth {
+        string token = 1;
+        string passphrase = 2;
+    }
+    string key_id = 3;
+    string user_id = 4;  // GPG user ID (e.g., "Name <email@example.com>")
+    string auth_token = 5;  // Identity token (alternative to passphrase)
+}
+
+message ExportGpgKeyResponse {
+    string key_id = 1;
+    string user_id = 2;
+    string algorithm = 3;
+    string armored_key = 4;  // ASCII-armored PGP private key
+}
+```
+
+**Access Control:**
+- Client: Can only export own keys
+- Admin: Can export any key
+
+**Notes:**
+- Supports Ed25519 and P-256 keys
+- Supports HD-derived keys (32, 64, or 96 bytes)
+- Returns ASCII-armored PGP private key block
+- Key is automatically imported to GPG keyring when using CLI
+
 ### Signing Service
 
 **Modified** - Requires identity context and ownership verification.
@@ -815,6 +881,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `verify` | `Verify` | Signing | Token or passphrase |
 | `import-seed` | `ImportSeed` | HDWallet | Token or passphrase |
 | `derive` | `DeriveKey` | HDWallet | Token or passphrase |
+| `export-ssh` | `ExportSshKey` | KeyManagement | Token or passphrase |
+| `export-gpg` | `ExportGpgKey` | KeyManagement | Token or passphrase |
 | `audit query` | `QueryAuditLog` | Audit | Admin passphrase |
 
 ## See Also

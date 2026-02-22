@@ -10,8 +10,9 @@ Complete guide for using softKMS v0.2.0 via CLI, PKCS#11, and HD wallet operatio
 4. [CLI Reference](#cli-reference)
 5. [PKCS#11 Usage](#pkcs11-usage)
 6. [HD Wallet Operations](#hd-wallet-operations)
-7. [Examples](#examples)
-8. [Troubleshooting](#troubleshooting)
+7. [Key Export Operations](#key-export-operations)
+8. [Examples](#examples)
+9. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -320,6 +321,61 @@ softkms derive-ed25519 [OPTIONS]
 - `--store-key` - Store the derived key
 - `-l, --label <LABEL>` - Key label
 
+#### `export-ssh` - Export Key to SSH Format
+
+Export an Ed25519 key to OpenSSH private key format for use with SSH.
+
+```bash
+softkms export-ssh [OPTIONS]
+```
+
+**Options:**
+- `-k, --key <ID>` - Key ID to export
+- `-l, --label <LABEL>` - Key label (alternative to --key)
+- `-o, --output <PATH>` - Output path [default: ~/.ssh/id_ed25519]
+
+**Example:**
+```bash
+# Export by label
+softkms export-ssh --label "myEdKey" --output ~/.ssh/id_ed25519
+
+# Export by key ID
+softkms export-ssh --key abc123-uuid --output ~/.ssh/my_key
+```
+
+**Notes:**
+- Only Ed25519 keys are supported for SSH export
+- The private key is written with mode 0600 (owner read/write only)
+- Original key remains encrypted in softKMS keystore
+
+#### `export-gpg` - Export Key to GPG Format
+
+Export a key to GPG (OpenPGP) format for use with GnuPG.
+
+```bash
+softkms export-gpg [OPTIONS]
+```
+
+**Options:**
+- `-k, --key <ID>` - Key ID to export
+- `-l, --label <LABEL>` - Key label (alternative to --key)
+- `-u, --user-id <USER_ID>` - GPG user ID (e.g., "User <user@example.com>")
+
+**Example:**
+```bash
+# Export by label with custom user ID
+softkms export-gpg --label "myEdKey" --user-id "John Doe <john@example.com>"
+
+# Export by key ID
+softkms export-gpg --key abc123-uuid --user-id "Backup Key <backup@example.com>"
+```
+
+**Notes:**
+- Supports Ed25519 and P-256 keys
+- Supports HD-derived keys (32, 64, or 96 bytes)
+- Key is automatically imported to GPG keyring
+- Temporary file is deleted after successful import
+
 #### `identity create` - Create Identity
 
 Create a new identity for token-based auth (admin only).
@@ -355,6 +411,10 @@ softkms identity revoke [OPTIONS]
 **Options:**
 - `-p, --public-key <KEY>` - Public key of identity to revoke
 - `-f, --force` - Skip confirmation
+
+## Key Export Operations
+
+Export keys from softKMS for use with external tools like SSH and GPG.
 
 #### `health` - Health Check
 
@@ -494,6 +554,70 @@ openssl pkeyutl -sign -in data.txt -out data.sig -pkcs11 -inkey "pkcs11:..."
 
 # 10. Health check
 ./target/release/softkms health
+```
+
+### SSH and GPG Export Workflow
+
+Export keys from softKMS for use with SSH and GPG:
+
+```bash
+# 1. Start daemon
+./target/release/softkms-daemon --foreground &
+
+# 2. Initialize (first time only)
+./target/release/softkms init
+
+# 3. Create an Ed25519 key
+./target/release/softkms generate \
+  --algorithm ed25519 \
+  --label "my-ssh-key"
+
+# 4. Export to SSH format
+./target/release/softkms export-ssh \
+  --label "my-ssh-key" \
+  --output ~/.ssh/id_ed25519
+
+# 5. Use with SSH
+ssh -i ~/.ssh/id_ed25519 user@server
+
+# 6. Create another key for GPG
+./target/release/softkms generate \
+  --algorithm ed25519 \
+  --label "my-gpg-key"
+
+# 7. Export to GPG format (auto-imports to GPG keyring)
+./target/release/softkms export-gpg \
+  --label "my-gpg-key" \
+  --user-id "My Name <myname@example.com>"
+
+# 8. Verify GPG key was imported
+gpg --list-secret-keys
+```
+
+### HD Key Export Workflow
+
+Export HD-derived keys to SSH/GPG:
+
+```bash
+# 1. Import BIP39 seed
+./target/release/softkms import-seed \
+  --mnemonic "abandon abandon ... about" \
+  --label "master-seed"
+
+# 2. Derive Ed25519 key from seed
+./target/release/softkms derive-ed25519 \
+  --seed "seed-uuid" \
+  --path "m/44'/283'/0'/0/0" \
+  --store-key \
+  --label "hd-key-0"
+
+# 3. Export HD key to GPG (supports 96-byte HD keys)
+./target/release/softkms export-gpg \
+  --label "hd-key-0" \
+  --user-id "HD Key <hd@example.com>"
+
+# The export handles the 96-byte extended key automatically
+# Only the first 32 bytes (the scalar) are used for GPG
 ```
 
 ---
