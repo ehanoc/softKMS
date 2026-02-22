@@ -455,12 +455,12 @@ impl KeyService {
         attributes.insert("origin".to_string(), origin.clone());
         attributes.insert("user_handle".to_string(), user_handle.clone());
         attributes.insert("counter".to_string(), counter.to_string());
-        // Store derivation ID in label for easy lookup
-        let derivation_label = derivation_id.clone();
+        // Use provided label if given, otherwise use derivation_id format (seed_id:origin:handle:counter)
+        let final_label = label.unwrap_or_else(|| derivation_id.clone());
 
         let metadata = KeyMetadata {
             id: key_id,
-            label: Some(derivation_label),
+            label: Some(final_label),
             algorithm: "p256".to_string(),
             key_type: KeyType::Derived,
             created_at,
