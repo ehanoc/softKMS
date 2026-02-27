@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::sync::Mutex;
 
+use softkms::audit::AuditLogger;
 use softkms::key_service::KeyService;
 use softkms::storage::file::FileStorage;
 use softkms::storage::StorageBackend;
@@ -30,7 +31,9 @@ async fn setup_test_env() -> (KeyService, tempfile::TempDir) {
     
     let config = Config::default();
 
-    let service = KeyService::new(storage, security_manager, config);
+    let audit_logger = Arc::new(AuditLogger::new(temp_dir.path().join("audit.log")));
+
+    let service = KeyService::new(storage, security_manager, audit_logger, config);
     (service, temp_dir)
 }
 
@@ -290,7 +293,9 @@ async fn test_storage_persistence() {
         
         let config = Config::default();
 
-        let service = KeyService::new(storage, security_manager, config);
+        let audit_logger = Arc::new(AuditLogger::new(storage_path.join("audit.log")));
+
+        let service = KeyService::new(storage, security_manager, audit_logger, config);
 
         // Create key (admin-owned)
         let metadata = service.create_key(
@@ -317,13 +322,14 @@ async fn test_storage_persistence() {
         let cache = create_cache(300);
         let security_manager = Arc::new(SecurityManager::new(cache, security_config, storage_path.clone()));
         
+        let audit_log_path = Arc::new(AuditLogger::new(storage_path.join("audit.log")));
         // Note: init_with_passphrase should NOT be called here because
         // the keystore is already initialized. SecurityManager::new() loads
         // the existing salt from disk, allowing us to derive the same master key.
         
         let config = Config::default();
 
-        let service = KeyService::new(storage, security_manager, config);
+        let service = KeyService::new(storage, security_manager, audit_log_path, config);
 
         // List should show the persisted key
         let keys = service.list_keys(None).await.unwrap();

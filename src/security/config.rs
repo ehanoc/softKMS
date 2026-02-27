@@ -75,7 +75,7 @@ fn default_memory_lock() -> bool {
 }
 
 fn default_cache_duration() -> u64 {
-    300 // 5 minutes
+   0 // 0 minutes
 }
 
 fn default_algorithm() -> String {
@@ -91,7 +91,7 @@ mod tests {
         let config = SecurityConfig::default();
         assert_eq!(config.pbkdf2_iterations, 210_000);
         assert!(config.memory_lock);
-        assert_eq!(config.cache_duration, 300);
+        assert_eq!(config.cache_duration, 0);
         assert_eq!(config.algorithm, "aes-256-gcm");
     }
 

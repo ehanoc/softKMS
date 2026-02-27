@@ -11,6 +11,7 @@
 //! This ensures keys NEVER exist in plaintext at rest and are only in
 //! plaintext in memory for the minimum time necessary.
 
+use crate::audit::AuditLogger;
 use crate::crypto::ed25519::{Ed25519Engine, ED25519_SECRET_KEY_SIZE};
 use crate::crypto::falcon::{FalconEngine, FalconVariant};
 use crate::crypto::hd_ed25519::{HdEd25519Engine, HdDerivationScheme, encode_bech32};
@@ -30,6 +31,7 @@ use zeroize::Zeroize;
 pub struct KeyService {
     storage: Arc<dyn StorageBackend + Send + Sync>,
     security_manager: Arc<SecurityManager>,
+    audit_logger: Arc<AuditLogger>,
     config: Config,
 }
 
@@ -53,18 +55,48 @@ impl KeyService {
     pub fn new(
         storage: Arc<dyn StorageBackend + Send + Sync>,
         security_manager: Arc<SecurityManager>,
+        audit_logger: Arc<AuditLogger>,
         config: Config,
     ) -> Self {
         Self {
             storage,
             security_manager,
             config,
+            audit_logger,
         }
     }
 
     /// Get storage reference
     pub fn storage(&self) -> Arc<dyn StorageBackend + Send + Sync> {
         self.storage.clone()
+    }
+
+    /// Audit log helper - logs operations with identity context
+    async fn audit_log(
+        &self,
+        requesting_identity: Option<&str>,
+        action: &str,
+        resource: &str,
+        allowed: bool,
+        reason: Option<&str>,
+    ) {
+        let identity_type = if requesting_identity.is_some() { "client" } else { "admin" };
+        
+        let result = if let Some(identity) = requesting_identity {
+            self.audit_logger.log_with_identity(
+                identity,
+                identity_type,
+                action,
+                resource,
+                allowed,
+            ).await
+        } else {
+            self.audit_logger.log(action, resource, allowed).await
+        };
+        
+        if let Err(e) = result {
+            tracing::warn!("Failed to write audit log: {}", e);
+        }
     }
 
     pub async fn create_key(
@@ -76,6 +108,15 @@ impl KeyService {
         owner_identity: Option<String>,
     ) -> Result<KeyMetadata> {
         info!("Creating new {} key", algorithm);
+
+        // Log attempt
+        self.audit_log(
+            owner_identity.as_deref(),
+            "key_create_attempt",
+            &format!("algorithm:{}", algorithm),
+            true,
+            None,
+        ).await;
 
         // Check for duplicate label if label is provided
         if let Some(ref label_str) = label {
@@ -180,6 +221,15 @@ impl KeyService {
 
         info!("Key {} created and stored encrypted", key_id);
 
+        // Log success
+        self.audit_log(
+            owner_identity.as_deref(),
+            "key_create_success",
+            &format!("key:{}", key_id),
+            true,
+            None,
+        ).await;
+
         Ok(metadata)
     }
 
@@ -191,6 +241,15 @@ impl KeyService {
         requesting_identity: Option<&str>,
     ) -> Result<Signature> {
         debug!("Signing data with key {}", key_id);
+
+        // Log attempt
+        self.audit_log(
+            requesting_identity,
+            "sign_attempt",
+            &format!("key:{}", key_id),
+            true,
+            None,
+        ).await;
 
         let result = self.storage.retrieve_key(key_id).await?;
 
@@ -309,6 +368,15 @@ impl KeyService {
 
         info!("Data signed with key {}", key_id);
 
+        // Log success
+        self.audit_log(
+            requesting_identity,
+            "sign_success",
+            &format!("key:{}", key_id),
+            true,
+            None,
+        ).await;
+
         Ok(signature)
     }
 
@@ -320,6 +388,18 @@ impl KeyService {
         owner_identity: Option<String>,
     ) -> Result<KeyMetadata> {
         info!("Importing seed");
+
+        // Clone owner_identity before it's moved
+        let owner_identity_clone = owner_identity.clone();
+
+        // Log attempt
+        self.audit_log(
+            owner_identity_clone.as_deref(),
+            "seed_import_attempt",
+            "seed",
+            true,
+            None,
+        ).await;
 
         let key_id = KeyId::new_v4();
         let created_at = Utc::now();
@@ -356,6 +436,15 @@ impl KeyService {
 
         info!("Seed {} imported and stored encrypted", key_id);
 
+        // Log success using the cloned value
+        self.audit_log(
+            owner_identity_clone.as_deref(),
+            "seed_import_success",
+            &format!("key:{}", key_id),
+            true,
+            None,
+        ).await;
+
         Ok(metadata)
     }
 
@@ -387,6 +476,15 @@ impl KeyService {
             "Deriving P-256 key from seed {} for origin={} user={}",
             seed_id, origin, user_handle
         );
+
+        // Log attempt
+        self.audit_log(
+            None,
+            "key_derive_attempt",
+            &format!("seed:{}:p256", seed_id),
+            true,
+            None,
+        ).await;
 
         // Check if we already have a derived key with these parameters
         let keys = self.list_keys(None).await?;
@@ -502,6 +600,15 @@ impl KeyService {
             key_id, origin, user_handle
         );
 
+        // Log success
+        self.audit_log(
+            None,
+            "key_derive_success",
+            &format!("key:{}", key_id),
+            true,
+            None,
+        ).await;
+
         Ok(metadata)
     }
 
@@ -525,6 +632,15 @@ impl KeyService {
             "Deriving Ed25519 key from seed {} with path {}",
             seed_id, derivation_path
         );
+
+        // Log attempt
+        self.audit_log(
+            None,
+            "key_derive_attempt",
+            &format!("seed:{}:ed25519", seed_id),
+            true,
+            None,
+        ).await;
 
         // Check if we already have a derived key with these parameters
         let keys = self.list_keys(None).await?;
@@ -642,6 +758,15 @@ impl KeyService {
         seed_to_clear.zeroize();
         drop(master_key);
 
+        // Log success
+        self.audit_log(
+            None,
+            "key_derive_success",
+            &format!("key:{}", key_id),
+            true,
+            None,
+        ).await;
+
         Ok(metadata)
     }
 
@@ -660,6 +785,15 @@ impl KeyService {
             "Importing xpub for coin_type={} account={}",
             coin_type, account
         );
+
+        // Log attempt
+        self.audit_log(
+            None,
+            "xpub_import_attempt",
+            "xpub",
+            true,
+            None,
+        ).await;
 
         // Validate xpub length
         if xpub_bytes.len() != 64 {
@@ -714,6 +848,15 @@ impl KeyService {
             "XPub {} imported for coin_type={} account={}",
             key_id, coin_type, account
         );
+
+        // Log success
+        self.audit_log(
+            None,
+            "xpub_import_success",
+            &format!("key:{}", key_id),
+            true,
+            None,
+        ).await;
 
         Ok(metadata)
     }
@@ -787,13 +930,40 @@ impl KeyService {
         key_id: KeyId,
         requesting_identity: Option<&str>,
     ) -> Result<()> {
+        // Log attempt
+        self.audit_log(
+            requesting_identity,
+            "key_delete_attempt",
+            &format!("key:{}", key_id),
+            true,
+            None,
+        ).await;
+
         // Only admin can delete keys - identity-based requests are denied
         if requesting_identity.is_some() {
+            // Log failure
+            self.audit_log(
+                requesting_identity,
+                "key_delete_denied",
+                &format!("key:{}", key_id),
+                false,
+                Some("identity-based deletion not allowed"),
+            ).await;
             return Err(Error::AccessDenied);
         }
         
         info!("Deleting key {}", key_id);
         self.storage.delete_key(key_id).await?;
+
+        // Log success
+        self.audit_log(
+            requesting_identity,
+            "key_delete_success",
+            &format!("key:{}", key_id),
+            true,
+            None,
+        ).await;
+
         Ok(())
     }
 
@@ -1164,8 +1334,9 @@ mod tests {
         security_manager.init_with_passphrase(passphrase).unwrap();
 
         let config = Config::default();
+        let audit_logger = Arc::new(crate::audit::AuditLogger::new(temp_dir.path().join("audit")));
 
-        let service = KeyService::new(storage, security_manager, config);
+        let service = KeyService::new(storage, security_manager, audit_logger, config);
 
         TestService {
             _temp_dir: temp_dir,

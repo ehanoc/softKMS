@@ -4,6 +4,7 @@
 
 use softkms::storage::StorageBackend;
 use std::process::Command;
+use softkms::audit::AuditLogger;
 use std::time::Duration;
 
 /// Test CLI help command
@@ -174,7 +175,9 @@ async fn test_key_lifecycle_with_passphrase() {
     security_manager.init_with_passphrase("my_secure_passphrase_123").unwrap();
     let config = Config::default();
 
-    let service = KeyService::new(storage, security_manager, config);
+    let audit_logger = Arc::new(AuditLogger::new(temp_dir.path().join("audit.log")));
+
+    let service = KeyService::new(storage, security_manager, audit_logger, config);
     let passphrase = "my_secure_passphrase_123";
 
     // 1. Create key (admin-owned)
@@ -254,7 +257,9 @@ async fn test_seed_import_and_operations() {
     security_manager.init_with_passphrase("seed_passphrase_456").unwrap();
     let config = Config::default();
 
-    let service = KeyService::new(storage, security_manager, config);
+    let audit_logger = Arc::new(AuditLogger::new(temp_dir.path().join("audit.log")));
+
+    let service = KeyService::new(storage, security_manager, audit_logger, config);
     let passphrase = "seed_passphrase_456";
 
     // Import seed
@@ -303,7 +308,9 @@ async fn test_encrypted_storage_format() {
     security_manager.init_with_passphrase("storage_test_passphrase").unwrap();
     let config = Config::default();
 
-    let service = KeyService::new(storage, security_manager, config);
+    let audit_logger = Arc::new(AuditLogger::new(storage_path.join("audit.log")));
+
+    let service = KeyService::new(storage, security_manager, audit_logger, config);
     let passphrase = "storage_test_passphrase";
 
     // Create key (admin-owned)
@@ -368,13 +375,15 @@ async fn test_falcon_key_operations() {
     let storage = Arc::new(FileStorage::new(temp_dir.path().to_path_buf(), Config::default()));
     storage.init().await.unwrap();
 
+    let audit_logger = Arc::new(AuditLogger::new(temp_dir.path().join("audit.log")));
+
     let security_config = SecurityConfig::new();
     let cache = create_cache(300);
     let security_manager = Arc::new(SecurityManager::new(cache, security_config, temp_dir.path().to_path_buf()));
     security_manager.init_with_passphrase("test_passphrase").unwrap();
     
     let config = Config::default();
-    let service = KeyService::new(storage, security_manager, config);
+    let service = KeyService::new(storage, security_manager, audit_logger, config);
 
     let passphrase = "test_passphrase";
 

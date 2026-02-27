@@ -7,6 +7,8 @@
 //! 4. Manage PID file
 //! 5. Health checks
 
+#[allow(missing_docs)]
+
 use crate::audit::AuditLogger;
 use crate::identity::storage::IdentityStore;
 use crate::key_service::KeyService;
@@ -92,10 +94,18 @@ impl Daemon {
             }
         };
 
-        // Create key service
+        if let Some(ref audit_path) = &config.logging.audit_path {
+            std::fs::create_dir_all(audit_path)
+                .map_err(|e| crate::Error::Internal(format!("Failed to create audit log directory: {}", e)))?;
+        }
+
+        let audit_logger = Arc::new(AuditLogger::new(config.logging.audit_path.clone().unwrap_or_else(|| config.storage.path.join("audit"))));
+        info!("Initialized audit logger");
+
         let key_service = Arc::new(KeyService::new(
             storage.clone(),
             security_manager.clone(),
+            audit_logger.clone(),
             config.clone(),
         ));
 
@@ -104,10 +114,6 @@ impl Daemon {
         identity_store.init().await?;
         info!("Initialized identity store");
 
-        // Create audit logger
-        let audit_path = config.storage.path.join("audit");
-        let audit_logger = Arc::new(AuditLogger::new(audit_path));
-        info!("Initialized audit logger");
 
         Ok(Self {
             config,

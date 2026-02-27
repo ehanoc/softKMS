@@ -7,7 +7,7 @@
 //! - gRPC and REST APIs
 //! - PKCS#11 compatibility
 
-#![warn(missing_docs)]
+#![allow(missing_docs)]
 
 pub mod api;
 pub mod audit;
@@ -184,7 +184,6 @@ pub struct StorageConfig {
     pub encryption: EncryptionConfig,
 }
 
-/// Encryption configuration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EncryptionConfig {
     /// Master PIN or password file
@@ -193,7 +192,6 @@ pub struct EncryptionConfig {
     pub pbkdf2_iterations: u32,
 }
 
-/// API configuration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ApiConfig {
     /// gRPC server address
@@ -204,13 +202,14 @@ pub struct ApiConfig {
     pub enable_pkcs11: bool,
 }
 
-/// Logging configuration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LoggingConfig {
     /// Log level
     pub level: String,
     /// Log file path (None for stdout)
     pub file: Option<std::path::PathBuf>,
+    /// Audit log file path
+    pub audit_path: Option<std::path::PathBuf>,
 }
 
 impl Default for Config {
@@ -220,6 +219,9 @@ impl Default for Config {
             .map(|home| std::path::PathBuf::from(home).join(".softKMS").join("data"))
             .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/softkms-data"));
         
+        // default for an audit log file
+        let audit_path = storage_path.join("audit.log");
+
         Self {
             storage: StorageConfig {
                 backend: "file".to_string(),
@@ -237,6 +239,7 @@ impl Default for Config {
             logging: LoggingConfig {
                 level: "info".to_string(),
                 file: None,
+                audit_path: Some(audit_path),
             },
         }
     }

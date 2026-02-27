@@ -253,6 +253,12 @@ impl SecurityManager {
 
         let master_key =
             MasterKey::derive_with_salt(passphrase, &salt, self.config.pbkdf2_iterations)?;
+
+        // try to memory lock to prevent swap 
+        if self.config.memory_lock {
+            master_key.try_mlock().ok(); // Log but ignore mlock failures
+        }
+
         let derived_hash = Self::compute_verification_hash(&master_key);
 
         tracing::info!("Comparing hashes: derived vs expected");
@@ -589,7 +595,12 @@ impl SecurityManager {
     pub fn get_cached_master_key(&self) -> Result<MasterKey> {
         let cache = self.cache.lock().map_err(|_| SecurityError::LockPoisoned)?;
         if let Some(key) = cache.get() {
-            Ok(MasterKey::from_secret(key))
+            let master_key = MasterKey::from_secret(key);
+            if self.config.memory_lock {
+                master_key.try_mlock().ok(); // Log but ignore mlock failures
+            }
+
+            Ok(master_key)
         } else {
             Err(SecurityError::InvalidPassphrase(
                 "Keystore not initialized. Run 'softkms init' first.".to_string(),

@@ -7,6 +7,7 @@
 //! - Passphrase validation (correct, wrong, caching)
 //! - Complete end-to-end workflows
 
+use softkms::audit::AuditLogger;
 use softkms::key_service::KeyService;
 use softkms::security::{SecurityConfig, SecurityManager, create_cache};
 use softkms::storage::file::FileStorage;
@@ -34,8 +35,10 @@ mod p256_tests {
         let security_manager = Arc::new(SecurityManager::new(cache, security_config, temp_dir.path().to_path_buf()));
         security_manager.init_with_passphrase(passphrase).unwrap();
 
+        let audit_logger = Arc::new(AuditLogger::new(temp_dir.path().join("audit.log")));
+
         let config = Config::default();
-        let service = KeyService::new(storage, security_manager, config);
+        let service = KeyService::new(storage, security_manager, audit_logger, config);
 
         TestService {
             _temp_dir: temp_dir,
@@ -336,7 +339,9 @@ mod passphrase_tests {
         security_manager.init_with_passphrase(passphrase).unwrap();
 
         let config = Config::default();
-        let service = KeyService::new(storage, security_manager, config);
+        let audit_logger = Arc::new(AuditLogger::new(temp_dir.path().join("audit.log")));
+
+        let service = KeyService::new(storage, security_manager, audit_logger, config);
 
         TestService {
             _temp_dir: temp_dir,
@@ -489,13 +494,15 @@ mod integration_tests {
         let storage = Arc::new(FileStorage::new(temp_dir.path().to_path_buf(), Config::default()));
         storage.init().await.unwrap();
 
+        let audit_log_path = Arc::new(AuditLogger::new(temp_dir.path().join("audit.log"))); 
+
         let security_config = SecurityConfig::new();
         let cache = create_cache(300);
         let security_manager = Arc::new(SecurityManager::new(cache, security_config, temp_dir.path().to_path_buf()));
         security_manager.init_with_passphrase(passphrase).unwrap();
 
         let config = Config::default();
-        let service = KeyService::new(storage, security_manager, config);
+        let service = KeyService::new(storage, security_manager, audit_log_path, config);
 
         TestService {
             _temp_dir: temp_dir,

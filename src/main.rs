@@ -3,7 +3,7 @@
 //! This is the main entry point for the softKMS daemon.
 
 use clap::Parser;
-use softkms::{Config, Result};
+use softkms::{Config, Result, audit::AuditLogger};
 use std::path::PathBuf;
 use tracing::info;
 
@@ -40,6 +40,10 @@ struct Args {
     #[arg(long, value_name = "ADDR")]
     rest_addr: Option<String>,
 
+    /// Audit storage location (overrides config)
+    #[arg(long, value_name = "AUDIT_PATH")]
+    audit_storage: Option<PathBuf>,
+
     /// PID file path [default: ~/.softKMS/run/softkms.pid]
     #[arg(long, value_name = "FILE")]
     pid_file: Option<PathBuf>,
@@ -70,6 +74,14 @@ async fn main() -> Result<()> {
 
     info!("Starting softKMS daemon v{}", env!("CARGO_PKG_VERSION"));
 
+    AuditLogger::new(args.audit_storage.clone().unwrap_or_else(|| {
+        std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("/tmp"))
+            .join(".softKMS")
+            .join("audit")
+    })).log("daemon_start", "softkms-daemon", true).await?;
+
     // Load configuration
     let mut config = load_config(&args).await?;
     info!("Configuration loaded from: {:?}", args.config);
@@ -86,6 +98,11 @@ async fn main() -> Result<()> {
     if let Some(rest_addr) = args.rest_addr {
         config.api.rest_addr = Some(rest_addr);
         info!("REST address override: {:?}", config.api.rest_addr);
+    }
+
+    // look for audit storage location in config and log it
+    if let Some(audit_storage) = args.audit_storage {
+        info!("Audit storage location: {:?}", audit_storage);
     }
 
     // Get PID file path (use default if not specified)
