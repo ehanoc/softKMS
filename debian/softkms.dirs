@@ -1,0 +1,3 @@
+var/lib/softkms
+var/log/softkms
+etc/softkms

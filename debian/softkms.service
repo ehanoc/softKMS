@@ -1,0 +1,59 @@
+[Unit]
+Description=softKMS - Modern Software Key Management System
+Documentation=man:softkms-daemon(8) man:softkms(1)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=softkms
+Group=softkms
+ExecStart=/usr/bin/softkms-daemon --config /etc/softkms/config.toml --foreground
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=softkms
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectProc=invisible
+ProtectHostname=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+PrivateTmp=true
+PrivateDevices=true
+DevicePolicy=closed
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Read-write paths (only these directories are writable)
+ReadWritePaths=/var/lib/softkms /var/log/softkms /var/run/softkms
+
+# Additional restrictions
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

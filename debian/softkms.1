@@ -1,0 +1,115 @@
+.TH SOFTKMS 1 "February 2025" "softKMS 0.0.1" "User Commands"
+.SH NAME
+softkms \- Modern Software Key Management System CLI
+.SH SYNOPSIS
+.B softkms
+[\fIOPTIONS\fR] \fICOMMAND\fR [\fIARGS\fR]
+.SH DESCRIPTION
+softKMS is a secure, modern alternative to SoftHSM with HD wallet support,
+written in Rust. It provides enterprise key management, hierarchical
+deterministic (HD) wallets, and PKCS#11 compatibility.
+.PP
+The \fBsoftkms\fR command provides a CLI interface to interact with the
+softKMS daemon for key management operations.
+.SH OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-server\fR \fIURL\fR
+Server address (default: http://127.0.0.1:50051)
+.TP
+\fB\-p\fR, \fB\-\-passphrase\fR \fIPASSPHRASE\fR
+Passphrase for keystore (if not provided, will prompt interactively)
+.TP
+\fB\-t\fR, \fB\-\-token\fR \fITOKEN\fR
+Identity token for authentication (alternative to passphrase)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help information
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version information
+.SH COMMANDS
+.TP
+\fBinit\fR
+Initialize the keystore with a passphrase
+.TP
+\fBgenerate\fR
+Generate a new key
+.TP
+\fBlist\fR
+List all keys
+.TP
+\fBsign\fR
+Sign data with a key
+.TP
+\fBverify\fR
+Verify a signature
+.TP
+\fBdelete\fR
+Delete a key
+.TP
+\fBimport\-seed\fR
+Import a BIP39 seed phrase
+.TP
+\fBderive\fR
+Derive a child key from a seed
+.TP
+\fBidentity\fR
+Identity management commands
+.TP
+\fBexport\-ssh\fR
+Export key to SSH format
+.TP
+\fBexport\-gpg\fR
+Export key to GPG format
+.SH EXAMPLES
+Initialize the keystore:
+.PP
+.nf
+.RS
+softkms init
+.RE
+.fi
+.PP
+Generate a new Ed25519 key:
+.PP
+.nf
+.RS
+softkms generate \-\-algorithm ed25519 \-\-label mykey
+.RE
+.fi
+.PP
+Sign data with a key:
+.PP
+.nf
+.RS
+softkms sign \-\-label mykey \-\-data "Hello World"
+.RE
+.fi
+.PP
+List all keys:
+.PP
+.nf
+.RS
+softkms list
+.RE
+.fi
+.SH FILES
+.TP
+\fI/etc/softkms/config.toml\fR
+Configuration file
+.TP
+\fI/var/lib/softkms/\fR
+Default data directory
+.TP
+\fI/var/log/softkms/\fR
+Log directory
+.SH SEE ALSO
+.BR softkms-daemon (8),
+.BR softkms-pkcs11 (7)
+.SH AUTHOR
+Bruno Martins \fI<ehanoc@pm.me>\fR
+.SH COPYRIGHT
+Copyright (C) 2024-2025 Bruno Martins.
+License: AGPL-3.0-or-later
+.SH BUGS
+Report bugs at: https://github.com/ehanoc/softKMS/issues

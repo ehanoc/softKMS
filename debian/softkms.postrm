@@ -1,0 +1,34 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    purge)
+        # Remove directories
+        rm -rf /var/lib/softkms /var/log/softkms /var/run/softkms /etc/softkms
+        
+        # Remove user and group
+        if getent passwd softkms >/dev/null 2>&1; then
+            deluser --system softkms || true
+        fi
+        if getent group softkms >/dev/null 2>&1; then
+            delgroup --system softkms || true
+        fi
+        
+        # Reload systemd
+        if [ -d /run/systemd/system ]; then
+            systemctl --system daemon-reload >/dev/null || true
+        fi
+        ;;
+    
+    remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        ;;
+    
+    *)
+        echo "postrm called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

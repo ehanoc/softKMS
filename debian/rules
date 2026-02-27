@@ -1,0 +1,52 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE = 1
+export CARGO_HOME = $(CURDIR)/debian/cargo-home
+export CARGO_VENDOR_DIR = $(CURDIR)/debian/vendor
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+export DEB_LDFLAGS_MAINT_APPEND = -Wl,--as-needed
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	# Vendor dependencies for offline build
+	mkdir -p debian/vendor
+	cargo vendor debian/vendor
+
+override_dh_auto_build:
+	# Build release binaries with vendored dependencies
+	cargo build --release --offline --frozen
+
+override_dh_auto_test:
+	# Skip tests during package build (can be slow)
+	# Tests should be run separately: cargo test
+
+override_dh_auto_install:
+	# Install main binaries to debian/tmp first
+	install -D -m 0755 target/release/softkms-daemon debian/tmp/usr/bin/softkms-daemon
+	install -D -m 0755 target/release/softkms debian/tmp/usr/bin/softkms
+	
+	# Install PKCS#11 module
+	install -D -m 0755 target/release/libsoftkms.so debian/tmp/usr/lib/softkms/libsoftkms.so
+	
+	# Install config example
+	install -D -m 0644 config.toml.example debian/tmp/usr/share/softkms/config.toml.example
+	
+	# Install systemd files
+	install -D -m 0644 debian/softkms.service debian/tmp/lib/systemd/system/softkms.service
+	install -D -m 0644 debian/softkms.tmpfile debian/tmp/usr/lib/tmpfiles.d/softkms.conf
+	
+	# Install man pages
+	install -D -m 0644 debian/softkms.1 debian/tmp/usr/share/man/man1/softkms.1
+	install -D -m 0644 debian/softkms-daemon.8 debian/tmp/usr/share/man/man8/softkms-daemon.8
+
+override_dh_auto_clean:
+	dh_auto_clean
+	cargo clean || true
+	rm -rf debian/vendor debian/cargo-home
+
+override_dh_fixperms:
+	dh_fixperms
+	# Ensure correct permissions for softkms user access
+	chmod 0640 debian/softkms/usr/share/softkms/config.toml.example

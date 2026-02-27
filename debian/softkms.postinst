@@ -1,0 +1,50 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        # Create softkms group if it doesn't exist
+        if ! getent group softkms >/dev/null 2>&1; then
+            addgroup --system softkms
+        fi
+        
+        # Create softkms user if it doesn't exist
+        if ! getent passwd softkms >/dev/null 2>&1; then
+            adduser --system --ingroup softkms \
+                --home /var/lib/softkms \
+                --gecos "softKMS daemon" \
+                --no-create-home \
+                --shell /usr/sbin/nologin \
+                softkms
+        fi
+        
+        # Create directories with proper permissions
+        mkdir -p /var/lib/softkms /var/log/softkms /etc/softkms /var/run/softkms
+        chown softkms:softkms /var/lib/softkms /var/log/softkms /var/run/softkms
+        chmod 0750 /var/lib/softkms /var/log/softkms /var/run/softkms
+        
+        # Handle config file
+        if [ ! -f /etc/softkms/config.toml ]; then
+            cp /usr/share/softkms/config.toml.example /etc/softkms/config.toml
+            chown root:softkms /etc/softkms/config.toml
+            chmod 0640 /etc/softkms/config.toml
+        fi
+        
+        # Reload systemd
+        if [ -d /run/systemd/system ]; then
+            systemctl --system daemon-reload >/dev/null || true
+        fi
+        ;;
+    
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+    
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

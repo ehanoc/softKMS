@@ -1,0 +1,52 @@
+Source: softkms
+Section: utils
+Priority: optional
+Maintainer: Bruno Martins <ehanoc@pm.me>
+Build-Depends: debhelper-compat (= 13),
+ cargo (>= 1.75),
+ rustc (>= 1.75),
+ libssl-dev,
+ nettle-dev,
+ libgmp-dev,
+ libbz2-dev,
+ libclang-dev,
+ protobuf-compiler,
+ pkg-config
+Standards-Version: 4.6.2
+Homepage: https://github.com/ehanoc/softKMS
+Vcs-Browser: https://github.com/ehanoc/softKMS
+Vcs-Git: https://github.com/ehanoc/softKMS.git
+Rules-Requires-Root: no
+
+Package: softkms
+Architecture: any
+Depends: adduser,
+ libssl3,
+ libnettle8,
+ libgmp10,
+ libbz2-1.0,
+ ${shlibs:Depends},
+ ${misc:Depends}
+Recommends: softkms-pkcs11
+Description: Modern Software Key Management System
+ softKMS is a secure, modern alternative to SoftHSM with HD wallet
+ support, written in Rust. It provides enterprise key management,
+ hierarchical deterministic (HD) wallets, and PKCS#11 compatibility.
+ .
+ Features:
+  - Secure key storage with AES-256-GCM encryption
+  - Multi-tenant identity isolation
+  - BIP32/BIP44 hierarchical deterministic keys
+  - Ed25519, P-256, and post-quantum Falcon signatures
+  - gRPC, REST, and CLI interfaces
+  - Complete audit logging
+
+Package: softkms-pkcs11
+Architecture: any
+Depends: softkms (= ${binary:Version}),
+ ${shlibs:Depends},
+ ${misc:Depends}
+Description: PKCS#11 module for softKMS
+ This package provides the PKCS#11 cryptographic token interface
+ for softKMS, allowing integration with existing applications
+ that use the PKCS#11 standard.

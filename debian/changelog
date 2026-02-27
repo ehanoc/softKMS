@@ -1,0 +1,12 @@
+softkms (0.0.1-1) unstable; urgency=medium
+
+  * Initial release.
+  * Daemon with gRPC and REST APIs.
+  * CLI client for key management.
+  * PKCS#11 compatibility layer.
+  * Ed25519, P-256, and Falcon crypto support.
+  * HD wallet derivation (BIP32/44).
+  * Multi-identity with token-based auth.
+  * Complete audit logging.
+
+ -- Bruno Martins <ehanoc@pm.me>  Fri, 28 Feb 2025 00:00:00 +0000

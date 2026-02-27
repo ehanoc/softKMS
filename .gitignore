@@ -41,3 +41,29 @@ target/doc/
 # Test coverage
 *.profraw
 *.profdata
+
+# Debian packaging build artifacts
+debian/vendor/
+debian/cargo-home/
+debian/tmp/
+debian/softkms/
+debian/softkms-pkcs11/
+debian/.debhelper/
+debian/files
+debian/*.substvars
+debian/*.debhelper.log
+debian/debhelper-build-stamp
+*.deb
+*.changes
+*.buildinfo
+*.dsc
+*.tar.gz
+*.tar.xz
+debian-build*/
+
+# Source packages (created during dpkg-buildpackage)
+../*.dsc
+../*.changes
+../*.buildinfo
+../*.tar.*
+../*.deb

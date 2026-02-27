@@ -1,0 +1,166 @@
+.TH SOFTKMS-DAEMON 8 "February 2025" "softKMS 0.0.1" "System Administration"
+.SH NAME
+softkms-daemon \- softKMS Key Management Daemon
+.SH SYNOPSIS
+.B softkms-daemon
+[\fIOPTIONS\fR]
+.SH DESCRIPTION
+The \fBsoftkms-daemon\fR is the core service that provides secure key management
+functionality. It runs as a system service and exposes APIs via gRPC and REST
+for key operations, identity management, and cryptographic operations.
+.PP
+The daemon manages encrypted key storage, handles authentication via passphrases
+or identity tokens, and provides a complete audit log of all operations.
+.SH OPTIONS
+.TP
+\fB\-c\fR, \fB\-\-config\fR \fIFILE\fR
+Configuration file path (default: /etc/softkms/config.toml)
+.TP
+\fB\-\-storage\-path\fR \fIPATH\fR
+Storage directory path (overrides config)
+.TP
+\fB\-\-grpc\-addr\fR \fIADDRESS\fR
+gRPC listen address (overrides config)
+.TP
+\fB\-\-rest\-addr\fR \fIADDRESS\fR
+REST API listen address (overrides config)
+.TP
+\fB\-\-pid\-file\fR \fIFILE\fR
+PID file path
+.TP
+\fB\-\-foreground\fR
+Run in foreground (do not daemonize)
+.TP
+\fB\-\-log\-level\fR \fILEVEL\fR
+Log level: trace, debug, info, warn, error (overrides config)
+.TP
+\fB\-\-init\fR
+Initialize keystore and exit
+.TP
+\fB\-\-version\fR, \fB\-V\fR
+Print version information and exit
+.TP
+\fB\-\-help\fR, \fB\-h\fR
+Print help information and exit
+.SH CONFIGURATION
+The daemon reads its configuration from \fI/etc/softkms/config.toml\fR.
+See the config.toml.example file for all available options.
+.PP
+Key configuration sections:
+.IP \(bu 2
+\fB[storage]\fR \- Data storage backend and encryption settings
+.IP \(bu 2
+\fB[api]\fR \- gRPC and REST API endpoints
+.IP \(bu 2
+\fB[logging]\fR \- Log levels and destinations
+.IP \(bu 2
+\fB[security]\fR \- Session and caching settings
+.SH FILES
+.TP
+\fI/etc/softkms/config.toml\fR
+Configuration file
+.TP
+\fI/var/lib/softkms/\fR
+Default data directory (keys, metadata)
+.TP
+\fI/var/log/softkms/\fR
+Log directory
+.TP
+\fI/var/log/softkms/audit/\fR
+Audit log directory
+.TP
+\fI/var/run/softkms/\fR
+Runtime directory (PID files, sockets)
+.SH SERVICE MANAGEMENT
+The daemon is managed by systemd:
+.PP
+Start the service:
+.PP
+.nf
+.RS
+systemctl start softkms
+.RE
+.fi
+.PP
+Stop the service:
+.PP
+.nf
+.RS
+systemctl stop softkms
+.RE
+.fi
+.PP
+Enable at boot:
+.PP
+.nf
+.RS
+systemctl enable softkms
+.RE
+.fi
+.PP
+Check status:
+.PP
+.nf
+.RS
+systemctl status softkms
+.RE
+.fi
+.PP
+View logs:
+.PP
+.nf
+.RS
+journalctl -u softkms -f
+.RE
+.fi
+.SH SECURITY
+The daemon runs as an unprivileged \fBsoftkms\fR user with extensive systemd
+security hardening:
+.IP \(bu 2
+Read-only filesystem access
+.IP \(bu 2
+No access to /home directories
+.IP \(bu 2
+Cannot load kernel modules
+.IP \(bu 2
+Cannot gain new privileges
+.IP \(bu 2
+Restricted system calls
+.IP \(bu 2
+Private /tmp directory
+.IP \(bu 2
+Network namespace restrictions
+.PP
+Only \fB/var/lib/softkms\fR, \fB/var/log/softkms\fR, and \fB/var/run/softkms\fR
+are writable by the daemon.
+.SH DIAGNOSTICS
+Exit status:
+.TP
+\fB0\fR
+Success
+.TP
+\fB1\fR
+General error
+.TP
+\fB2\fR
+Invalid configuration
+.TP
+\fB3\fR
+Keystore not initialized
+.TP
+\fB4\fR
+Permission denied
+.TP
+\fB5\fR
+Address already in use
+.SH SEE ALSO
+.BR softkms (1),
+.BR systemctl (1),
+.BR journalctl (1)
+.SH AUTHOR
+Bruno Martins \fI\u003cehanoc@pm.me\u003e\fR
+.SH COPYRIGHT
+Copyright (C) 2024-2025 Bruno Martins.
+License: AGPL-3.0-or-later
+.SH BUGS
+Report bugs at: https://github.com/ehanoc/softKMS/issues
