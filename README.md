@@ -94,7 +94,11 @@ See [Identity Management](docs/IDENTITIES.md) for complete documentation.
 - **👥 Identity Isolation** - Multi-tenant with ECC-based identities (Ed25519 default, P-256 optional)
 - **🎟️ Bearer Tokens** - Simple token-based auth with ownership isolation
 - **🌳 HD Wallet Support** - BIP32/BIP44 hierarchical deterministic keys (Ed25519)
+- **🎯 Deterministic Derivation** - P-256 for WebAuthn, Ed25519 BIP32/BIP44
+- **📥 xPub Import** - Import BIP32 extended public keys for watch-only wallets
+- **🔄 Key Portability** - Re-wrap keys for SSH/GPG use, never expose plaintext
 - **🛡️ Post-Quantum Crypto** - Falcon-512 and Falcon-1024 signatures (NIST PQC standard)
+- **📋 Audit Logging** - Complete operation trail with identity context
 - **🔌 Multiple APIs** - PKCS#11, gRPC, REST, and CLI interfaces
 - **🚀 Modern Architecture** - Async Rust with pluggable storage backends
 - **🐳 Container-Ready** - Docker and Kubernetes support
@@ -190,6 +194,12 @@ softkms --token <token> derive --algorithm ed25519 --seed wallet --path "m/44'/2
 softkms --token <token> sign --label mykey --data "message"
 softkms --token <token> verify --label mykey --data "message" --signature "..."
 
+# Export key to SSH format (re-wrapped with passphrase)
+softkms export-ssh --label mykey --output ~/.ssh/id_ed25519
+
+# Export key to GPG format
+softkms export-gpg --label mykey --user-id "User <user@example.com>"
+
 # PKCS#11 usage
 pkcs11-tool --module libsoftkms.so --list-slots
 pkcs11-tool --module libsoftkms.so --login --pin "<token>" --keypairgen --key-type EC:prime256v1
@@ -242,7 +252,7 @@ softKMS uses industry-standard security practices:
 - **Ed25519** and **P-256** for cryptographic operations
 - **Identity Isolation** - Each client sees only their own keys
 - **Secure memory** handling with automatic zeroization
-- **No key export** - keys never leave the daemon
+- **Key portability** - Re-wrap keys for SSH/GPG use, never expose plaintext
 - **Audit logging** - All operations logged with identity context
 
 See [SECURITY.md](docs/SECURITY.md) for details.
