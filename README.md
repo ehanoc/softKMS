@@ -18,6 +18,16 @@ A secure, modern alternative to SoftHSM with HD wallet support, written in Rust.
 | **Deployment** | Manual | Docker + systemd |
 | **Identity** | Single user | Multi-identity with isolation |
 
+## Dependencies
+
+- libclang-dev
+
+## Setup
+
+```bash
+git submodule update --init --recursive
+```
+
 ## 60-Second Quick Start
 
 ```bash
@@ -239,7 +249,7 @@ See [SECURITY.md](docs/SECURITY.md) for details.
 
 ## License
 
-MIT License - See LICENSE file
+AGPLv3 License - See LICENSE file
 
 ## Contributing
 
