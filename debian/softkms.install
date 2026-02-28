@@ -1,7 +1,7 @@
 usr/bin/softkms-daemon
 usr/bin/softkms
 usr/share/softkms/config.toml.example
-lib/systemd/system/softkms.service
+usr/lib/systemd/system/softkms.service
 usr/lib/tmpfiles.d/softkms.conf
 usr/share/man/man1/softkms.1
 usr/share/man/man8/softkms-daemon.8

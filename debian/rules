@@ -34,7 +34,7 @@ override_dh_auto_install:
 	install -D -m 0644 config.toml.example debian/tmp/usr/share/softkms/config.toml.example
 	
 	# Install systemd files
-	install -D -m 0644 debian/softkms.service debian/tmp/lib/systemd/system/softkms.service
+	install -D -m 0644 debian/softkms.service debian/tmp/usr/lib/systemd/system/softkms.service
 	install -D -m 0644 debian/softkms.tmpfile debian/tmp/usr/lib/tmpfiles.d/softkms.conf
 	
 	# Install man pages
