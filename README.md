@@ -112,40 +112,57 @@ See [Identity Management](docs/IDENTITIES.md) for complete documentation.
 
 ```mermaid
 flowchart TB
-    subgraph "Client Layer"
+    subgraph "Client Environment"
         CLI[CLI Client]
-        PKCS[PKCS#11]
-        GRPC[gRPC]
+        PKCS[PKCS#11 Module]
+        APP[Applications]
     end
-
-    subgraph "Identity Layer"
-        AUTH[Auth Interceptor]
-        ID[Identity Service]
-    end
-
-    subgraph "Core"
-        KEY[Key Service]
+    
+    subgraph "Daemon Process"
+        API[API Layer<br/>gRPC & REST]
+        AUTH[Auth & Identity]
+        KEYS[Key Service &<br/>Crypto Engines]
         SEC[Security Manager]
-        CRYPTO[Crypto Engines]
-        HD[HD Wallet]
     end
-
-    subgraph "Storage"
-        FILE[Encrypted Files]
-        IDSTORE[Identity Store]
+    
+    subgraph "Persistent Storage"
+        STORE[Encrypted File Storage]
     end
-
-    CLI --> GRPC
-    PKCS --> GRPC
-    GRPC --> AUTH
-    AUTH --> ID
-    ID --> KEY
-    KEY --> CRYPTO
-    KEY --> HD
-    KEY --> SEC
-    SEC --> FILE
-    ID --> IDSTORE
+    
+    CLI --> API
+    PKCS --> API
+    APP --> API
+    API --> AUTH
+    AUTH --> KEYS
+    KEYS --> SEC
+    SEC --> STORE
+    
+    style Client Environment fill:#ffcccc
+    style Daemon Process fill:#ccffcc
+    style Persistent Storage fill:#ffffcc
 ```
+
+**Key Security Features:**
+- **Process Isolation**: Keys never leave the daemon process
+- **Client Isolation**: CLI/PKCS#11 only send requests, receive signatures
+- **Encrypted at Rest**: AES-256-GCM with PBKDF2 key derivation
+
+## Project Structure
+
+| Component | Location | Key Files | Description |
+|-----------|----------|-----------|-------------|
+| **CLI Client** | `cli/src/` | `main.rs` | Command-line interface |
+| **gRPC API** | `src/api/` | `grpc.rs`, `auth.rs`, `interceptor.rs` | gRPC server & auth |
+| **REST API** | `src/api/` | `rest.rs` | HTTP REST endpoints |
+| **Identity** | `src/identity/` | `mod.rs`, `types.rs`, `storage.rs`, `validation.rs` | Token-based auth |
+| **Key Service** | `src/` | `key_service.rs` | Main key operations |
+| **Security** | `src/security/` | `mod.rs`, `master_key.rs`, `wrapper.rs` | Encryption, key wrapping |
+| **Crypto** | `src/crypto/` | `ed25519.rs`, `p256.rs`, `hd_ed25519.rs` | Signing algorithms |
+| **Falcon PQC** | `src/crypto/falcon/` | `mod.rs`, `bindings.rs` | Post-quantum signatures |
+| **PKCS#11** | `src/pkcs11/` | `mod.rs`, `session.rs`, `rest_client.rs` | PKCS#11 provider |
+| **Storage** | `src/storage/` | `mod.rs`, `file.rs`, `encrypted.rs` | File-based storage |
+| **Audit** | `src/audit/` | `mod.rs` | Audit logging |
+| **HD Wallet** | `src/crypto/` | `hd_ed25519.rs`, `p256.rs` | BIP32/BIP44 derivation |
 
 ## Installation
 

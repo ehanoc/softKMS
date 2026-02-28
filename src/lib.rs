@@ -13,9 +13,7 @@ pub mod api;
 pub mod audit;
 pub mod crypto;
 pub mod daemon;
-pub mod hd_wallet;
 pub mod identity;
-pub mod ipc;
 pub mod key_service;
 
 #[allow(unsafe_code)]

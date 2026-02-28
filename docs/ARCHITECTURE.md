@@ -15,43 +15,58 @@ softKMS is a modular software key management system written in Rust, designed as
 
 ## System Architecture
 
+softKMS runs as an isolated daemon process. **Keys never leave the daemon** - all cryptographic operations happen server-side.
+
 ```mermaid
 flowchart TB
-    subgraph "Client Layer"
+    subgraph "Client Environment"
         CLI[CLI Tool]
         PKCS[PKCS#11 Module]
+        APP[Applications]
     end
     
-    subgraph "Identity Layer"
-        AUTH[Auth Interceptor]
-        ID[Identity Service]
-        POL[Policy Evaluator]
+    subgraph "Daemon Process"
+        direction TB
+        
+        subgraph "API Layer"
+            GRPC[gRPC Server]
+            REST[REST Server]
+        end
+        
+        subgraph "Identity Layer"
+            AUTH[Auth Interceptor]
+            ID[Identity Service]
+        end
+        
+        subgraph "Core Services"
+            KS[Key Service]
+            SEC[Security Manager]
+        end
+        
+        subgraph "Crypto Layer"
+            subgraph "Signing Engines"
+                ED[Ed25519]
+                P256[P-256]
+                F512[Falcon-512]
+                F1024[Falcon-1024]
+            end
+            HD[HD Wallet<br/>BIP32/44]
+        end
     end
     
-    subgraph "Core Services"
-        KS[Key Service]
-        SEC[Security Manager]
-        HD[HD Wallet]
-    end
-    
-    subgraph "Crypto Layer"
-        ED[Ed25519 Engine]
-        P256[P-256 Engine]
-        F512[Falcon-512 Engine]
-        F1024[Falcon-1024 Engine]
-    end
-    
-    subgraph "Storage Layer"
+    subgraph "Persistent Storage"
         FS[Encrypted File Storage]
         IDSTORE[Identity Store]
         AUDIT[Audit Log]
     end
     
-    CLI --> AUTH
-    PKCS --> AUTH
+    CLI --> GRPC
+    PKCS --> REST
+    APP --> REST
+    GRPC --> AUTH
+    REST --> AUTH
     AUTH --> ID
-    ID --> POL
-    POL --> KS
+    ID --> KS
     KS --> ED
     KS --> P256
     KS --> F512
@@ -60,8 +75,18 @@ flowchart TB
     KS --> SEC
     SEC --> FS
     ID --> IDSTORE
-    KS --> AUDIT
+    
+    style Client Environment fill:#ffcccc
+    style Daemon Process fill:#ccffcc
+    style Persistent Storage fill:#ffffcc
 ```
+
+**Security Boundary:**
+- **Client Environment**: Untrusted code space - applications, CLI, PKCS#11 library
+- **Daemon Process**: Isolated process where all key material and cryptographic operations reside
+- **Persistent Storage**: Configurable storage backend (file-based, future: cloud, HSM)
+- **API Layer**: Network boundary - only signatures and metadata cross
+- **Keys never leave**: All signing happens inside the daemon, clients only receive signatures
 
 ## Identity-Based Access Control
 
@@ -181,9 +206,9 @@ pub async fn auth_interceptor(req: Request<()>) -> Result<Request<()>, Status> {
 }
 ```
 
-### 3. Policy Evaluator (`src/identity/policy.rs`)
+### 3. Policy Evaluator (inline in `src/identity/validation.rs`)
 
-**NEW** - Evaluates access control policies.
+Evaluates access control policies during token validation.
 
 **Current Implementation:**
 ```rust
@@ -550,6 +575,24 @@ export SOFTKMS_TOKEN="..."
 ├── .salt                           # PBKDF2 salt
 └── .verification_hash              # Admin passphrase verification
 ```
+
+## Project File Structure
+
+| Component | Location | Key Files | Description |
+|-----------|----------|-----------|-------------|
+| **CLI Client** | `cli/src/` | `main.rs` | Command-line interface |
+| **gRPC API** | `src/api/` | `grpc.rs`, `auth.rs`, `interceptor.rs` | gRPC server & auth |
+| **REST API** | `src/api/` | `rest.rs` | HTTP REST endpoints |
+| **Identity** | `src/identity/` | `mod.rs`, `types.rs`, `storage.rs`, `validation.rs` | Token-based auth |
+| **Key Service** | `src/` | `key_service.rs` | Main key operations |
+| **Security** | `src/security/` | `mod.rs`, `master_key.rs`, `wrapper.rs` | Encryption, key wrapping |
+| **Crypto** | `src/crypto/` | `ed25519.rs`, `p256.rs`, `hd_ed25519.rs` | Signing algorithms |
+| **Falcon PQC** | `src/crypto/falcon/` | `mod.rs`, `bindings.rs` | Post-quantum signatures |
+| **PKCS#11** | `src/pkcs11/` | `mod.rs`, `session.rs`, `rest_client.rs` | PKCS#11 provider |
+| **Storage** | `src/storage/` | `mod.rs`, `file.rs`, `encrypted.rs` | File-based storage |
+| **Audit** | `src/audit/` | `mod.rs` | Audit logging |
+| **HD Wallet** | `src/crypto/` | `hd_ed25519.rs`, `p256.rs` | BIP32/BIP44 derivation |
+| **WebAuthn** | `src/webauthn/` | `mod.rs`, `types.rs`, `derivation.rs` | WebAuthn (skeletal) |
 
 ## Migration Path
 
