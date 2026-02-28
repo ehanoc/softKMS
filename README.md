@@ -6,7 +6,7 @@ This is a personal project, for the purpose of learning and also build a softwar
 
 A secure, modern alternative to SoftHSM with HD wallet support, written in Rust.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: AGPL--3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org)
 
 **Use Cases:** Enterprise key management, HD wallet infrastructure, PKCS#11 HSM replacement, development/testing environments.
