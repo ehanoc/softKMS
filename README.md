@@ -1,3 +1,7 @@
+# Disclaimer
+
+This is a personal project, for the purpose of learning and also build a software based KSM with old and new crypto schemes; such as HD derivation or post-quantum FALCON signatures. It is not intended for production use, use at your own risk.
+
 # softKMS - Modern Software Key Management System
 
 A secure, modern alternative to SoftHSM with HD wallet support, written in Rust.
