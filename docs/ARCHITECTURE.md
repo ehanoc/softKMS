@@ -480,19 +480,7 @@ sequenceDiagram
 
 ### Authentication Flow
 
-```
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│   Client     │     │   Token      │     │   Identity   │
-│              │────▶│  Validation  │────▶│   Store      │
-│  (Token)     │     │              │     │              │
-└──────────────┘     └──────────────┘     └──────────────┘
-                                                  │
-                                                  ▼
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│   Request    │◀────│   Policy     │◀────│    Role      │
-│   Granted    │     │  Evaluation  │     │   Check      │
-└──────────────┘     └──────────────┘     └──────────────┘
-```
+Client (Token) → Token Validation → Identity Store → Policy Evaluation → Role Check → Request Granted/Denied
 
 ### Access Control Matrix
 
