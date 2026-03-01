@@ -151,7 +151,7 @@ To start with a clean slate:
 pkill softkms-daemon
 
 # Delete all data
-rm -rf ~/.softKMS/data ~/.softKMS/run
+rm -rf ~/.local/share/softkms ~/.local/state/softkms ~/.config/softkms
 
 # Restart daemon
 cargo run --bin softkms-daemon &

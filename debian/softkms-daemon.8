@@ -14,7 +14,13 @@ or identity tokens, and provides a complete audit log of all operations.
 .SH OPTIONS
 .TP
 \fB\-c\fR, \fB\-\-config\fR \fIFILE\fR
-Configuration file path (default: /etc/softkms/config.toml)
+Configuration file path (auto-detected if not specified)
+.TP
+\fB\-\-user\fR
+Force user mode (XDG paths: ~/.config/, ~/.local/share/)
+.TP
+\fB\-\-system\fR
+Force system mode (/etc, /var paths)
 .TP
 \fB\-\-storage\-path\fR \fIPATH\fR
 Storage directory path (overrides config)
@@ -26,7 +32,7 @@ gRPC listen address (overrides config)
 REST API listen address (overrides config)
 .TP
 \fB\-\-pid\-file\fR \fIFILE\fR
-PID file path
+PID file path (default based on run mode)
 .TP
 \fB\-\-foreground\fR
 Run in foreground (do not daemonize)
@@ -43,8 +49,27 @@ Print version information and exit
 \fB\-\-help\fR, \fB\-h\fR
 Print help information and exit
 .SH CONFIGURATION
-The daemon reads its configuration from \fI/etc/softkms/config.toml\fR.
-See the config.toml.example file for all available options.
+The daemon auto-detects its run mode and configuration location:
+.PP
+.B Configuration Discovery Order:
+.IP 1. 3
+\fB\-\-config <path>\fR (explicit CLI argument)
+.IP 2. 3
+\fB./softkms.toml\fR (project-local)
+.IP 3. 3
+\fB$XDG_CONFIG_HOME/softkms/config.toml\fR (user config)
+.IP 4. 3
+\fB~/.config/softkms/config.toml\fR (user fallback)
+.IP 5. 3
+\fB/etc/softkms/config.toml\fR (system-wide)
+.IP 6. 3
+Built-in defaults
+.PP
+Run mode is auto-detected based on UID:
+.IP \(bu 2
+Root (UID 0) \-\> System mode (/etc, /var)
+.IP \(bu 2
+Regular user \-\> User mode (XDG paths)
 .PP
 Key configuration sections:
 .IP \(bu 2
@@ -56,21 +81,35 @@ Key configuration sections:
 .IP \(bu 2
 \fB[security]\fR \- Session and caching settings
 .SH FILES
+.SS System Mode (root/system user)
 .TP
 \fI/etc/softkms/config.toml\fR
-Configuration file
+System configuration file
 .TP
 \fI/var/lib/softkms/\fR
-Default data directory (keys, metadata)
+System data directory (keys, metadata)
 .TP
 \fI/var/log/softkms/\fR
-Log directory
+System log directory
 .TP
 \fI/var/log/softkms/audit/\fR
-Audit log directory
+System audit log directory
 .TP
 \fI/var/run/softkms/\fR
-Runtime directory (PID files, sockets)
+System runtime directory (PID files, sockets)
+.SS User Mode (regular user)
+.TP
+\fI~/.config/softkms/config.toml\fR
+User configuration file ($XDG_CONFIG_HOME)
+.TP
+\fI~/.local/share/softkms/\fR
+User data directory ($XDG_DATA_HOME)
+.TP
+\fI~/.local/state/softkms/\fR
+User state directory (logs, audit) ($XDG_STATE_HOME)
+.TP
+\fI$XDG_RUNTIME_DIR/softkms/\fR
+User runtime directory (PID files)
 .SH SERVICE MANAGEMENT
 The daemon is managed by systemd:
 .PP
@@ -114,8 +153,8 @@ journalctl -u softkms -f
 .RE
 .fi
 .SH SECURITY
-The daemon runs as an unprivileged \fBsoftkms\fR user with extensive systemd
-security hardening:
+When running in system mode, the daemon runs as an unprivileged \fBsoftkms\fR
+user with extensive systemd security hardening:
 .IP \(bu 2
 Read-only filesystem access
 .IP \(bu 2
@@ -132,7 +171,10 @@ Private /tmp directory
 Network namespace restrictions
 .PP
 Only \fB/var/lib/softkms\fR, \fB/var/log/softkms\fR, and \fB/var/run/softkms\fR
-are writable by the daemon.
+are writable by the daemon in system mode.
+.PP
+In user mode, the daemon runs as the invoking user and uses standard XDG
+paths for data, state, and runtime files.
 .SH DIAGNOSTICS
 Exit status:
 .TP

@@ -2,6 +2,36 @@
 
 This directory contains helper scripts for managing the softKMS daemon.
 
+**Note:** These scripts are for development/testing. The daemon now uses XDG Base Directory paths by default.
+
+## Directory Structure
+
+When running as a regular user, softKMS uses XDG paths:
+
+```
+~/.config/softkms/              # Configuration
+├── config.toml
+└── pkcs11.conf
+
+~/.local/share/softkms/         # Data storage
+├── keys/
+├── identities/
+├── .salt
+└── .verification_hash
+
+~/.local/state/softkms/         # State (logs, audit)
+└── audit.log
+
+$XDG_RUNTIME_DIR/softkms/        # Runtime files (PID, sockets)
+└── softkms.pid
+```
+
+When running as root (system mode):
+- Config: `/etc/softkms/`
+- Data: `/var/lib/softkms/`
+- Logs: `/var/log/softkms/`
+- Runtime: `/var/run/softkms/`
+
 ## Scripts
 
 ### softkms-start.sh
@@ -12,16 +42,16 @@ Starts the softKMS daemon with user-local directories.
 ```
 
 **Features:**
-- Creates `~/.softKMS/` directory structure automatically
+- Creates XDG directory structure automatically
 - Generates default config if not present
 - Runs daemon in background
 - Saves PID to file for management
 
-**Data locations:**
-- Config: `~/.softKMS/config.toml`
-- Data: `~/.softKMS/data/`
-- Logs: `~/.softKMS/logs/`
-- PID file: `~/.softKMS/run/softkms.pid`
+**Data locations (user mode):**
+- Config: `~/.config/softkms/config.toml`
+- Data: `~/.local/share/softkms/`
+- State: `~/.local/state/softkms/`
+- PID file: `$XDG_RUNTIME_DIR/softkms/softkms.pid` (or `/tmp/softkms.pid`)
 
 ### softkms-stop.sh
 Gracefully stops the running softKMS daemon.
@@ -67,7 +97,7 @@ Views the daemon logs.
 ## Quick Start
 
 ```bash
-# Start the daemon
+# Start the daemon (auto-detects user mode)
 ./scripts/softkms-start.sh
 
 # Check if it's running
@@ -94,7 +124,7 @@ Check the logs:
 
 Common causes:
 - Port 50051 or 8080 already in use
-- Permission denied on `~/.softKMS/`
+- Permission denied on XDG directories
 
 ### "Another instance is already running"
 
@@ -107,7 +137,7 @@ ps aux | grep softkms-daemon
 pkill -9 softkms-daemon
 
 # Remove stale PID file
-rm ~/.softKMS/run/softkms.pid
+rm "$XDG_RUNTIME_DIR/softkms/softkms.pid" 2>/dev/null || rm /tmp/softkms.pid
 
 # Start fresh
 ./scripts/softkms-start.sh
@@ -115,7 +145,7 @@ rm ~/.softKMS/run/softkms.pid
 
 ### Port already in use
 
-Change ports in `~/.softKMS/config.toml`:
+Change ports in `~/.config/softkms/config.toml`:
 ```toml
 [api]
 grpc_addr = "127.0.0.1:50052"  # Different port
@@ -133,13 +163,23 @@ Then restart:
 If you prefer not to use the scripts:
 
 ```bash
-# Create directories
-mkdir -p ~/.softKMS/{data,logs,run}
+# Start daemon directly (auto-detects user mode)
+./target/release/softkms-daemon \
+  --grpc-addr "127.0.0.1:50051" \
+  --rest-addr "127.0.0.1:8080" \
+  --foreground
+```
+
+Or use explicit paths:
+
+```bash
+# Create directories (optional - daemon creates them)
+mkdir -p ~/.config/softkms ~/.local/share/softkms ~/.local/state/softkms
 
 # Start daemon directly
 ./target/release/softkms-daemon \
-  --storage-path ~/.softKMS/data \
-  --pid-file ~/.softKMS/run/softkms.pid \
+  --config ~/.config/softkms/config.toml \
+  --storage-path ~/.local/share/softkms \
   --grpc-addr "127.0.0.1:50051" \
   --rest-addr "127.0.0.1:8080" \
   --foreground

@@ -145,8 +145,18 @@ pub struct Identity {
 ```
 
 **Storage:**
+
+User mode (XDG paths):
 ```
-~/.softKMS/
+~/.local/share/softkms/          # $XDG_DATA_HOME/softkms/
+├── identities/
+│   └── {base64_pubkey}.json      # Identity record
+└── index.json                     # Quick lookup index
+```
+
+System mode (/var paths):
+```
+/var/lib/softkms/
 ├── identities/
 │   └── {base64_pubkey}.json      # Identity record
 └── index.json                     # Quick lookup index
@@ -249,8 +259,20 @@ pub struct KeyMetadata {
 - `delete_key()`: Verifies ownership before deletion
 
 **Storage Path:**
+
+User mode (XDG paths):
 ```
-~/.softKMS/keys/
+~/.local/share/softkms/keys/         # $XDG_DATA_HOME/softkms/keys/
+├── admin/                           # Admin keys (no owner)
+│   └── {key_id}.json
+└── {base64_pubkey}/                 # Client namespace
+    └── keys/
+        └── {key_id}.json
+```
+
+System mode (/var paths):
+```
+/var/lib/softkms/keys/
 ├── admin/                           # Admin keys (no owner)
 │   └── {key_id}.json
 └── {base64_pubkey}/                 # Client namespace
@@ -376,8 +398,16 @@ struct AuditLogEntry {
 ```
 
 **Storage:**
+
+User mode (XDG paths):
 ```
-~/.softKMS/audit/
+~/.local/state/softkms/            # $XDG_STATE_HOME/softkms/
+└── audit.log                     # JSON Lines format
+```
+
+System mode (/var paths):
+```
+/var/log/softkms/
 └── audit.log                     # JSON Lines format
 ```
 
@@ -555,8 +585,16 @@ export SOFTKMS_TOKEN="..."
 
 ## Storage Structure
 
+### User Mode (XDG Base Directory)
+
+When running as a regular user, softKMS uses XDG paths:
+
 ```
-~/.softKMS/
+~/.config/softkms/                  # $XDG_CONFIG_HOME
+├── config.toml                     # User configuration
+└── pkcs11.conf                     # PKCS#11 settings
+
+~/.local/share/softkms/             # $XDG_DATA_HOME
 ├── keys/                           # All encrypted keys
 │   ├── admin/                      # Admin keys
 │   ├── ed25519_MCowBQY...abc/      # Client A namespace
@@ -570,10 +608,41 @@ export SOFTKMS_TOKEN="..."
 │   ├── ed25519_MCowBQY...abc.json
 │   ├── ed25519_BL5a5tD...xyz.json
 │   └── index.json                  # Quick lookup
-├── audit/                          # Audit logs
-│   └── audit.log
 ├── .salt                           # PBKDF2 salt
 └── .verification_hash              # Admin passphrase verification
+
+~/.local/state/softkms/             # $XDG_STATE_HOME
+└── audit.log                       # Audit logs
+
+$XDG_RUNTIME_DIR/softkms/           # Runtime directory
+└── softkms.pid                     # PID file
+```
+
+### System Mode (Traditional Paths)
+
+When running as root or system service:
+
+```
+/etc/softkms/
+├── config.toml                     # System configuration
+└── pkcs11.conf                     # PKCS#11 settings
+
+/var/lib/softkms/                   # Data directory
+├── keys/                           # All encrypted keys
+│   ├── admin/                      # Admin keys
+│   └── {base64_pubkey}/            # Client namespaces
+│       └── keys/
+│           └── *.json, *.enc
+├── identities/                     # Identity records
+│   └── *.json
+├── .salt                           # PBKDF2 salt
+└── .verification_hash              # Admin passphrase verification
+
+/var/log/softkms/                   # Log directory
+└── audit.log                       # Audit logs
+
+/var/run/softkms/                   # Runtime directory
+└── softkms.pid                     # PID file
 ```
 
 ## Project File Structure

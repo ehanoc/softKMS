@@ -94,15 +94,26 @@ softkms list
 .RE
 .fi
 .SH FILES
+.SS System Installation (root/system user)
 .TP
 \fI/etc/softkms/config.toml\fR
-Configuration file
+System configuration file
 .TP
 \fI/var/lib/softkms/\fR
-Default data directory
+System data directory
 .TP
 \fI/var/log/softkms/\fR
-Log directory
+System log directory
+.SS User Installation (regular user)
+.TP
+\fI~/.config/softkms/config.toml\fR
+User configuration file ($XDG_CONFIG_HOME)
+.TP
+\fI~/.local/share/softkms/\fR
+User data directory ($XDG_DATA_HOME)
+.TP
+\fI~/.local/state/softkms/\fR
+User state directory (logs, audit) ($XDG_STATE_HOME)
 .SH SEE ALSO
 .BR softkms-daemon (8),
 .BR softkms-pkcs11 (7)

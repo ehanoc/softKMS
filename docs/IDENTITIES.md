@@ -229,7 +229,7 @@ Currently, softKMS uses a simple role-based model:
 ### Namespace Isolation
 
 ```
-~/.softKMS/keys/
+~/.local/share/softkms/keys/
 ├── admin/                          # Admin keys
 │   └── {key_id}.json
 ├── ed25519_AAA.../                 # Client A (isolated)
@@ -289,7 +289,7 @@ Error: Invalid or revoked identity
 
 ### Identity Metadata
 
-**Storage:** `~/.softKMS/identities/{public_key}.json`
+**Storage:** `~/.local/share/softkms/identities/{public_key}.json`
 
 ```json
 {

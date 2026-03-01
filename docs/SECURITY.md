@@ -167,8 +167,8 @@ sequenceDiagram
 
 | Identity | Auth | Access | Storage |
 |----------|------|--------|---------|
-| **Admin** | Passphrase | All keys | `~/.softKMS/keys/admin/` |
-| **Client** | Token | Own keys only | `~/.softKMS/keys/{pubkey}/keys/` |
+| **Admin** | Passphrase | All keys | `~/.local/share/softkms/keys/admin/` |
+| **Client** | Token | Own keys only | `~/.local/share/softkms/keys/{pubkey}/keys/` |
 
 ### Access Control Matrix
 
@@ -312,7 +312,7 @@ sequenceDiagram
 ### Master Key Derivation
 
 ```rust
-// Fixed salt stored in ~/.softKMS/.salt (32 bytes)
+// Fixed salt stored in ~/.local/share/softkms/.salt (32 bytes)
 master_key = PBKDF2-HMAC-SHA256(
     password: passphrase,
     salt: stored_salt,
@@ -381,7 +381,7 @@ ciphertext = AES-256-GCM(
 ### Storage Format
 
 ```
-~/.softKMS/
+~/.local/share/softkms/
 ├── keys/
 │   ├── admin/                      # Admin keys
 │   │   └── {key_id}.enc
@@ -396,11 +396,14 @@ ciphertext = AES-256-GCM(
 ├── identities/
 │   ├── ed25519_AAA...json          # Identity record
 │   └── index.json                   # Quick lookup
-├── audit/
-│   └── audit.log                    # JSON Lines
+~/.local/state/softkms/
+├── audit.log                        # JSON Lines
+~/.local/share/softkms/
 ├── .salt                            # PBKDF2 salt
 └── .verification_hash               # Passphrase verification
 ```
+
+**Note:** Paths differ between user mode (XDG Base Directory: `~/.local/share/softkms/` and `~/.local/state/softkms/`) and system mode (FHS: `/var/lib/softkms/` and `/var/log/softkms/`).
 
 **Key Metadata:**
 ```json
@@ -419,7 +422,7 @@ ciphertext = AES-256-GCM(
 
 **Format**: JSON Lines (append-only)
 
-**Location**: `~/.softKMS/audit/audit.log`
+**Location**: `~/.local/state/softkms/audit.log`
 
 **Entry Schema:**
 ```json
@@ -620,15 +623,15 @@ softkms --token "$TOKEN_B" sign --label key-a --data "test"
 # Should fail: Access denied
 
 # 2. Verify token not stored
-strings ~/.softKMS/identities/*.json | grep "token"
+strings ~/.local/share/softkms/identities/*.json | grep "token"
 # Should NOT show full token
 
 # 3. Verify audit log
-cat ~/.softKMS/audit/audit.log | jq '.[] | select(.allowed==false)'
+cat ~/.local/state/softkms/audit.log | jq '.[] | select(.allowed==false)'
 # Should show denied attempts
 
 # 4. Verify encrypted storage
-file ~/.softKMS/keys/*/*/*.enc
+file ~/.local/share/softkms/keys/*/*/*.enc
 # Should show: data (encrypted)
 ```
 
