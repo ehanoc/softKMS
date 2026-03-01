@@ -27,6 +27,9 @@ pub use rest_client::{KeyInfo, RestClient};
 mod session;
 pub use session::SessionState;
 
+mod config;
+pub use config::{get_config, get_daemon_addr, Pkcs11Config};
+
 // State
 static INITIALIZED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 static SESSIONS: Lazy<Mutex<HashMap<u64, SessionState>>> = Lazy::new(|| Mutex::new(HashMap::new()));
@@ -41,13 +44,6 @@ static OBJECT_ATTRIBUTES: Lazy<Mutex<HashMap<u64, HashMap<u64, Vec<u8>>>>> =
 
 // Global handle counter for sequential handle assignment
 static NEXT_HANDLE: Lazy<Mutex<u64>> = Lazy::new(|| Mutex::new(1));
-
-// Daemon server address - can be overridden via environment variable
-const DEFAULT_DAEMON_ADDR: &str = "127.0.0.1:50051";
-
-fn get_daemon_addr() -> String {
-    std::env::var("SOFTKMS_DAEMON_ADDR").unwrap_or_else(|_| DEFAULT_DAEMON_ADDR.to_string())
-}
 
 // Return codes
 const CKR_OK: u32 = 0;

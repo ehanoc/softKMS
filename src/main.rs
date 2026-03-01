@@ -3,19 +3,21 @@
 //! This is the main entry point for the softKMS daemon.
 
 use clap::Parser;
-use softkms::{Config, Result, audit::AuditLogger};
+use softkms::{Config, Result, RunMode, audit::AuditLogger};
 use std::path::PathBuf;
 use tracing::info;
 
-/// Get default PID file path
-/// Uses ~/.softKMS/run/softkms.pid for user-local installation
-fn get_default_pid_file() -> PathBuf {
-    std::env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/tmp"))
-        .join(".softKMS")
-        .join("run")
-        .join("softkms.pid")
+/// Get default PID file path based on run mode
+fn get_default_pid_file(mode: RunMode) -> PathBuf {
+    match mode {
+        RunMode::System => PathBuf::from("/run/softkms/softkms.pid"),
+        _ => {
+            // User mode - try XDG_RUNTIME_DIR, then /tmp
+            std::env::var("XDG_RUNTIME_DIR")
+                .map(|d| PathBuf::from(d).join("softkms.pid"))
+                .unwrap_or_else(|_| PathBuf::from("/tmp/softkms.pid"))
+        }
+    }
 }
 
 /// softKMS daemon CLI arguments
@@ -27,6 +29,14 @@ struct Args {
     /// Path to configuration file
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
+
+    /// Force user mode (XDG paths: ~/.config/, ~/.local/share/)
+    #[arg(long, conflicts_with = "system")]
+    user: bool,
+
+    /// Force system mode (/etc, /var paths)
+    #[arg(long, conflicts_with = "user")]
+    system: bool,
 
     /// Storage path (overrides config)
     #[arg(long, value_name = "PATH")]
@@ -44,7 +54,7 @@ struct Args {
     #[arg(long, value_name = "AUDIT_PATH")]
     audit_storage: Option<PathBuf>,
 
-    /// PID file path [default: ~/.softKMS/run/softkms.pid]
+    /// PID file path [default: based on run mode]
     #[arg(long, value_name = "FILE")]
     pid_file: Option<PathBuf>,
 
@@ -62,8 +72,17 @@ async fn main() -> Result<()> {
     // Parse CLI arguments
     let args = Args::parse();
 
+    // Determine run mode from CLI flags
+    let mode = if args.system {
+        RunMode::System
+    } else if args.user {
+        RunMode::User
+    } else {
+        RunMode::Auto
+    };
+
     // Initialize logging
-    let subscriber = tracing_subscriber::fmt()
+    tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::new(format!(
                 "softkms={},tower=warn,hyper=warn",
@@ -73,40 +92,45 @@ async fn main() -> Result<()> {
         .init();
 
     info!("Starting softKMS daemon v{}", env!("CARGO_PKG_VERSION"));
+    info!("Run mode: {:?}", mode);
 
-    AuditLogger::new(args.audit_storage.clone().unwrap_or_else(|| {
-        std::env::var("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/tmp"))
-            .join(".softKMS")
-            .join("audit")
-    })).log("daemon_start", "softkms-daemon", true).await?;
-
-    // Load configuration
-    let mut config = load_config(&args).await?;
-    info!("Configuration loaded from: {:?}", args.config);
+    // Load configuration with mode detection
+    let mut config = Config::load(args.config.clone(), mode)?;
+    
+    // Log which config file was used
+    if let Some(ref config_path) = args.config {
+        info!("Configuration loaded from: {}", config_path.display());
+    } else {
+        info!("Using discovered or default configuration");
+    }
+    info!("Data directory: {}", config.data_dir().display());
+    if let Some(audit_path) = config.audit_path() {
+        info!("Audit log: {}", audit_path.display());
+    }
 
     // Apply CLI overrides
     if let Some(storage_path) = args.storage_path {
         config.storage.path = storage_path;
-        info!("Storage path override: {:?}", config.storage.path);
+        info!("Storage path override: {}", config.storage.path.display());
     }
     if let Some(grpc_addr) = args.grpc_addr {
         config.api.grpc_addr = grpc_addr;
         info!("gRPC address override: {}", config.api.grpc_addr);
     }
     if let Some(rest_addr) = args.rest_addr {
+        let rest_addr_clone = rest_addr.clone();
         config.api.rest_addr = Some(rest_addr);
-        info!("REST address override: {:?}", config.api.rest_addr);
+        info!("REST address override: {}", rest_addr_clone);
     }
 
     // look for audit storage location in config and log it
     if let Some(audit_storage) = args.audit_storage {
-        info!("Audit storage location: {:?}", audit_storage);
+        info!("Audit storage location: {}", audit_storage.display());
     }
 
-    // Get PID file path (use default if not specified)
-    let pid_file = args.pid_file.unwrap_or_else(get_default_pid_file);
+    // Get PID file path based on mode
+    let pid_file = args.pid_file.unwrap_or_else(|| get_default_pid_file(config.run_mode));
+    info!("PID file: {}", pid_file.display());
     
     // Create PID directory if it doesn't exist
     if let Some(parent) = pid_file.parent() {
@@ -135,23 +159,11 @@ async fn main() -> Result<()> {
     daemon.start().await
 }
 
-async fn load_config(args: &Args) -> Result<Config> {
-    if let Some(config_path) = &args.config {
-        // Load from file
-        let content = std::fs::read_to_string(config_path).map_err(|e| {
-            softkms::Error::Storage(format!("Failed to read config file: {}", e))
-        })?;
-
-        let config: Config = toml::from_str(&content).map_err(|e| {
-            softkms::Error::InvalidParams(format!("Failed to parse config file: {}", e))
-        })?;
-
-        Ok(config)
-    } else {
-        // Use default config
-        info!("No config file specified, using defaults");
-        Ok(Config::default())
-    }
+// load_config is now handled by Config::load()
+// Kept for backwards compatibility in tests
+#[cfg(test)]
+async fn load_config(_args: &Args) -> Result<Config> {
+    Ok(Config::default())
 }
 
 #[cfg(test)]

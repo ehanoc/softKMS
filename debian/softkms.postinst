@@ -30,6 +30,13 @@ case "$1" in
             chmod 0640 /etc/softkms/config.toml
         fi
         
+        # Handle PKCS#11 config file
+        if [ ! -f /etc/softkms/pkcs11.conf ]; then
+            cp /usr/share/softkms/pkcs11.conf.example /etc/softkms/pkcs11.conf
+            chown root:softkms /etc/softkms/pkcs11.conf
+            chmod 0644 /etc/softkms/pkcs11.conf
+        fi
+        
         # Reload systemd
         if [ -d /run/systemd/system ]; then
             systemctl --system daemon-reload >/dev/null || true

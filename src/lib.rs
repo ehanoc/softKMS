@@ -27,6 +27,18 @@ pub mod webauthn;
 pub use daemon::Daemon;
 pub use security::{SecurityConfig, SecurityManager};
 
+/// Run mode for softKMS daemon
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RunMode {
+    /// Auto-detect based on UID and HOME
+    #[default]
+    Auto,
+    /// Force user mode (XDG paths)
+    User,
+    /// Force system mode (/etc, /var paths)
+    System,
+}
+
 use thiserror::Error;
 
 /// softKMS result type
@@ -169,6 +181,155 @@ pub struct Config {
     pub api: ApiConfig,
     /// Logging configuration
     pub logging: LoggingConfig,
+    /// Run mode (not serialized, set at runtime)
+    #[serde(skip)]
+    pub run_mode: RunMode,
+}
+
+impl Config {
+    /// Load configuration with automatic discovery
+    /// 
+    /// Search order:
+    /// 1. CLI provided path (if specified)
+    /// 2. $PWD/softkms.toml (project-local)
+    /// 3. $XDG_CONFIG_HOME/softkms/config.toml (user config)
+    /// 4. ~/.config/softkms/config.toml (fallback user config)
+    /// 5. /etc/softkms/config.toml (system-wide)
+    /// 6. Built-in defaults
+    pub fn load(config_path: Option<std::path::PathBuf>, mode: RunMode) -> Result<Self> {
+        let mode = Self::determine_mode(mode, config_path.as_ref());
+        
+        // Try to load from file
+        let config = if let Some(path) = config_path {
+            Self::load_from_file(&path)?
+        } else {
+            Self::discover_config()?
+        };
+        
+        // Apply mode-specific defaults if config file didn't set paths
+        let mut config = config;
+        config.run_mode = mode;
+        config.apply_mode_defaults(mode);
+        
+        Ok(config)
+    }
+    
+    /// Determine run mode
+    fn determine_mode(mode: RunMode, config_path: Option<&std::path::PathBuf>) -> RunMode {
+        match mode {
+            RunMode::User => RunMode::User,
+            RunMode::System => RunMode::System,
+            RunMode::Auto => {
+                // Check config path hint first
+                if let Some(path) = config_path {
+                    if path.starts_with("/etc/") {
+                        return RunMode::System;
+                    }
+                    if let Some(home) = dirs::home_dir() {
+                        if path.starts_with(&home) {
+                            return RunMode::User;
+                        }
+                    }
+                }
+                
+                // Auto-detect from environment
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let uid = unsafe { libc::getuid() };
+                    let home = std::env::var("HOME").unwrap_or_default();
+                    
+                    if uid == 0 || home == "/var/lib/softkms" || home == "/nonexistent" {
+                        RunMode::System
+                    } else {
+                        RunMode::User
+                    }
+                }
+                
+                #[cfg(target_os = "windows")]
+                {
+                    RunMode::User
+                }
+            }
+        }
+    }
+    
+    /// Discover config file using XDG and system paths
+    fn discover_config() -> Result<Self> {
+        let search_paths: Vec<std::path::PathBuf> = vec![
+            // Project-local
+            std::env::current_dir().ok().map(|d| d.join("softkms.toml")).unwrap_or_default(),
+            // XDG config
+            dirs::config_dir().map(|d| d.join("softkms").join("config.toml")).unwrap_or_default(),
+            // System-wide
+            std::path::PathBuf::from("/etc/softkms/config.toml"),
+        ];
+        
+        for path in search_paths {
+            if path.exists() {
+                return Self::load_from_file(&path);
+            }
+        }
+        
+        // Use defaults
+        Ok(Self::default())
+    }
+    
+    /// Load configuration from a specific file
+    fn load_from_file(path: &std::path::Path) -> Result<Self> {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| Error::Storage(format!("Failed to read config file: {}", e)))?;
+        
+        let config: Config = toml::from_str(&content)
+            .map_err(|e| Error::InvalidParams(format!("Failed to parse config file: {}", e)))?;
+        
+        Ok(config)
+    }
+    
+    /// Apply mode-specific default paths
+    fn apply_mode_defaults(&mut self, mode: RunMode) {
+        match mode {
+            RunMode::System => {
+                // System paths - only apply if not already set
+                if self.storage.path == std::path::PathBuf::new() {
+                    self.storage.path = std::path::PathBuf::from("/var/lib/softkms");
+                }
+                if self.logging.audit_path.is_none() {
+                    self.logging.audit_path = Some(std::path::PathBuf::from("/var/log/softkms/audit.log"));
+                }
+            }
+            RunMode::User => {
+                // User paths - only apply if using default (old ~/.softKMS path)
+                let is_default_path = self.storage.path.to_str()
+                    .map(|s| s.contains(".softKMS"))
+                    .unwrap_or(false);
+                if is_default_path {
+                    if let Some(data_dir) = dirs::data_dir() {
+                        self.storage.path = data_dir.join("softkms");
+                    } else {
+                        self.storage.path = std::path::PathBuf::from("/tmp/softkms-data");
+                    }
+                }
+                if self.logging.audit_path.is_none() {
+                    if let Some(state_dir) = dirs::state_dir() {
+                        self.logging.audit_path = Some(state_dir.join("softkms").join("audit.log"));
+                    } else if let Some(data_dir) = dirs::data_local_dir() {
+                        self.logging.audit_path = Some(data_dir.join("softkms").join("audit.log"));
+                    }
+                }
+            }
+            RunMode::Auto => {}
+        }
+    }
+    
+    /// Get the data directory based on current mode
+    pub fn data_dir(&self) -> &std::path::Path {
+        &self.storage.path
+    }
+    
+    /// Get the audit log path
+    pub fn audit_path(&self) -> Option<&std::path::Path> {
+        self.logging.audit_path.as_deref()
+    }
 }
 
 /// Storage configuration
@@ -212,18 +373,11 @@ pub struct LoggingConfig {
 
 impl Default for Config {
     fn default() -> Self {
-        // Use user-local directory for storage
-        let storage_path = std::env::var("HOME")
-            .map(|home| std::path::PathBuf::from(home).join(".softKMS").join("data"))
-            .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/softkms-data"));
-        
-        // default for an audit log file
-        let audit_path = storage_path.join("audit.log");
-
+        // Start with empty paths - apply_mode_defaults will set them based on mode
         Self {
             storage: StorageConfig {
                 backend: "file".to_string(),
-                path: storage_path,
+                path: std::path::PathBuf::new(),
                 encryption: EncryptionConfig {
                     pin: None,
                     pbkdf2_iterations: 210_000,
@@ -237,8 +391,9 @@ impl Default for Config {
             logging: LoggingConfig {
                 level: "info".to_string(),
                 file: None,
-                audit_path: Some(audit_path),
+                audit_path: None,
             },
+            run_mode: RunMode::Auto,
         }
     }
 }
