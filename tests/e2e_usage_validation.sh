@@ -219,6 +219,19 @@ else
     log_failure "Could not extract seed ID for derivation"
 fi
 
+log_step "Derive Ed25519 child key from seed using LABEL"
+if [ -n "$SEED_ID" ]; then
+    OUTPUT=$($CLI -s "http://$GRPC_ADDR" -p "$ADMIN_PASS" derive --seed "admin-seed" --algorithm ed25519 --path "m/44'/283'/0'/0/1" --label "derived-ed25519-by-label" 2>&1) || true
+    echo "$OUTPUT"
+    if echo "$OUTPUT" | grep -q "Ed25519 key derived successfully"; then
+        log_success "Ed25519 child key derived by label"
+    else
+        log_failure "Failed to derive Ed25519 key by label"
+    fi
+else
+    log_failure "No seed available for label-based derivation"
+fi
+
 log_step "Sign data with Ed25519 key"
 if [ -n "$ADMIN_ED25519_KEY_ID" ]; then
     OUTPUT=$($CLI -s "http://$GRPC_ADDR" -p "$ADMIN_PASS" sign --key "$ADMIN_ED25519_KEY_ID" --data "Hello World" 2>&1) || true

@@ -321,6 +321,29 @@ else
     fail_test "Derive Ed25519 key failed"
 fi
 
+# Test 13b: Derive Ed25519 key from seed using LABEL (not UUID)
+echo ""
+echo "[TEST 13b/15] Derive Ed25519 key from seed using LABEL"
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"$ADMIN_PASS\" derive --algorithm ed25519 --seed \"test-seed\" --path \"m/44'/283'/0'/0/1\" --label \"derived-ed25519-by-label\""
+OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" derive --algorithm ed25519 --seed "test-seed" --path "m/44'/283'/0'/0/1" --label "derived-ed25519-by-label" 2>&1)
+DERIVED_ED_LABEL_ID=$(echo "$OUTPUT" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | tail -1)
+if [ -n "$DERIVED_ED_LABEL_ID" ]; then
+    pass_test "Derive Ed25519 key by label (ID: ${DERIVED_ED_LABEL_ID:0:8}...)"
+else
+    fail_test "Derive Ed25519 key by label failed"
+fi
+
+# Test 13c: Error case - derive with non-existent seed label
+echo ""
+echo "[TEST 13c/15] Error: Derive with non-existent seed label"
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"$ADMIN_PASS\" derive --algorithm ed25519 --seed \"non-existent-seed\" --path \"m/44'/283'/0'/0/0\""
+OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" derive --algorithm ed25519 --seed "non-existent-seed" --path "m/44'/283'/0'/0/0" 2>&1)
+if echo "$OUTPUT" | grep -q "No seed found with label"; then
+    pass_test "Correctly rejected non-existent seed label"
+else
+    fail_test "Expected 'No seed found with label' error, got: $OUTPUT"
+fi
+
 # Test 14: Revoke identity
 echo ""
 echo "[TEST 14/15] Revoke identity"

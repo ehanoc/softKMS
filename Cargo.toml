@@ -65,6 +65,14 @@ name = "rest_tests"
 path = "tests/integration/rest_tests.rs"
 harness = false
 
+[[test]]
+name = "identity_tests"
+path = "tests/integration/identity_tests.rs"
+
+[[test]]
+name = "identity_service_tests"
+path = "tests/identity_service_tests.rs"
+
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }

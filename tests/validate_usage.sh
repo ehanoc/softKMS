@@ -512,6 +512,50 @@ else
     echo -e "${YELLOW}[SKIP]${NC} Test 14: Cannot derive Ed25519 key (no seed available)"
 fi
 
+# Test 14b: Derive Ed25519 key from seed using LABEL instead of UUID
+if [ -n "$SEED_ID" ]; then
+    echo ""
+    echo "[TEST 14b] Derive Ed25519 key from seed using LABEL"
+    echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"$ADMIN_PASS\" derive --algorithm ed25519 --seed \"test-seed\" --path \"m/44'/283'/0'/0/0\" --label \"derived-ed25519-by-label\""
+    OUTPUT=""
+    if OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" derive --algorithm ed25519 --seed "test-seed" --path "m/44'/283'/0'/0/0" --label "derived-ed25519-by-label" 2>&1); then
+        echo -e "${GREEN}[OUTPUT]${NC}"
+        echo "$OUTPUT" | sed 's/^/  /'
+        DERIVED_ED_LABEL_ID=$(echo "$OUTPUT" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | tail -1)
+        if [ -n "$DERIVED_ED_LABEL_ID" ]; then
+            pass_test "Derive Ed25519 key from seed by label (ID: ${DERIVED_ED_LABEL_ID:0:8}...)"
+        else
+            fail_test "Derive Ed25519 key by label (could not extract key ID)"
+        fi
+    else
+        echo -e "${RED}[OUTPUT]${NC}"
+        echo "$OUTPUT" | sed 's/^/  /'
+        fail_test "Derive Ed25519 key from seed by label"
+    fi
+else
+    echo ""
+    echo -e "${YELLOW}[SKIP]${NC} Test 14b: Cannot derive Ed25519 key by label (no seed available)"
+fi
+
+# Test 14c: Error case - derive with non-existent seed label
+echo ""
+echo "[TEST 14c] Error: Derive with non-existent seed label"
+echo -e "${CYAN}[CMD]${NC} $CLI --server \"http://$GRPC_ADDR\" -p \"$ADMIN_PASS\" derive --algorithm ed25519 --seed \"non-existent-seed\" --path \"m/44'/283'/0'/0/0\""
+OUTPUT=""
+if OUTPUT=$($CLI --server "http://$GRPC_ADDR" -p "$ADMIN_PASS" derive --algorithm ed25519 --seed "non-existent-seed" --path "m/44'/283'/0'/0/0" 2>&1); then
+    echo -e "${RED}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    fail_test "Derive with non-existent label should have failed"
+else
+    echo -e "${GREEN}[OUTPUT]${NC}"
+    echo "$OUTPUT" | sed 's/^/  /'
+    if echo "$OUTPUT" | grep -q "No seed found with label"; then
+        pass_test "Correctly rejected non-existent seed label"
+    else
+        fail_test "Got error but not the expected 'No seed found' message"
+    fi
+fi
+
 # =============================================================================
 # PHASE 5: PKCS#11 Provider
 # =============================================================================

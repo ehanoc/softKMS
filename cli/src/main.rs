@@ -308,6 +308,69 @@ async fn lookup_key_by_label(
     }
 }
 
+/// Resolve seed ID from seed ID or label
+/// Seeds are identified by algorithm "bip32-seed"
+async fn resolve_seed_id(
+    client: &mut KeyStoreClient<tonic::transport::Channel>,
+    seed_input: &str,
+    auth_token: String,
+    passphrase: String,
+) -> Result<String, Box<dyn std::error::Error>> {
+    // Try parsing as UUID first
+    if let Ok(_key_id) = softkms::KeyId::parse_str(seed_input) {
+        // Verify it exists and is actually a seed
+        let request = tonic::Request::new(GetKeyRequest {
+            key_id: seed_input.to_string(),
+            include_public_key: false,
+            auth_token: auth_token.clone(),
+            passphrase: passphrase.clone(),
+        });
+        
+        match client.get_key(request).await {
+            Ok(response) => {
+                let key_info = response.into_inner().key
+                    .ok_or("Key not found")?;
+                if key_info.algorithm == "bip32-seed" {
+                    return Ok(seed_input.to_string());
+                } else {
+                    return Err(format!("Key {} is not a seed (algorithm: {})", seed_input, key_info.algorithm).into());
+                }
+            }
+            Err(e) => {
+                return Err(format!("Failed to verify seed: {}", e).into());
+            }
+        }
+    }
+    
+    // Not a UUID, treat as label and search for seed
+    let request = tonic::Request::new(ListKeysRequest {
+        include_public_keys: false,
+        auth_token,
+        passphrase,
+    });
+    
+    let response = client.list_keys(request).await?;
+    let list = response.into_inner();
+    
+    // Filter for seeds with matching label
+    let matching_seeds: Vec<_> = list.keys.iter()
+        .filter(|k| k.algorithm == "bip32-seed")
+        .filter(|k| k.label.as_deref() == Some(seed_input))
+        .collect();
+    
+    match matching_seeds.len() {
+        0 => Err(format!("No seed found with label '{}'", seed_input).into()),
+        1 => Ok(matching_seeds[0].key_id.clone()),
+        _ => {
+            eprintln!("Multiple seeds found with label '{}'", seed_input);
+            for seed in matching_seeds {
+                println!("  {} (created: {})", seed.key_id, seed.created_at);
+            }
+            Err("Ambiguous label - use --seed with the UUID".into())
+        }
+    }
+}
+
 /// Resolve key ID from key ID or label
 async fn resolve_key_id(
     client: &KeyStoreClient<tonic::transport::Channel>,
@@ -809,6 +872,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 cli.passphrase.clone(),
             )?;
 
+            // Resolve seed ID (UUID or label)
+            let seed_id = resolve_seed_id(
+                &mut client,
+                &seed,
+                auth_token.clone(),
+                passphrase.clone(),
+            ).await;
+            
+            let seed_id = match seed_id {
+                Ok(id) => id,
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
             match algorithm.as_str() {
                 "p256" => {
                     // P-256 requires origin and user_handle (FIDO2/WebAuthn style)
@@ -830,7 +909,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     };
                     
                     let request = tonic::Request::new(DeriveP256Request {
-                        seed_id: seed,
+                        seed_id,
                         origin,
                         user_handle,
                         counter,
@@ -876,7 +955,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .unwrap_or(283);
                     
                     let request = tonic::Request::new(DeriveEd25519Request {
-                        seed_id: seed,
+                        seed_id,
                         derivation_path: path,
                         coin_type,
                         scheme: derivation_scheme as i32,

@@ -480,3 +480,134 @@ fn test_cli_list_keys() {
     assert!(list_stdout.contains("Key2"), "Expected Key2 in list");
     assert!(list_stdout.contains("Total: 2 keys"), "Expected 2 keys");
 }
+
+#[test]
+fn test_cli_derive_seed_by_label() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut test = CliTest::new();
+    test.start_daemon();
+
+    std::thread::sleep(Duration::from_millis(1000));
+
+    // Initialize the keystore
+    let _ = test.run_cli(&["--passphrase", "test123", "init", "--confirm", "false"]);
+
+    // Import a seed with a label
+    let seed_output = test.run_cli(&[
+        "--passphrase",
+        "test123",
+        "import-seed",
+        "--mnemonic",
+        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+        "--label",
+        "test-seed-label",
+    ]);
+
+    let seed_stdout = String::from_utf8_lossy(&seed_output.stdout);
+    println!("Seed import stdout: {}", seed_stdout);
+    assert!(seed_output.status.success(), "Seed import failed");
+
+    // Extract the seed ID from output
+    let seed_id = seed_stdout
+        .lines()
+        .find(|line| line.contains("Seed ID:"))
+        .and_then(|line| line.split("Seed ID:").nth(1))
+        .map(|s| s.trim().to_string())
+        .expect("Should have seed ID in output");
+
+    println!("Seed ID: {}", seed_id);
+
+    // Derive Ed25519 key using the LABEL instead of UUID
+    let derive_output = test.run_cli(&[
+        "--passphrase",
+        "test123",
+        "derive",
+        "--algorithm",
+        "ed25519",
+        "--seed",
+        "test-seed-label", // Use label instead of UUID
+        "--path",
+        "m/44'/283'/0'/0/0",
+        "--label",
+        "derived-by-label",
+    ]);
+
+    let derive_stdout = String::from_utf8_lossy(&derive_output.stdout);
+    let derive_stderr = String::from_utf8_lossy(&derive_output.stderr);
+
+    println!("Derive stdout: {}", derive_stdout);
+    println!("Derive stderr: {}", derive_stderr);
+
+    assert!(
+        derive_output.status.success(),
+        "Derive with label failed: {}",
+        derive_stderr
+    );
+    assert!(
+        derive_stdout.contains("Ed25519 key derived successfully"),
+        "Expected successful derivation message"
+    );
+    // Note: The derive command doesn't output the label, it only stores it
+    // The key was successfully derived using the seed label
+
+    // Also test P-256 derivation with label
+    let p256_output = test.run_cli(&[
+        "--passphrase",
+        "test123",
+        "derive",
+        "--algorithm",
+        "p256",
+        "--seed",
+        "test-seed-label", // Use label instead of UUID
+        "--origin",
+        "example.com",
+        "--user-handle",
+        "user@example.com",
+        "--counter",
+        "0",
+        "--label",
+        "p256-by-label",
+    ]);
+
+    let p256_stdout = String::from_utf8_lossy(&p256_output.stdout);
+    let p256_stderr = String::from_utf8_lossy(&p256_output.stderr);
+
+    println!("P-256 derive stdout: {}", p256_stdout);
+    println!("P-256 derive stderr: {}", p256_stderr);
+
+    assert!(
+        p256_output.status.success(),
+        "P-256 derive with label failed: {}",
+        p256_stderr
+    );
+    assert!(
+        p256_stdout.contains("P-256 key derived successfully"),
+        "Expected successful P-256 derivation message"
+    );
+
+    // Test error case: non-existent label
+    let fail_output = test.run_cli(&[
+        "--passphrase",
+        "test123",
+        "derive",
+        "--algorithm",
+        "ed25519",
+        "--seed",
+        "non-existent-seed-label",
+        "--path",
+        "m/44'/283'/0'/0/0",
+    ]);
+
+    let fail_stderr = String::from_utf8_lossy(&fail_output.stderr);
+    println!("Expected failure stderr: {}", fail_stderr);
+
+    assert!(
+        !fail_output.status.success(),
+        "Should fail with non-existent label"
+    );
+    assert!(
+        fail_stderr.contains("No seed found with label"),
+        "Expected seed not found error, got: {}",
+        fail_stderr
+    );
+}
